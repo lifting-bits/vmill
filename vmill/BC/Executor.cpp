@@ -17,12 +17,14 @@
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 
+#include <llvm/IR/LLVMContext.h>
+
 #include "vmill/BC/Executor.h"
 
 namespace vmill {
-namespace {
 
-}  // namespace
+Executor::Executor(const std::shared_ptr<llvm::LLVMContext> &context_)
+    : context(context_) {}
 
 Executor::~Executor(void) {}
 

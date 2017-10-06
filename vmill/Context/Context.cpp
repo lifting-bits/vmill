@@ -3,86 +3,43 @@
 #include <glog/logging.h>
 
 #include <cstdint>
+#include <utility>
 
+#include <llvm/IR/Function.h>
 #include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Module.h>
 
+#include "vmill/Arch/Decoder.h"
 #include "vmill/BC/Executor.h"
 #include "vmill/BC/Lifter.h"
 #include "vmill/Context/Context.h"
 #include "vmill/Context/AddressSpace.h"
 
 namespace vmill {
-namespace {
 
-static __thread Context *gCurrentContext = nullptr;
-
-extern "C" bool __vmill_can_read_byte(void *memory, uint64_t addr) {
-  return gCurrentContext->AddressSpaceOf(memory)->CanRead(addr);
-}
-
-extern "C" bool __vmill_can_write_byte(void *memory, uint64_t addr) {
-  return gCurrentContext->AddressSpaceOf(memory)->CanWrite(addr);
-}
-
-extern "C" void *__vmill_allocate_memory(void *memory, uint64_t where,
-                                         uint64_t size) {
-  auto addr_space = gCurrentContext->AddressSpaceOf(memory);
-  addr_space->AddMap(where, size);
-  return memory;
-}
-
-extern "C" void *__vmill_free_memory(void *memory, uint64_t where, uint64_t size) {
-  auto addr_space = gCurrentContext->AddressSpaceOf(memory);
-  addr_space->RemoveMap(where, size);
-  return memory;
-}
-
-extern "C" void *__vmill_protect_memory(void *memory, uint64_t where,
-                                        uint64_t size, bool can_read,
-                                        bool can_write, bool can_exec) {
-  auto addr_space = gCurrentContext->AddressSpaceOf(memory);
-  addr_space->SetPermissions(where, size, can_read, can_write, can_exec);
-  return memory;
-}
-
-extern "C" uint64_t __vmill_next_memory_end(Memory *memory, uint64_t where) {
-  auto addr_space = gCurrentContext->AddressSpaceOf(memory);
-  uint64_t nearest_end = 0;
-  if (addr_space->NearestLimitAddress(where, &nearest_end)) {
-    return nearest_end;
-  } else {
-    return 0;
-  }
-}
-
-extern "C" uint64_t __vmill_prev_memory_begin(Memory *memory, uint64_t where) {
-  auto addr_space = gCurrentContext->AddressSpaceOf(memory);
-  uint64_t nearest_begin = 0;
-  if (addr_space->NearestBaseAddress(where, &nearest_begin)) {
-    return nearest_begin;
-  } else {
-    return 0;
-  }
-}
-
-}  // namespace
-
-std::unique_ptr<Context> Context::Create(void) {
-  return std::unique_ptr<Context>(new Context);
-}
-
-std::unique_ptr<Context> Context::Clone(const std::unique_ptr<Context> &that) {
-  return std::unique_ptr<Context>(new Context(*that));
-}
+Context *Context::gCurrent = nullptr;
+AddressSpace *Context::gLRUAddressSpace = nullptr;
+void *Context::gLRUMemory = nullptr;
+void *Context::gLRUState = nullptr;
 
 Context::Context(void)
     : context(new llvm::LLVMContext),
       lifter(vmill::Lifter::Create(context)),
-      executor(vmill::Executor::GetNativeExecutor(context)) {}
+      executor(vmill::Executor::GetNativeExecutor(context)) {
+
+  auto dead_space = new AddressSpace;
+  dead_space->Kill();
+  address_spaces.push_back(dead_space);
+}
 
 Context::Context(const Context &parent)
-    : lifter(parent.lifter),
-      executor(parent.executor) {
+    : context(parent.context),
+      lifter(parent.lifter),
+      executor(parent.executor),
+      tasks(parent.tasks),
+      modules(parent.modules),
+      active_cache(parent.active_cache),
+      cache(parent.cache) {
 
   address_spaces.reserve(parent.address_spaces.size());
   for (auto space : parent.address_spaces) {
@@ -120,6 +77,11 @@ void *Context::CloneAddressSpace(void *handle) {
 
 // Destroys an address space.
 void Context::DestroyAddressSpace(void *handle) {
+  if (handle == gLRUMemory) {
+    gLRUMemory = nullptr;
+    gLRUAddressSpace = nullptr;
+  }
+
   auto id = reinterpret_cast<uintptr_t>(handle);
   CHECK(id < address_spaces.size())
       << "Cannot clone non-existent address space " << id;
@@ -130,35 +92,96 @@ void Context::DestroyAddressSpace(void *handle) {
   addr_space->Kill();
 }
 
-AddressSpace *Context::AddressSpaceOf(void *handle) {
-  auto id = reinterpret_cast<uintptr_t>(handle);
-  CHECK(id < address_spaces.size())
-      << "Cannot clone non-existent address space " << id;
-  return address_spaces[id];
+AddressSpace *Context::AddressSpaceOf(void *handle) const {
+  if (handle == gLRUMemory) {
+    return gLRUAddressSpace;
+  } else {
+    auto id = reinterpret_cast<uintptr_t>(handle);
+    CHECK(id < address_spaces.size())
+        << "Cannot clone non-existent address space " << id;
+    gLRUMemory = handle;
+    gLRUAddressSpace = address_spaces[id];
+    return gLRUAddressSpace;
+  }
 }
 
-// Call into the runtime to allocate a `State` structure, and fill it with
-// the bytes from `data`.
-void *Context::AllocateStateInRuntime(const std::string &data) {
-  return executor->AllocateStateInRuntime(data);
+void Context::CreateInitialTask(const std::string &state,
+                                uint64_t pc, void *memory) {
+  Task task = {executor->AllocateStateInRuntime(state), pc, memory,
+               TaskStatus::kTaskStoppedAtSnapshotEntryPoint};
+  tasks.push_back(task);
 }
 
 void Context::ScheduleTask(const Task &task) {
   tasks.push_back(task);
 }
 
-bool Context::TryDequeueTask(Task *task_out) {
-  if (tasks.empty()) {
-    return false;
-  } else {
-    *task_out = tasks.front();
-    tasks.pop_front();
-    return true;
+void Context::VisitLiftedModule(llvm::Module *) {}
+
+// Lift code for a task.
+llvm::Function *Context::GetLiftedFunctionForTask(const Task &task) {
+  if (gLRUAddressSpace->CodeVersionIsInvalid()) {
+    active_cache.clear();
   }
+
+  auto code_version = gLRUAddressSpace->CodeVersion();
+  LiveTraceId live_id = {task.pc, code_version};
+  auto it = active_cache.find(live_id);
+  if (it != active_cache.end()) {
+    return it->second;
+  }
+
+  llvm::Function *ret_func = nullptr;
+
+  // Decode the requested trace, and perhaps way more.
+  auto module = std::make_shared<llvm::Module>("", *context);
+  auto decoded_traces = DecodeTraces(*gLRUAddressSpace, task.pc);
+  for (const auto &trace : decoded_traces) {
+    LiftedTraceId lift_id = {trace.entry_pc, trace.hash};
+    auto &lifted_func = cache[lift_id];
+    if (!lifted_func) {
+      lifted_func = lifter->LiftTraceIntoModule(trace, module.get());
+    }
+
+    live_id = {task.pc, code_version};
+    active_cache[live_id] = lifted_func;
+
+    if (trace.entry_pc == task.pc) {
+      ret_func = lifted_func;
+    }
+  }
+
+  VisitLiftedModule(module.get());
+  modules.emplace_back(std::move(module));
+
+  CHECK(ret_func != nullptr);
+
+  return ret_func;
 }
 
-void Context::ResumeTask(const Task &task) {
-  gCurrentContext = this;
+bool Context::TryExecuteNextTask(void) {
+  if (tasks.empty()) {
+    return false;
+  }
+
+  auto task = tasks.front();
+  tasks.pop_front();
+
+  gCurrent = this;
+  gLRUState = task.state;
+  gLRUMemory = nullptr;
+  gLRUAddressSpace = AddressSpaceOf(task.memory);
+  gLRUMemory = task.memory;
+
+  auto func = GetLiftedFunctionForTask(task);
+  executor->Execute(task, func);
+
+  gCurrent = nullptr;
+  gLRUMemory = nullptr;
+  gLRUState = nullptr;
+  gLRUAddressSpace = nullptr;
+
+  return true;
 }
 
 }  // namespace vmill

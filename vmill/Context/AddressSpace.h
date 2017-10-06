@@ -54,10 +54,6 @@ class AddressSpace {
   // of a page, and may result in broad-reaching cache invalidations.
   bool TryReadExecutable(uint64_t addr, uint8_t *val);
 
-  // Have we observed a write to executable memory since our last attempt
-  // to read from executable memory?
-  bool SeenWriteToExecMem(void);
-
   // Change the permissions of some range of memory. This can split memory
   // maps.
   void SetPermissions(uint64_t base, size_t size, bool can_read,
@@ -80,6 +76,17 @@ class AddressSpace {
   // Find the largest mapped memory range base address that is less-than
   // or equal to `find`.
   bool NearestBaseAddress(uint64_t find, uint64_t *next_end) const;
+
+  // Have we observed a write to executable memory since our last attempt
+  // to read from executable memory?
+  bool CodeVersionIsInvalid(void) const;
+
+  // Returns a hash of all executable code. Useful for getting the current
+  // version of the code.
+  //
+  // NOTE(pag): If the code version is invalid, then this will recompute it,
+  //            thereby making it valid.
+  uint64_t CodeVersion(void);
 
  private:
   AddressSpace(AddressSpace &&) = delete;
@@ -119,7 +126,12 @@ class AddressSpace {
 
   // Has there been a write to executable memory since the previous read from
   // executable memory?
-  bool seen_write_to_exec;
+  bool code_version_is_invalid;
+
+  // An identifier that links together this address space, and any ones that
+  // are cloned from it, so that we can partition code caches according to
+  // a common ancestry.
+  uint64_t code_version;
 };
 
 }  // namespace vmill

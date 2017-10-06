@@ -13,11 +13,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#ifndef TOOLS_VMILL_VMILL_RUNTIME_TASKSTATUS_H_
+#define TOOLS_VMILL_VMILL_RUNTIME_TASKSTATUS_H_
 
-#define ADDRESS_SIZE_BITS 64
-#define HAS_FEATURE_AVX 1
-#define HAS_FEATE_AVX512 0
-#define VMILL_RUNTIME_X86 64
+namespace vmill {
 
-#include "vmill/Runtime/Linux/X86.cpp"
-#include "Generic/Run.cpp"
+enum TaskStatus {
+  kTaskStoppedAtSnapshotEntryPoint,
+  kTaskStoppedAtJumpTarget,
+  kTaskStoppedAtCallTarget,
+  kTaskStoppedAtReturnTarget,
+  kTaskStoppedAtError,
+  kTaskStoppedAfterHyperCall,
+  kTaskStoppedBeforeUnhandledHyperCall
+};
+
+}  // namespace vmill
+
+#endif  // TOOLS_VMILL_VMILL_RUNTIME_TASKSTATUS_H_

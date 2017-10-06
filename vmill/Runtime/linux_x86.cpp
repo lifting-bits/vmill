@@ -17,6 +17,7 @@
 #define ADDRESS_SIZE_BITS 32
 #define HAS_FEATURE_AVX 0
 #define HAS_FEATE_AVX512 0
+#define VMILL_RUNTIME_X86 32
 
 #include "vmill/Runtime/Linux/X86.cpp"
 #include "Generic/Run.cpp"

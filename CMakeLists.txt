@@ -32,6 +32,9 @@ add_library(${PROJECT_NAME} STATIC
     vmill/BC/Runtime.cpp
     vmill/Context/AddressSpace.cpp
     vmill/Context/Context.cpp
+    vmill/Util/Hash.cpp
+    vmill/Util/Timer.cpp
+    vmill/Etc/xxHash/xxhash.c
 )
 
 set_property(TARGET ${PROJECT_NAME} PROPERTY POSITION_INDEPENDENT_CODE ON)

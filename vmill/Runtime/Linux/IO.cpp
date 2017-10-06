@@ -98,6 +98,8 @@ static Memory *SysWrite(Memory *memory, State *state,
   return syscall.SetReturn(memory, state, written_bytes);
 }
 
+#define DEBUG_STRACE(fmt, ...) printf(fmt "\n", #__VA_ARGS__)
+
 // Emulate an `open` system call.
 static Memory *SysOpen(Memory *memory, State *state,
                        const SystemCallABI &syscall) {
@@ -122,6 +124,8 @@ static Memory *SysOpen(Memory *memory, State *state,
   }
 
   auto fd = open(gPath, oflag, mode);
+  DEBUG_STRACE("open(%s, %d, %d) -> %d", gPath, oflag, mode, fd);
+
   if (-1 == fd) {
     return syscall.SetReturn(memory, state, -errno);
   } else {
@@ -138,6 +142,7 @@ static Memory *SysClose(Memory *memory, State *state,
   }
 
   auto ret = close(fd);
+  DEBUG_STRACE("close(%d) -> %d", fd, ret);
   return syscall.SetReturn(memory, state, ret * errno);
 }
 

@@ -10,6 +10,8 @@
 #include "remill/OS/OS.h"
 
 #include "vmill/Context/AddressSpace.h"
+#include "vmill/Util/Hash.h"
+#include "vmill/Etc/xxHash/xxhash.h"
 
 namespace vmill {
 namespace {
@@ -211,7 +213,8 @@ AddressSpace::AddressSpace(void)
     : invalid_map(std::make_shared<EmptyMemoryMap>(0, 0)),
       page_to_map(256),
       is_dead(false),
-      seen_write_to_exec(true) {
+      code_version_is_invalid(true),
+      code_version(0) {
   CreatePageToRangeMap();
 }
 
@@ -220,17 +223,64 @@ AddressSpace::AddressSpace(const AddressSpace &parent)
       maps(parent.maps.size()),
       page_to_map(parent.page_to_map.size()),
       is_dead(parent.is_dead),
-      seen_write_to_exec(parent.seen_write_to_exec) {
+      code_version_is_invalid(parent.code_version_is_invalid),
+      code_version(parent.code_version) {
 
   unsigned i = 0;
   for (const auto &range : parent.maps) {
     maps[i++] = range->Clone();
   }
+
   CreatePageToRangeMap();
 }
 
 AddressSpace::AddressSpace(const AddressSpacePtr &parent_ptr)
     : AddressSpace(*parent_ptr) {}
+
+// Have we observed a write to executable memory since our last attempt
+// to read from executable memory?
+bool AddressSpace::CodeVersionIsInvalid(void) const {
+  return code_version_is_invalid;
+}
+
+// Returns a hash of all executable code. Useful for getting the current
+// version of the code.
+uint64_t AddressSpace::CodeVersion(void) {
+  if (!code_version_is_invalid) {
+    return code_version;
+  }
+
+  LOG(INFO)
+      << "Recomputing code version.";
+
+  XXH64_state_t state = {};
+  XXH64_reset(&state, 0);
+
+  uint8_t bytes[kPageSize];
+  auto num_pages = 0;
+  for (auto &map : this->maps) {
+    auto addr = map->BaseAddress();
+    auto limit_addr = map->LimitAddress();
+    for (; addr < limit_addr; addr += kPageSize) {
+      if (CanExecute(addr)) {
+        for (uint64_t i = 0; i < kPageSize; ++i) {
+          bytes[i] = map->Read(addr + i);
+        }
+        num_pages += 1;
+        XXH64_update(&state, bytes, kPageSize);
+      }
+    }
+  }
+
+  code_version = XXH64_digest(&state);
+  code_version_is_invalid = false;
+
+  LOG(INFO)
+      << "Hashed " << std::dec << num_pages << " pages into code version "
+      << std::hex << code_version << std::dec;
+
+  return code_version;
+}
 
 // Clear out the contents of this address space.
 void AddressSpace::Kill(void) {
@@ -271,7 +321,12 @@ bool AddressSpace::TryWrite(uint64_t addr, uint8_t val) {
     return false;
   } else {
     if (CanExecute(addr)) {
-      seen_write_to_exec = true;
+      if (!code_version_is_invalid) {
+        LOG(INFO)
+            << "Invalidating code version because of write to executable "
+            << "memory at " << std::hex << addr << std::dec;
+        code_version_is_invalid = true;
+      }
     }
     FindRange(addr)->Write(addr, val);
     return true;
@@ -283,7 +338,10 @@ bool AddressSpace::TryReadExecutable(uint64_t addr, uint8_t *val) {
   if (!CanRead(addr) || !CanExecute(addr)) {
     return false;
   } else {
-    seen_write_to_exec = false;
+    if (code_version_is_invalid) {
+      (void) CodeVersion();
+    }
+    code_version_is_invalid = false;
     *val = FindRange(addr)->Read(addr);
     return true;
   }
@@ -365,10 +423,19 @@ void AddressSpace::SetPermissions(uint64_t base_, size_t size, bool can_read,
   auto base = AlignDownToPage(base_);
   auto limit = base + RoundUpToPage(size);
 
+  auto seen_exec = false;
+  auto seen_non_exec = false;
+
   for (auto addr = base; addr < limit; addr += kPageSize) {
     page_is_readable.erase(addr);
     page_is_writable.erase(addr);
-    page_is_executable.erase(addr);
+
+    if (page_is_executable.count(addr)) {
+      seen_exec = true;
+      page_is_executable.erase(addr);
+    } else {
+      seen_non_exec = true;
+    }
 
     if (can_read) {
       page_is_readable.insert(addr);
@@ -378,6 +445,23 @@ void AddressSpace::SetPermissions(uint64_t base_, size_t size, bool can_read,
     }
     if (can_exec) {
       page_is_executable.insert(addr);
+    }
+  }
+
+  if (!code_version_is_invalid) {
+    if (can_exec && seen_non_exec) {
+      code_version_is_invalid = true;
+    }
+
+    if (!can_exec && seen_exec) {
+      code_version_is_invalid = true;
+    }
+
+    if (code_version_is_invalid) {
+      LOG(INFO)
+          << "Invalidating code version because of change of permissions "
+          << "of memory [" << std::hex << base << ", " << std::hex << limit
+          << ")" << std::dec;
     }
   }
 }
@@ -430,7 +514,12 @@ void AddressSpace::RemoveMap(uint64_t base_, size_t size) {
 
   for (; base < limit; base += kPageSize) {
     if (page_is_executable.count(base)) {
-      seen_write_to_exec = true;
+      if (!code_version_is_invalid) {
+        code_version_is_invalid = true;
+        LOG(INFO)
+          << "Invalidating code version because of removal of executable page "
+          << "at " << std::hex << base << std::dec;
+      }
       page_is_executable.erase(base);
     }
 

@@ -18,27 +18,14 @@
 #define VMILL_RUNTIME_INTRINSICS_H_
 
 #include "remill/Arch/Runtime/Intrinsics.h"
+#include "vmill/Runtime/TaskStatus.h"
 
 extern "C" {
 
-// Invoked by the runtime when it wants to relinquish control to the executor.
-// The executor and the runtime play a kind of back-and-forth, where the
-// executor keeps execution inside of lifted code as much as possible, and then
-// "stops" and is told what state to keep around when `pause` is called.
-[[gnu::used, noreturn]]
-extern void __vmill_pause(State &state, addr_t pc, Memory *memory);
-
-// Invoked by the runtime when it wants to stop a thread (e.g. if the thread
-// crashed).
-[[gnu::used, noreturn]]
-extern void __vmill_stop(State &state, addr_t pc, Memory *memory);
-
-// Schedule a state for eventual running. This is useful for implementing
-// things like multithreading.
-//
-// NOTE(pag): Only schedule a `State` that you have no run.
+// Schedule a state for running.
 [[gnu::used]]
-extern void __vmill_schedule(State &state, addr_t pc, Memory *memory);
+extern void __vmill_schedule(State &state, addr_t pc, Memory *memory,
+                             vmill::TaskStatus status);
 
 // Clone an address space. The clone will be a copy-on-write version of the
 // original. It is safe to use the original and clone concurrently. This is

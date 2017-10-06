@@ -34,8 +34,9 @@ Memory *__remill_async_hyper_call(
       memory = __remill_atomic_end(memory);
       ret_addr = abi.GetReturnAddress(memory, ret_addr);
       state.gpr.rip.aword = ret_addr;
-      __vmill_pause(state, ret_addr, memory);
-      __builtin_unreachable();
+      __vmill_schedule(state, ret_addr, memory,
+                       vmill::kTaskStoppedAfterHyperCall);
+      break;
     }
 
     case AsyncHyperCall::kX86IntN:
@@ -46,14 +47,18 @@ Memory *__remill_async_hyper_call(
         memory = __remill_atomic_end(memory);
         ret_addr = abi.GetReturnAddress(memory, ret_addr);
         state.gpr.rip.aword = ret_addr;
-        __vmill_pause(state, ret_addr, memory);
-        __builtin_unreachable();
+        __vmill_schedule(state, ret_addr, memory,
+                         vmill::kTaskStoppedAfterHyperCall);
       }
       break;
 
     default:
-      return __remill_error(state, ret_addr, memory);
+      __vmill_schedule(
+          state, ret_addr, memory, vmill::kTaskStoppedBeforeUnhandledHyperCall);
+      break;
   }
+
+  return nullptr;
 }
 
 }  // extern C

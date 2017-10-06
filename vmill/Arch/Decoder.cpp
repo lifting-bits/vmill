@@ -6,25 +6,28 @@
 #include <limits>
 #include <set>
 #include <string>
+#include <utility>
 
 #include "remill/Arch/Arch.h"
 #include "remill/Arch/Instruction.h"
 
 #include "vmill/Arch/Decoder.h"
+#include "vmill/Context/AddressSpace.h"
+#include "vmill/Util/Hash.h"
 
 namespace vmill {
 namespace {
 
 // Read instruction bytes using `byte_reader`.
 static std::string ReadInstructionBytes(
-    const remill::Arch *arch, uint64_t pc, ByteReaderCallback byte_reader) {
+    const remill::Arch *arch, AddressSpace &addr_space, uint64_t pc) {
 
   std::string instr_bytes;
   const auto max_num_bytes = arch->MaxInstructionSize();
   instr_bytes.reserve(max_num_bytes);
   for (uint64_t i = 0; i < max_num_bytes; ++i) {
     uint8_t byte = 0;
-    if (!byte_reader(pc + i, &byte)) {
+    if (!addr_space.TryReadExecutable(pc + i, &byte)) {
       break;
     }
     instr_bytes.push_back(static_cast<char>(byte));
@@ -34,12 +37,11 @@ static std::string ReadInstructionBytes(
 
 using DecoderWorkList = std::set<uint64_t>;
 
-// Enqueue control flow targets for processing. In some cases we enqueue
-// work as being derived from a linear scan rather tha from a recursive
-// scan.
-static void AddSuccessorsToWorkList(const remill::Instruction &instr,
+// Enqueue control flow targets for processing. We only follow directly
+// reachable control-flow targets in this list.
+static void AddSuccessorsToWorkList(const remill::Instruction &inst,
                                     DecoderWorkList &work_list) {
-  switch (instr.category) {
+  switch (inst.category) {
     case remill::Instruction::kCategoryInvalid:
     case remill::Instruction::kCategoryError:
     case remill::Instruction::kCategoryIndirectJump:
@@ -51,19 +53,94 @@ static void AddSuccessorsToWorkList(const remill::Instruction &instr,
     case remill::Instruction::kCategoryNormal:
     case remill::Instruction::kCategoryNoOp:
     case remill::Instruction::kCategoryConditionalAsyncHyperCall:
-      work_list.insert(instr.next_pc);
+      work_list.insert(inst.next_pc);
       break;
 
     case remill::Instruction::kCategoryDirectJump:
     case remill::Instruction::kCategoryDirectFunctionCall:
-      work_list.insert(instr.branch_taken_pc);
+      work_list.insert(inst.branch_taken_pc);
       break;
 
     case remill::Instruction::kCategoryConditionalBranch:
-      work_list.insert(instr.branch_taken_pc);
-      work_list.insert(instr.next_pc);
+      work_list.insert(inst.branch_taken_pc);
+      work_list.insert(inst.next_pc);
       break;
   }
+}
+
+static uint64_t GetLoadedEffectiveAddress(const remill::Instruction &inst) {
+  for (const auto &op : inst.operands) {
+    // PC-relative address.
+    if (op.type == remill::Operand::kTypeAddress &&
+        op.addr.base_reg.name == "PC" &&
+        op.addr.index_reg.name.empty() &&
+        op.addr.displacement) {
+      return static_cast<uint64_t>(
+          static_cast<int64_t>(inst.pc) + op.addr.displacement);
+
+    // Absolute address.
+    } else if (op.type == remill::Operand::kTypeAddress &&
+               op.addr.base_reg.name.empty() &&
+               op.addr.index_reg.name.empty() &&
+               op.addr.displacement) {
+      return static_cast<uint64_t>(op.addr.displacement);
+    }
+  }
+  return 0;
+}
+
+// Enqueue control flow targets that will potentially represent future traces.
+static void AddSuccessorsToTraceList(const remill::Arch *arch,
+                                     AddressSpace &addr_space,
+                                     const remill::Instruction &inst,
+                                     DecoderWorkList &work_list) {
+
+  switch (inst.category) {
+//    case remill::Instruction::kCategoryIndirectFunctionCall:
+//    case remill::Instruction::kCategoryDirectFunctionCall:
+//      if (addr_space.CanExecute(inst.next_pc)) {
+//        work_list.insert(inst.next_pc);
+//      }
+//      break;
+
+    // Thunks, e.g. `jmp [0xf00]`.
+    case remill::Instruction::kCategoryIndirectJump: {
+      auto thunk = GetLoadedEffectiveAddress(inst);
+      if (!thunk) {
+        return;
+      }
+
+      alignas(uint64_t) uint8_t bytes[8] = {};
+      auto addr_size_bytes = arch->address_size / 8;
+      for (uint64_t i = 0; i < addr_size_bytes; ++i) {
+        if (!addr_space.TryRead(thunk + i, &(bytes[i]))) {
+          return;
+        }
+      }
+
+      // TODO(pag): Assumes little endian.
+      uint64_t addr = reinterpret_cast<uint64_t &>(bytes[0]);
+      if (addr_space.CanRead(addr) && addr_space.CanExecute(addr)) {
+        LOG(INFO)
+            << "Indirect jump at " << std::hex << inst.pc
+            << " looks like a thunk that invokes " << addr << std::dec;
+        work_list.insert(addr);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+// The 'version' of this trace is a hash of the instruction bytes.
+static uint64_t HashTraceInstructions(const InstructionMap &insts) {
+  std::stringstream is;
+  for (const auto &entry : insts) {
+    is << entry.second.bytes;
+  }
+  auto bytes = is.str();
+  return Hash(bytes);
 }
 
 }  // namespace
@@ -71,50 +148,73 @@ static void AddSuccessorsToWorkList(const remill::Instruction &instr,
 // Starting from `start_pc`, read executable bytes out of a memory region
 // using `byte_reader`, and returns a mapping of decoded instruction program
 // counters to the decoded instructions themselves.
-InstructionMap Decode(const remill::Arch *arch, uint64_t start_pc,
-                      ByteReaderCallback byte_reader) {
+std::list<DecodedTrace> DecodeTraces(AddressSpace &addr_space,
+                                     uint64_t start_pc) {
 
-  unsigned num_blocks = 0;
+  std::list<DecodedTrace> traces;
 
+  auto arch = remill::GetTargetArch();
+
+  DecoderWorkList trace_list;
   DecoderWorkList work_list;
-  InstructionMap decoded_insts;
+  std::set<uint64_t> seen_trace_list;
 
   DLOG(INFO)
       << "Recursively decoding machine code, beginning at "
       << std::hex << start_pc;
 
-  work_list.insert(start_pc);
+  trace_list.insert(start_pc);
 
-  while (!work_list.empty()) {
-    auto entry_it = work_list.begin();
-    const auto pc = *entry_it;
-    work_list.erase(entry_it);
+  while (!trace_list.empty()) {
+    auto trace_it = trace_list.begin();
+    const auto trace_pc = *trace_it;
+    trace_list.erase(trace_it);
 
-    if (decoded_insts.count(pc)) {
+    if (seen_trace_list.count(trace_pc)) {
       continue;
     }
 
-    remill::Instruction inst;
-    auto inst_bytes = ReadInstructionBytes(arch, pc, byte_reader);
-    auto decode_successful = arch->DecodeInstruction(pc, inst_bytes, inst);
-    decoded_insts[pc] = inst;
+    seen_trace_list.insert(trace_pc);
+    work_list.insert(trace_pc);
 
-    if (!decode_successful) {
-      LOG(ERROR)
-          << "Cannot decode instruction at " << std::hex << pc;
-      break;
+    DecodedTrace trace;
+    trace.entry_pc = trace_pc;
+
+    while (!work_list.empty()) {
+      auto entry_it = work_list.begin();
+      const auto pc = *entry_it;
+      work_list.erase(entry_it);
+
+      if (trace.instructions.count(pc)) {
+        continue;
+      }
+
+      remill::Instruction inst;
+      auto inst_bytes = ReadInstructionBytes(arch, addr_space, pc);
+      auto decode_successful = arch->DecodeInstruction(pc, inst_bytes, inst);
+      trace.instructions[pc] = inst;
+
+      if (!decode_successful) {
+        LOG(ERROR)
+            << "Cannot decode instruction at " << std::hex << pc;
+        break;
+      }
+
+      AddSuccessorsToWorkList(inst, work_list);
+      AddSuccessorsToTraceList(arch, addr_space, inst, trace_list);
     }
 
-    AddSuccessorsToWorkList(inst, work_list);
+    trace.hash = HashTraceInstructions(trace.instructions);
+
+    LOG(INFO)
+        << "Decoded " << trace.instructions.size()
+        << " instructions starting from "
+        << std::hex << trace.entry_pc << std::dec;
+
+    traces.push_back(std::move(trace));
   }
 
-  DLOG(INFO)
-      << "Decoded " << decoded_insts.size()
-      << " instructions contained inside of "
-      << num_blocks << " blocks, starting from "
-      << std::hex << start_pc;
-
-  return decoded_insts;
+  return traces;
 }
 
 }  // namespace vmill

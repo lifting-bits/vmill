@@ -7,9 +7,12 @@
 #include <list>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
-#include "vmill/BC/Executor.h"
+#include "vmill/BC/Lifter.h"
+#include "vmill/Runtime/TaskStatus.h"
+#include "vmill/Util/Hash.h"
 
 namespace llvm {
 class LLVMContext;
@@ -18,7 +21,7 @@ namespace vmill {
 
 class AddressSpace;
 class Context;
-class Lifter;
+class Executor;
 
 using ContextPtr = std::unique_ptr<Context>;
 
@@ -26,19 +29,50 @@ using ContextPtr = std::unique_ptr<Context>;
 // meaning to threads. The runtime has `resume`, `pause`, `stop`, and `schedule`
 // intrinsics. When
 struct Task {
+ public:
   void *state;
   uint64_t pc;
   void *memory;
+  TaskStatus status;
 };
+
+struct LiveTraceId {
+ public:
+  uint64_t pc;  // Entry PC of the trace.
+  uint64_t hash;  // Hash of all executable memory.
+
+  inline bool operator==(const LiveTraceId &that) const {
+    return pc == that.pc && hash == that.hash;
+  }
+};
+
+struct LiftedTraceId {
+ public:
+  uint64_t pc;  // Entry PC of the trace.
+  uint64_t hash;  // Hash of the bytes of the machine code in the trace.
+
+  inline bool operator==(const LiftedTraceId &that) const {
+    return pc == that.pc && hash == that.hash;
+  }
+};
+
+}  // namespace vmill
+
+VMILL_MAKE_STD_HASH_OVERRIDE(vmill::LiveTraceId)
+VMILL_MAKE_STD_HASH_OVERRIDE(vmill::LiftedTraceId)
+
+namespace vmill {
 
 // An execution context. An execution context can contain the state of one or
 // more emulated tasks.
 class Context {
  public:
-  static ContextPtr Create(void);
-  static ContextPtr Clone(const ContextPtr &);
+  virtual ~Context(void);
 
-  ~Context(void);
+  Context(void);
+
+  // Create a clone of an existing `Context`.
+  explicit Context(const Context &);
 
   // Creates a new address space, and returns an opaque handle to it.
   void *CreateAddressSpace(void);
@@ -48,48 +82,64 @@ class Context {
   void *CloneAddressSpace(void *);
 
   // Destroys an address space. This doesn't actually free the underlying
-  // address space. Instead it clears it out so that all futre operations
+  // address space. Instead it clears it out so that all future operations
   // fail.
   void DestroyAddressSpace(void *);
 
   // Returns a pointer to the address space associated with a memory handle.
-  AddressSpace *AddressSpaceOf(void *);
+  AddressSpace *AddressSpaceOf(void *) const;
 
-  // Call into the runtime to allocate a `State` structure, and fill it with
-  // the bytes from `data`.
-  //
-  // NOTE(pag): The purpose of this is that we want the runtime to do a memory
-  //            allocation on our behalf, and we don't want to have to know
-  //            how it does that allocation.
-  void *AllocateStateInRuntime(const std::string &data);
+  void CreateInitialTask(const std::string &state, uint64_t pc, void *memory);
+
+  bool TryExecuteNextTask(void);
 
   void ScheduleTask(const Task &task);
-  bool TryDequeueTask(Task *task_out);
-  void ResumeTask(const Task &task);
+
+  static Context *gCurrent;
+  static AddressSpace *gLRUAddressSpace;
+  static void *gLRUMemory;
+  static void *gLRUState;
 
  protected:
-  static Context *&GetInterceptContext(void);
+  virtual void VisitLiftedModule(llvm::Module *module);
 
  private:
+  friend class Executor;
+
   Context(const Context &&) = delete;
   Context &operator=(Context &) = delete;
   Context &operator=(Context &&) = delete;
 
-  Context(void);
-
-  // Create a clone of an existing `Context`.
-  explicit Context(const Context &);
+  // Lift code for a task.
+  llvm::Function *GetLiftedFunctionForTask(const Task &task);
 
   // List of all address spaces.
   std::vector<AddressSpace *> address_spaces;
 
+  // LLVM context shared by all modules so that we can easily share LLVM types
+  // and constants across the modules.
   std::shared_ptr<llvm::LLVMContext> context;
 
+  // Shared instruction lifter.
   std::shared_ptr<Lifter> lifter;
 
+  // Shared instruction executor, so that compiled code is shared across
+  // contexts.
   std::shared_ptr<Executor> executor;
 
+  // List of tasks available for scheduling.
   std::list<Task> tasks;
+
+  // List of all lifted modules. Each module may have one or more lifted
+  // traces.
+  std::list<std::shared_ptr<llvm::Module>> modules;
+
+  // Cache mapping active traces to their LLVM functions. This cache is
+  // invalidated any time executable code is modified, removed, or created.
+  std::unordered_map<LiveTraceId, llvm::Function *> active_cache;
+
+  // The full cache, mapping traces to their LLVM functions.
+  std::unordered_map<LiftedTraceId, llvm::Function *> cache;
 };
 
 using ContextPtr = std::unique_ptr<Context>;

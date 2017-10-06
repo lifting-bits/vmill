@@ -14,10 +14,27 @@
  * limitations under the License.
  */
 
-#define ADDRESS_SIZE_BITS 64
-#define HAS_FEATURE_AVX 1
-#define HAS_FEATE_AVX512 0
-#define VMILL_RUNTIME_X86 64
+#include <ctime>
 
-#include "vmill/Runtime/Linux/X86.cpp"
-#include "Generic/Run.cpp"
+#include "vmill/Util/Timer.h"
+
+namespace vmill {
+
+Timer::Timer(void)
+    : begin(clock()) {}
+
+#ifndef CLOCKS_PER_SECOND
+# define CLOCKS_PER_SECOND 1000000
+#endif
+
+// Returns the number of elapsed seconds since the instantiation of the
+// time.
+double Timer::ElapsedSeconds(void) const {
+  auto end = clock();
+  auto diff = end - begin;
+  double seconds = diff / CLOCKS_PER_SECOND;
+  seconds += double(diff % CLOCKS_PER_SECOND) / double(CLOCKS_PER_SECOND);
+  return seconds;
+}
+
+}  // namespace vmill

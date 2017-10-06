@@ -20,6 +20,7 @@
 #include <cerrno>
 #include <csignal>
 #include <cstdlib>
+#include <ctime>
 #include <fcntl.h>
 #include <fstream>
 #include <iostream>
@@ -35,6 +36,7 @@
 
 #include "remill/Arch/Arch.h"
 #include "remill/Arch/Name.h"
+#include "remill/BC/Util.h"
 #include "remill/OS/FileSystem.h"
 #include "remill/OS/OS.h"
 
@@ -102,6 +104,8 @@ static void LoadPageRangeFromFile(vmill::AddressSpace *addr_space,
 
   auto fd = open(path.c_str(), O_RDONLY);
 
+  // Read bytes from the file, and copy them one-by-one into the address
+  // space.
   uint8_t buff[4096];
   uint64_t base_addr = static_cast<uint64_t>(range.base());
   while (range_size) {
@@ -126,10 +130,9 @@ static void LoadPageRangeFromFile(vmill::AddressSpace *addr_space,
   close(fd);
 }
 
-
 // Go through the snapshotted pages and copy them into the address space.
 static void LoadAddressSpaceFromSnapshot(
-    const vmill::ContextPtr &context,
+    vmill::Context &context,
     AddressSpaceIdToMemoryMap &addr_space_ids,
     const grr::snapshot::AddressSpace &orig_addr_space) {
 
@@ -151,12 +154,13 @@ static void LoadAddressSpaceFromSnapshot(
         << " for address space " << std::dec << orig_addr_space.id();
 
     const auto &parent_mem = addr_space_ids[parent_id];
-    memory = context->CloneAddressSpace(parent_mem);
+    memory = context.CloneAddressSpace(parent_mem);
   } else {
-    memory = context->CreateAddressSpace();
+    memory = context.CreateAddressSpace();
   }
 
-  auto emu_addr_space = context->AddressSpaceOf(memory);
+  addr_space_ids[id] = memory;
+  auto emu_addr_space = context.AddressSpaceOf(memory);
 
   // Bring in the ranges.
   for (const auto &page : orig_addr_space.page_ranges()) {
@@ -176,13 +180,8 @@ static void LoadAddressSpaceFromSnapshot(
   }
 }
 
-}  // namespace
-
-static void Run(const ProgramSnapshotPtr &snapshot) {
-
-  LOG(INFO) << "Creating execution context.";
-  auto context = vmill::Context::Create();
-
+static void LoadSnapshotIntoContext(const ProgramSnapshotPtr &snapshot,
+                                    vmill::Context &context) {
   LOG(INFO) << "Loading address space information from snapshot";
   AddressSpaceIdToMemoryMap address_space_ids;
   for (const auto &address_space : snapshot->address_spaces()) {
@@ -198,20 +197,62 @@ static void Run(const ProgramSnapshotPtr &snapshot) {
         << " for task";
 
     auto memory = address_space_ids[addr_space_id];
-    auto state = context->AllocateStateInRuntime(thread.state());
     auto pc = static_cast<uint64_t>(thread.pc());
 
     LOG(INFO)
         << "Adding task starting execution at " << std::hex << pc
         << " in address space " << std::dec << addr_space_id;
 
-    context->ScheduleTask({state, pc, memory});
+    context.CreateInitialTask(thread.state(), pc, memory);
+  }
+}
+
+}  // namespace
+
+class Context : public vmill::Context {
+ public:
+  Context(void) {
+    auto bitcode_dir = FLAGS_workspace + "/bitcode";
+    CHECK(remill::TryCreateDirectory(bitcode_dir))
+        << "Could not create bitcode cache directory " << bitcode_dir;
+
+    remill::ForEachFileInDirectory(
+        bitcode_dir,
+        [=] (const std::string &bitcode_path) -> bool {
+          LOG(INFO)
+              << "Loading cached bitcode from " << bitcode_path;
+          // TODO(pag): Implement me!
+          return true;
+        });
   }
 
-  vmill::Task task;
-  while (context->TryDequeueTask(&task)) {
-    context->ResumeTask(task);
+  virtual ~Context(void) {}
+
+ protected:
+  void VisitLiftedModule(llvm::Module *module) override {
+    std::stringstream ss;
+    ss << FLAGS_workspace + "/bitcode/" << std::hex << time(nullptr) << ".bc";
+    auto save_path = ss.str();
+    LOG(INFO)
+        << "Caching module to " << save_path;
+    remill::StoreModuleToFile(module, save_path);
   }
+};
+
+static void Run(const ProgramSnapshotPtr &snapshot) {
+
+  LOG(INFO) << "Creating execution context.";
+  Context context;
+
+  LOG(INFO) << "Creating executor.";
+
+  LoadSnapshotIntoContext(snapshot, context);
+
+  while (context.TryExecuteNextTask()) {
+
+  }
+
+  LOG(ERROR) << "Done.";
 
 //  context->Execute();
 }

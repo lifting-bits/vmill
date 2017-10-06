@@ -23,9 +23,9 @@
 #include "remill/OS/FileSystem.h"
 #include "remill/OS/OS.h"
 
+#include "vmill/Arch/Decoder.h"
 #include "vmill/BC/Lifter.h"
 #include "vmill/Context/AddressSpace.h"
-//#include "vmill/Executor/Schedule.h"
 
 DECLARE_string(arch);
 DECLARE_string(os);
@@ -61,15 +61,12 @@ static void Run(void) {
         << " to " << std::hex << FLAGS_pc + i;
   }
 
-  std::unique_ptr<llvm::Module> lifted_module(new llvm::Module("", *context));
-  auto lifted_func = lifter->LiftIntoModule(
-      FLAGS_pc,
-      [&space] (uint64_t pc, uint8_t *byte) -> bool {
-        return space.TryReadExecutable(pc, byte);
-      },
-      lifted_module);
-
-  IF_LLVM_LT_50(lifted_func.func->dump();)
+  auto module = new llvm::Module("", *context);
+  auto decoded_traces = vmill::DecodeTraces(space, FLAGS_pc);
+  for (const auto &decoded_trace : decoded_traces) {
+    auto lifted_func = lifter->LiftTraceIntoModule(decoded_trace, module);
+    IF_LLVM_LT_50(lifted_func->dump();)
+  }
 //  auto sched = vmill::Schedule::Create();
 //
 //  sched->Enqueue(lifted_func.func);

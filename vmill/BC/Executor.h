@@ -26,7 +26,8 @@ class Module;
 }  // namespace llvm
 namespace vmill {
 
-class Context;
+struct Task;
+struct LiftedTrace;
 
 class Executor {
  public:
@@ -35,16 +36,15 @@ class Executor {
   static Executor *GetNativeExecutor(
       const std::shared_ptr<llvm::LLVMContext> &context_);
 
- protected:
-  friend class Context;
-
-  virtual void Execute(void) = 0;
-
-  explicit Executor(const std::shared_ptr<llvm::LLVMContext> &context_);
-
   // Call into the runtime to allocate a `State` structure, and fill it with
   // the bytes from `data`.
   virtual void *AllocateStateInRuntime(const std::string &data) = 0;
+
+  // Execute some code associated with a task.
+  virtual void Execute(const Task &task, llvm::Function *func) = 0;
+
+ protected:
+  explicit Executor(const std::shared_ptr<llvm::LLVMContext> &context_);
 
   std::shared_ptr<llvm::LLVMContext> context;
 

@@ -4,23 +4,28 @@
 #define VMILL_ARCH_DECODER_H_
 
 #include <functional>
+#include <list>
 #include <map>
 
 #include "remill/Arch/Instruction.h"
-#include "vmill/Util/Callback.h"
 
-namespace remill {
-class Arch;
-}  // namespace remill
 namespace vmill {
 
+class AddressSpace;
+
 using InstructionMap = std::map<uint64_t, remill::Instruction>;
+
+struct DecodedTrace {
+  uint64_t entry_pc;
+  uint64_t hash;
+  InstructionMap instructions;
+};
 
 // Starting from `start_pc`, read executable bytes out of a memory region
 // using `byte_reader`, and returns a mapping of decoded instruction program
 // counters to the decoded instructions themselves.
-InstructionMap Decode(const remill::Arch *arch, uint64_t start_pc,
-                      ByteReaderCallback byte_reader);
+std::list<DecodedTrace> DecodeTraces(AddressSpace &addr_space,
+                                     uint64_t start_pc);
 
 }  // namespace vmill
 

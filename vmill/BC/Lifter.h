@@ -18,9 +18,11 @@ class Arch;
 }  // namespace remill
 namespace vmill {
 
+struct DecodedTrace;
+
 // A single-entry, multiple-exit trace, starting at `pc`.
-struct LiftedFunction {
-  const uint64_t pc;
+struct LiftedTrace {
+  const uint64_t entry_pc;
   const uint64_t hash;
   llvm::Function * const func;
 };
@@ -38,9 +40,8 @@ class Lifter {
   // Note: Lifting is always successful. Even invalid instructions are 'lifted',
   //       but lifted into bitcode functions that will dispatch to Remill's
   //       error intrinsics.
-  virtual LiftedFunction LiftIntoModule(
-      uint64_t pc, const ByteReaderCallback &cb,
-      const std::unique_ptr<llvm::Module> &module) = 0;
+  virtual llvm::Function *LiftTraceIntoModule(
+      const DecodedTrace &trace, llvm::Module *module) = 0;
 
  protected:
   Lifter(void);

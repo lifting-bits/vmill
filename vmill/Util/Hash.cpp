@@ -14,10 +14,14 @@
  * limitations under the License.
  */
 
-#define ADDRESS_SIZE_BITS 64
-#define HAS_FEATURE_AVX 1
-#define HAS_FEATE_AVX512 0
-#define VMILL_RUNTIME_X86 64
+#include "vmill/Util/Hash.h"
 
-#include "vmill/Runtime/Linux/X86.cpp"
-#include "Generic/Run.cpp"
+#include "vmill/Etc/xxHash/xxhash.h"
+
+namespace vmill {
+
+uint64_t Hash(const void *data, size_t size) {
+  return XXH64(data, size, 0);
+}
+
+}  // namespace vmill

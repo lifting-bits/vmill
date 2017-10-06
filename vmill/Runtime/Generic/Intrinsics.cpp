@@ -83,6 +83,58 @@ size_t CopyStringToMemory(Memory *memory, addr_t addr, const char *val,
   return i;
 }
 
+extern "C" uint8_t __remill_undefined_8(void) {
+  return 0;
+}
+
+extern "C" uint16_t __remill_undefined_16(void) {
+  return 0;
+}
+
+extern "C" uint32_t __remill_undefined_32(void) {
+  return 0;
+}
+
+extern "C" uint64_t __remill_undefined_64(void) {
+  return 0;
+}
+
+extern "C" float32_t __remill_undefined_f32(void) {
+  return 0.0;
+}
+
+extern "C" float64_t __remill_undefined_f64(void) {
+  return 0.0;
+}
+
+extern "C" Memory *__remill_error(State &state, addr_t pc, Memory *memory) {
+  __vmill_schedule(state, pc, memory, vmill::kTaskStoppedAtError);
+  return nullptr;
+}
+
+extern "C" Memory *__remill_missing_block(State &state, addr_t pc,
+                                          Memory *memory) {
+  __vmill_schedule(state, pc, memory, vmill::kTaskStoppedAtError);
+  return nullptr;
+}
+
+extern "C" Memory *__remill_jump(State &state, addr_t pc, Memory *memory) {
+  __vmill_schedule(state, pc, memory, vmill::kTaskStoppedAtJumpTarget);
+  return nullptr;
+}
+
+extern "C" Memory *__remill_function_call(State &state, addr_t pc,
+                                          Memory *memory) {
+  __vmill_schedule(state, pc, memory, vmill::kTaskStoppedAtCallTarget);
+  return nullptr;
+}
+
+extern "C" Memory *__remill_function_return(State &state, addr_t pc,
+                                            Memory *memory) {
+  __vmill_schedule(state, pc, memory, vmill::kTaskStoppedAtReturnTarget);
+  return nullptr;
+}
+
 // Memory barriers types, see: http://g.oswego.edu/dl/jmm/cookbook.html
 Memory *__remill_barrier_load_load(Memory * memory) {
   return memory;

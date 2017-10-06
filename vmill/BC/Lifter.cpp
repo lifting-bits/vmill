@@ -62,13 +62,11 @@ class LifterImpl : public Lifter {
 
   explicit LifterImpl(const std::shared_ptr<llvm::LLVMContext> &);
 
-  LiftedFunction LiftIntoModule(
-      uint64_t pc, const ByteReaderCallback &cb,
-      const std::unique_ptr<llvm::Module> &module) override;
+  llvm::Function *LiftTraceIntoModule(
+      const DecodedTrace &trace, llvm::Module *module) override;
 
-  // Host and target architectures.
+  // Host architectures.
   const remill::Arch * const host_arch;
-  const remill::Arch * const target_arch;
 
   // LLVM context that manages all modules.
   const std::shared_ptr<llvm::LLVMContext> context;
@@ -90,33 +88,126 @@ class LifterImpl : public Lifter {
 LifterImpl::LifterImpl(const std::shared_ptr<llvm::LLVMContext> &context_)
     : Lifter(),
       host_arch(remill::GetHostArch()),
-      target_arch(remill::GetTargetArch()),
       context(context_),
       semantics(remill::LoadTargetSemantics(context.get())),
       intrinsics(semantics.get()),
       lifter(remill::AddressType(semantics.get()), &intrinsics) {
+
   host_arch->PrepareModule(semantics.get());
+
+  remill::ForEachISel(
+      semantics.get(),
+      [=] (llvm::GlobalVariable *, llvm::Function *sem) -> void {
+        sem->addFnAttr(llvm::Attribute::OptimizeNone);
+      });
 }
 
 LifterImpl::~LifterImpl(void) {}
-
-// The 'version' of this trace is a hash of the instruction bytes.
-static uint64_t TraceHash(const InstructionMap &insts) {
-  std::stringstream is;
-  for (const auto &entry : insts) {
-    is << entry.second.bytes;
-  }
-  std::hash<std::string> hash;
-  return hash(is.str());
-}
 
 // The function's lifted name contains both its position in memory (`pc`) and
 // the contents of memory (instruction bytes). This makes it sensitive to self-
 // modifying code.
 static std::string LiftedFunctionName(uint64_t pc, uint64_t hash) {
   std::stringstream ns;
-  ns << "$" << std::hex << pc << "_" << std::hex << hash;
+  ns << "_" << std::hex << pc << "_" << std::hex << hash;
   return ns.str();
+}
+
+static llvm::Function *DeclareFunctionInModule(llvm::Function *func,
+                                               llvm::Module *dest_module) {
+  auto dest_func = dest_module->getFunction(func->getName());
+  if (dest_func) {
+    return dest_func;
+  }
+
+  dest_func = llvm::Function::Create(
+      func->getFunctionType(), func->getLinkage(),
+      func->getName(), dest_module);
+
+  dest_func->copyAttributesFrom(func);
+  dest_func->setVisibility(func->getVisibility());
+
+  return dest_func;
+}
+
+static llvm::GlobalVariable *DeclareVarInModule(llvm::GlobalVariable *var,
+                                                llvm::Module *dest_module) {
+  auto dest_var = dest_module->getGlobalVariable(var->getName());
+  if (dest_var) {
+    return dest_var;
+  }
+
+  auto type = var->getValueType();
+  dest_var = new llvm::GlobalVariable(
+      type, var->isConstant(), var->getLinkage(), nullptr,
+      var->getName(), var->getThreadLocalMode(),
+      var->getType()->getAddressSpace());
+
+  dest_var->copyAttributesFrom(var);
+
+  if (var->hasInitializer()) {
+    LOG(ERROR)
+        << "Substituting null initializer for " << var->getName().str();
+
+    dest_var->setInitializer(llvm::Constant::getNullValue(type));
+  }
+
+  return dest_var;
+}
+
+template <typename T>
+static void ClearMetaData(T *value) {
+  llvm::SmallVector<std::pair<unsigned, llvm::MDNode *>, 4> mds;
+  value->getAllMetadata(mds);
+  for (auto md_info : mds) {
+    value->setMetadata(md_info.first, nullptr);
+  }
+}
+
+// Move a function from one module into another module.
+static void MoveFunctionIntoModule(llvm::Function *func,
+                                   llvm::Module *dest_module) {
+  CHECK(&(func->getContext()) == &(dest_module->getContext()))
+      << "Cannot move function across two independent LLVM contexts.";
+
+  auto source_module = func->getParent();
+  CHECK(source_module != dest_module)
+      << "Cannot move function to the same module.";
+
+  CHECK(!dest_module->getFunction(func->getName()))
+      << "Function " << func->getName().str()
+      << " already exists in destination module.";
+
+  func->removeFromParent();
+  dest_module->getFunctionList().push_back(func);
+
+  ClearMetaData(func);
+
+  for (auto &block : *func) {
+    for (auto &inst : block) {
+      ClearMetaData(&inst);
+
+      // Substitute globals in the operands.
+      for (auto &op : inst.operands()) {
+        auto used_val = op.get();
+
+        auto used_func = llvm::dyn_cast<llvm::Function>(used_val);
+        auto used_var = llvm::dyn_cast<llvm::GlobalVariable>(used_val);
+
+        if (used_func) {
+          op.set(DeclareFunctionInModule(used_func, dest_module));
+
+        } else if (used_var) {
+          op.set(DeclareVarInModule(used_var, dest_module));
+
+        } else {
+          CHECK(!llvm::isa<llvm::GlobalValue>(used_val))
+              << "Cannot move global value " << used_val->getName().str()
+              << " into destination module.";
+        }
+      }
+    }
+  }
 }
 
 // Optimize the lifted function. This ends up being pretty slow because it
@@ -134,12 +225,13 @@ static void RunO3(llvm::Function *func) {
 
   llvm::PassManagerBuilder builder;
   builder.OptLevel = 3;
-  builder.SizeLevel = 2;
+  builder.SizeLevel = 0;
   builder.Inliner = llvm::createFunctionInliningPass(
       std::numeric_limits<int>::max());
   builder.LibraryInfo = TLI;  // Deleted by `llvm::~PassManagerBuilder`.
   builder.DisableUnrollLoops = false;  // Unroll loops!
   builder.DisableUnitAtATime = false;
+  builder.RerollLoops = false;
   builder.SLPVectorize = false;
   builder.LoopVectorize = false;
   builder.VerifyInput = true;
@@ -153,21 +245,19 @@ static void RunO3(llvm::Function *func) {
   module_manager.run(*module);
 }
 
-LiftedFunction LifterImpl::LiftIntoModule(
-    uint64_t pc, const ByteReaderCallback &cb,
-    const std::unique_ptr<llvm::Module> &module) {
+llvm::Function *LifterImpl::LiftTraceIntoModule(
+    const DecodedTrace &trace, llvm::Module *module) {
+
+  const auto &insts = trace.instructions;
+  const auto func_name = LiftedFunctionName(trace.entry_pc, trace.hash);
 
   auto context_ptr = context.get();
-  CHECK(&(module.get()->getContext()) == context_ptr);
-
-  const auto insts = Decode(target_arch, pc, cb);
-  const auto hash = TraceHash(insts);
-  const auto func_name = LiftedFunctionName(pc, hash);
+  CHECK(context_ptr == &(module->getContext()));
 
   // Already lifted; don't re-do things.
   auto dest_func = module->getFunction(func_name);
   if (dest_func) {
-    return {pc, hash, dest_func};
+    return dest_func;
   }
 
   auto func = remill::DeclareLiftedFunction(semantics.get(), func_name);
@@ -185,12 +275,12 @@ LiftedFunction LifterImpl::LiftIntoModule(
 
   // Create a branch from the entrypoint of the lifted function to the basic
   // block representing the first decoded instruction.
-  auto entry_block = GetOrCreateBlock(pc);
+  auto entry_block = GetOrCreateBlock(trace.entry_pc);
   llvm::BranchInst::Create(entry_block, &(func->front()));
 
   // Guarantee that a basic block exists, even if the first instruction
   // failed to decode.
-  if (!insts.count(pc)) {
+  if (!insts.count(trace.entry_pc)) {
     remill::AddTerminatingTailCall(entry_block, intrinsics.error);
   }
 
@@ -198,7 +288,7 @@ LiftedFunction LifterImpl::LiftIntoModule(
   for (const auto &entry : insts) {
     auto block = GetOrCreateBlock(entry.first);
     auto &inst = const_cast<remill::Instruction &>(entry.second);
-    LOG(ERROR) << inst.Serialize();
+//    LOG(ERROR) << inst.Serialize();
     if (!lifter.LiftIntoBlock(inst, block)) {
       remill::AddTerminatingTailCall(block, intrinsics.error);
       continue;
@@ -258,15 +348,9 @@ LiftedFunction LifterImpl::LiftIntoModule(
   // Optimize the lifted function.
   RunO3(func);
 
-  dest_func = llvm::Function::Create(
-      func->getFunctionType(), llvm::GlobalValue::ExternalLinkage,
-      func_name, module.get());
+  MoveFunctionIntoModule(func, module);
 
-  remill::CloneFunctionInto(func, dest_func);
-
-  func->eraseFromParent();
-
-  return {pc, hash, dest_func};
+  return func;
 }
 
 }  // namespace

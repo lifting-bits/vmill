@@ -13,11 +13,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#ifndef TOOLS_VMILL_VMILL_UTIL_TIMER_H_
+#define TOOLS_VMILL_VMILL_UTIL_TIMER_H_
 
-#define ADDRESS_SIZE_BITS 64
-#define HAS_FEATURE_AVX 1
-#define HAS_FEATE_AVX512 0
-#define VMILL_RUNTIME_X86 64
+#include <ctime>
 
-#include "vmill/Runtime/Linux/X86.cpp"
-#include "Generic/Run.cpp"
+namespace vmill {
+
+class Timer {
+ public:
+  Timer(void);
+
+  // Returns the number of elapsed seconds since the instantiation of the
+  // time.
+  double ElapsedSeconds(void) const;
+
+ public:
+  clock_t begin;
+};
+
+}  // namespace vmill
+
+#endif  // TOOLS_VMILL_VMILL_UTIL_TIMER_H_
