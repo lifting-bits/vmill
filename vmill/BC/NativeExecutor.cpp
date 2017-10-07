@@ -65,6 +65,14 @@ inline static AddressSpace *AddressSpaceOf(void *memory) {
   return Context::gCurrent->AddressSpaceOf(memory);
 }
 
+extern "C" void *__vmill_allocate_address_space(void) {
+  return Context::gCurrent->CreateAddressSpace();
+}
+
+extern "C" void __vmill_free_address_space(void *memory) {
+  Context::gCurrent->DestroyAddressSpace(memory);
+}
+
 extern "C" bool __vmill_can_read_byte(void *memory, uint64_t addr) {
   return AddressSpaceOf(memory)->CanRead(addr);
 }

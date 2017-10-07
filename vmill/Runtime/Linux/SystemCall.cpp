@@ -42,6 +42,25 @@
 #include <sys/utsname.h>
 #include <unistd.h>
 
+#define ANSI_COLOR_RED     "\x1b[31m"
+#define ANSI_COLOR_GREEN   "\x1b[32m"
+#define ANSI_COLOR_YELLOW  "\x1b[33m"
+#define ANSI_COLOR_BLUE    "\x1b[34m"
+#define ANSI_COLOR_MAGENTA "\x1b[35m"
+#define ANSI_COLOR_CYAN    "\x1b[36m"
+#define ANSI_COLOR_RESET   "\x1b[0m"
+
+#define STRACE_SYSCALL_NUM(nr) \
+    fprintf(stderr, ANSI_COLOR_YELLOW "%lu:" ANSI_COLOR_RESET, nr)
+
+#define STRACE_ERROR(syscall, fmt, ...) \
+    fprintf(stderr, ANSI_COLOR_RED #syscall ":" fmt ANSI_COLOR_RESET "\n", \
+            ##__VA_ARGS__)
+
+#define STRACE_SUCCESS(syscall, fmt, ...) \
+    fprintf(stderr, ANSI_COLOR_GREEN #syscall ":" fmt ANSI_COLOR_RESET "\n", \
+          ##__VA_ARGS__)
+
 namespace {
 
 enum : size_t {
@@ -215,7 +234,9 @@ namespace {
 // entry points.
 static Memory *SystemCall32(Memory *memory, State *state,
                             const SystemCallABI &syscall) {
-  switch (auto syscall_num = syscall.GetSystemCallNum(memory, state)) {
+  auto syscall_num = syscall.GetSystemCallNum(memory, state);
+  STRACE_SYSCALL_NUM(syscall_num);
+  switch (syscall_num) {
     case 1: return SysExit(memory, state, syscall);
     case 3: return SysRead(memory, state, syscall);
     case 4: return SysWrite(memory, state, syscall);
@@ -232,6 +253,7 @@ static Memory *SystemCall32(Memory *memory, State *state,
     case 74: return SysSetHostName(memory, state, syscall);
     case 78: return SysGetTimeOfDay32(memory, state, syscall);
     case 79: return SysSetTimeOfDay32(memory, state, syscall);
+    case 90: return SysMmap(memory, state, syscall);
     case 91: return SysMunmap(memory, state, syscall);
     case 102: return SysSocketCall<uint32_t>(memory, state, syscall);
     case 106: return SysStat<linux32_stat>(memory, state, syscall);
@@ -244,12 +266,13 @@ static Memory *SystemCall32(Memory *memory, State *state,
     case 174:  // SYS_sys_rt_sigaction, don't handle for now.
     case 175:  // SYS_sys_rt_sigprocmask, don't handle for now.
       return syscall.SetReturn(memory, state, 0);
-    case 192: return SysMmap(memory, state, syscall);
+    case 192: return SysMmap(memory, state, syscall, kPageSize);
     case 195: return SysStat<linux32_stat64>(memory, state, syscall);
     case 196: return SysLstat<linux32_stat64>(memory, state, syscall);
     case 197: return SysFstat<linux32_stat64>(memory, state, syscall);
     case 240: return SysFutex<linux32_timespec>(memory, state, syscall);
     default:
+      STRACE_ERROR(unsupported, "nr=%d", syscall_num);
       return syscall.SetReturn(memory, state, -ENOSYS);
   }
 }

@@ -42,14 +42,15 @@ static std::ranlux48_base gRandGen(0  /* seed */);
 // VMill memory manager as a way of finding a hole in memory. The idea here is
 // that we don't want to completely shadow the structure maintained in VMill
 // for the address space, so instead we'll just make queries to it.
-static addr_t FindRegionToMap(Memory *memory, addr_t size) {
+static addr_t FindRegionToMap(Memory *memory, addr_t size,
+                              addr_t alloc_max=kAllocMax) {
   for (auto i = 0; i < 16; ++i) {
     // Guess a random address to allocate. The guess is guaranteed to not be in
     // the zero page, then we will constrain it to be smaller than the maximum
     // allocatable address.
     auto guess = static_cast<addr_t>(gRandGen() * kPageSize);
     auto where = std::max<addr_t>(
-        std::min<addr_t>(guess, kAllocMax - size), kAllocMin);
+        std::min<addr_t>(guess, alloc_max - size), kAllocMin);
 
     // There is no next mapping. This implies that `where` is not part of
     // any mapping. That being the case, `where` must be beyond any other
@@ -72,7 +73,7 @@ static addr_t FindRegionToMap(Memory *memory, addr_t size) {
   // Linearly search for a hole, starting from high memory and going down
   // from there.
   addr_t candidate = 0;
-  for (auto max = kAllocMax; max >= kAllocMin; ) {
+  for (auto max = alloc_max; max >= kAllocMin; ) {
     auto prev_begin = __vmill_prev_memory_begin(memory, max - 1);
     if (!prev_begin) {
       candidate = max - size;
@@ -104,12 +105,21 @@ static addr_t FindRegionToMap(Memory *memory, addr_t size) {
 // Emulate an `brk` system call.
 static Memory *SysBrk(Memory *memory, State *state,
                       const SystemCallABI &syscall) {
+  addr_t addr = 0;
+  if (!syscall.TryGetArgs(memory, state, &addr)) {
+    STRACE_ERROR(brk, "Can't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  STRACE_ERROR(brk, "addr=%lx, suppressed", addr);
   return syscall.SetReturn(memory, state, -ENOMEM);
 }
 
 // Emulate an `mmap` system call.
 static Memory *SysMmap(Memory *memory, State *state,
-                       const SystemCallABI &syscall) {
+                       const SystemCallABI &syscall,
+                       addr_t offset_scale=1) {
+
   addr_t addr = 0;
   addr_t size = 0;
   int prot = 0;
@@ -118,11 +128,14 @@ static Memory *SysMmap(Memory *memory, State *state,
   off_t offset = 0;
   if (!syscall.TryGetArgs(memory, state, &addr, &size, &prot, &flags,
                           &fd, &offset)) {
+    STRACE_ERROR(mmap, "Can't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
+  offset *= offset_scale;
   size = AlignToPage(size);
   if (!size) {  // Size not page aligned.
+    STRACE_ERROR(mmap, "Zero-sized allocation");
     return syscall.SetReturn(memory, state, -EINVAL);
   }
 
@@ -130,16 +143,21 @@ static Memory *SysMmap(Memory *memory, State *state,
   //            mappings.
   if (-1 != fd) {
     if (STDIN_FILENO == fd || STDOUT_FILENO == fd || STDERR_FILENO == fd) {
+      STRACE_ERROR(mmap, "Using I/O fd %d", fd);
       return syscall.SetReturn(memory, state, -EACCES);
 
     } else if (-1 > fd) {
+      STRACE_ERROR(mmap, "Invalid fd %d", fd);
       return syscall.SetReturn(memory, state, -EBADFD);
 
     } else if (0 > offset || offset % 4096) {  // Not page-aligned.
+      STRACE_ERROR(mmap, "Unaligned offset %lx of fd %d", offset, fd);
       return syscall.SetReturn(memory, state, -EINVAL);
     }
 
     if (offset > (offset + static_cast<ssize_t>(size))) {  // Signed overflow.
+      STRACE_ERROR(mmap, "Signed overflow of offset %ls and size %lx for fd %d",
+                   offset, size, fd);
       return syscall.SetReturn(memory, state, -EOVERFLOW);
     }
   }
@@ -148,18 +166,29 @@ static Memory *SysMmap(Memory *memory, State *state,
 # define MAP_32BIT 0x40
 #endif
 
+  auto max_addr = kAllocMax;
+  if (8 == sizeof(addr_t) && 0 != (MAP_32BIT & flags)) {
+    max_addr = k4GiB;
+    if (addr && addr >= max_addr) {
+      addr = 0;
+    }
+  }
+
   // Unsupported flags.
-  if ((MAP_SHARED & flags) || (MAP_GROWSDOWN & flags) || (MAP_32BIT & flags)) {
+  if ((MAP_SHARED & flags) || (MAP_GROWSDOWN & flags)) {
+    STRACE_ERROR(mmap, "Unsupported flag %x", flags);
     return syscall.SetReturn(memory, state, -EINVAL);
   }
 
   // Required flags.
   if (!(MAP_PRIVATE & flags)) {
+    STRACE_ERROR(mmap, "Not a private mmap");
     return syscall.SetReturn(memory, state, -EINVAL);
   }
 
   // A mapping can't be both anonymous and file-backed.
-  if (fd && (MAP_ANONYMOUS & flags)) {
+  if (0 <= fd && (MAP_ANONYMOUS & flags)) {
+    STRACE_ERROR(mmap, "Must be file-backed or anonymous, but not both");
     return syscall.SetReturn(memory, state, -EINVAL);
   }
 
@@ -167,6 +196,7 @@ static Memory *SysMmap(Memory *memory, State *state,
   if (MAP_FIXED & flags) {
     addr = AlignToPage(addr);
     if (!addr) {
+      STRACE_ERROR(mmap, "Can't allocate the null page");
       return syscall.SetReturn(memory, state, -EINVAL);
 
     } else if (addr < kMmapMinAddr) {
@@ -179,8 +209,9 @@ static Memory *SysMmap(Memory *memory, State *state,
   // Try to go and find a region of memory to map, assuming that one has
   // not been explicitly requested.
   if (!addr) {
-    addr = FindRegionToMap(memory, size);
+    addr = FindRegionToMap(memory, size, max_addr);
     if (!addr) {
+      STRACE_ERROR(mmap, "Out of memory for request of size %lx", size);
       return syscall.SetReturn(memory, state, -ENOMEM);
     }
   }
@@ -191,9 +222,11 @@ static Memory *SysMmap(Memory *memory, State *state,
   //            stealing a new fd (with `dup`), and recording some meta-data
   //            to note when to flush the mapped data.
   off_t old_offset = 0;
-  if (fd) {
+  if (0 <= fd) {
     old_offset = lseek(fd, 0, SEEK_CUR);
     if (-1 == old_offset) {
+      STRACE_ERROR(mmap, "Couldn't get old seek position for fd %d: %s",
+                   fd, strerror(errno));
       return syscall.SetReturn(memory, state, -errno);
     }
 
@@ -201,10 +234,14 @@ static Memory *SysMmap(Memory *memory, State *state,
     // way of checking to see that the region of memory is big enough to be
     // `mmap`ed.
     if (-1 == lseek(fd, offset + static_cast<off_t>(size), SEEK_SET)) {
+      STRACE_ERROR(mmap, "Couldn't get set seek position for fd %d: %s",
+                   fd, strerror(errno));
       memory = syscall.SetReturn(memory, state, -errno);
     }
 
     if (-1 == lseek(fd, offset, SEEK_SET)) {
+      STRACE_ERROR(mmap, "Couldn't reset old seek position for fd %d: %s",
+                   fd, strerror(errno));
       memory = syscall.SetReturn(memory, state, -errno);
       lseek(fd, old_offset, SEEK_SET);  // Maintain transparency.
       return memory;
@@ -215,22 +252,33 @@ static Memory *SysMmap(Memory *memory, State *state,
   memory = __vmill_allocate_memory(memory, addr, size);
 
   // Copy data from the file into the memory mapping.
-  if (fd) {
-    for (addr_t i = 0; i < size; ) {
-      auto ret = read(fd, gIOBuffer, kIOBufferSize);
+  if (0 <= fd) {
+    addr_t remaining = size;
+    for (addr_t i = 0; remaining; ) {
+      auto ret = read(fd, gIOBuffer,
+                      std::min<addr_t>(remaining, kIOBufferSize));
 
       // Failed to copy part of the file into memory, need to reset the seek
       // head to its prior value to maintain transparency, then free the just
       // allocated memory.
       if (-1 == ret) {
+        STRACE_ERROR(mmap, "Couldn't copy bytes from backing fd %d: %s",
+                     fd, strerror(errno));
+
         memory = syscall.SetReturn(memory, state, -errno);
         lseek(fd, old_offset, SEEK_SET);  // Reset.
         return __vmill_free_memory(memory, addr, size);
 
-      } else {
+      } else if (ret) {
         auto num_copied_bytes = static_cast<addr_t>(ret);
-        memory = CopyToMemory(memory, addr, gIOBuffer, num_copied_bytes);
+        memory = CopyToMemory(memory, addr + i, gIOBuffer, num_copied_bytes);
+        remaining -= num_copied_bytes;
         i += num_copied_bytes;
+
+      // Probably the size of the MMAP is rounded up to be larger than the
+      // size of what (remains) in the file.
+      } else {
+        break;
       }
     }
 
@@ -247,6 +295,10 @@ static Memory *SysMmap(Memory *memory, State *state,
                                     can_write, can_exec);
   }
 
+  STRACE_SUCCESS(
+      mmap, "size=%lx, read=%d, write=%d, exec=%d, fd=%d, offset=%lx, return=%lx",
+      size, can_read, can_write, can_exec, fd, offset, addr);
+
   return syscall.SetReturn(memory, state, addr);
 }
 
@@ -256,12 +308,16 @@ static Memory *SysMunmap(Memory *memory, State *state,
   addr_t addr = 0;
   addr_t size = 0;
   if (!syscall.TryGetArgs(memory, state, &addr, &size)) {
+    STRACE_ERROR(munmap, "Can't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
 
   } else if (addr != (addr & ~4095UL)) {
+    STRACE_ERROR(munmap, "Unaligned address %lx", addr);
     return syscall.SetReturn(memory, state, -EINVAL);
   }
 
+
+  STRACE_SUCCESS(munmap, "addr=%lx, size=%lx", addr, size);
   memory = __vmill_free_memory(memory, addr, size);
   return syscall.SetReturn(memory, state, 0);
 }
@@ -274,12 +330,17 @@ static Memory *SysMprotect(Memory *memory, State *state,
   addr_t size = 0;
   int prot = 0;
   if (!syscall.TryGetArgs(memory, state, &addr, &size, &prot)) {
+    STRACE_ERROR(mprotect, "Can't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
   bool can_read = PROT_READ & prot;
   bool can_write = PROT_WRITE & prot;
   bool can_exec = PROT_EXEC & prot;
+
+  STRACE_SUCCESS(
+      mprotect, "addr=%lx, size=%lx, read=%d, write=%d, exec=%d",
+      addr, size, can_read, can_write, can_exec);
 
   memory = __vmill_protect_memory(memory, addr, size, can_read,
                                   can_write, can_exec);

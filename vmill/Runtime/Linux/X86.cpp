@@ -29,26 +29,26 @@ Memory *__remill_async_hyper_call(
   switch (state.hyper_call) {
     case AsyncHyperCall::kX86SysEnter: {
       SysEnter32SystemCall abi;
-      memory = __remill_atomic_begin(memory);
       memory = SystemCall32(memory, &state, abi);
-      memory = __remill_atomic_end(memory);
-      ret_addr = abi.GetReturnAddress(memory, ret_addr);
-      state.gpr.rip.aword = ret_addr;
-      __vmill_schedule(state, ret_addr, memory,
-                       vmill::kTaskStoppedAfterHyperCall);
+      if (memory) {
+        ret_addr = abi.GetReturnAddress(memory, ret_addr);
+        state.gpr.rip.aword = ret_addr;
+        __vmill_schedule(state, ret_addr, memory,
+                         vmill::kTaskStoppedAfterHyperCall);
+      }
       break;
     }
 
     case AsyncHyperCall::kX86IntN:
       if (0x80 == state.hyper_call_vector) {
         Int0x80SystemCall abi;
-        memory = __remill_atomic_begin(memory);
         memory = SystemCall32(memory, &state, abi);
-        memory = __remill_atomic_end(memory);
-        ret_addr = abi.GetReturnAddress(memory, ret_addr);
-        state.gpr.rip.aword = ret_addr;
-        __vmill_schedule(state, ret_addr, memory,
-                         vmill::kTaskStoppedAfterHyperCall);
+        if (memory) {
+          ret_addr = abi.GetReturnAddress(memory, ret_addr);
+          state.gpr.rip.aword = ret_addr;
+          __vmill_schedule(state, ret_addr, memory,
+                           vmill::kTaskStoppedAfterHyperCall);
+        }
       }
       break;
 

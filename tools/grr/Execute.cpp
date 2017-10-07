@@ -221,7 +221,9 @@ class Context : public vmill::Context {
         [=] (const std::string &bitcode_path) -> bool {
           LOG(INFO)
               << "Loading cached bitcode from " << bitcode_path;
-          // TODO(pag): Implement me!
+          std::shared_ptr<llvm::Module> module(
+              remill::LoadModuleFromFile(context.get(), bitcode_path));
+          LoadLiftedModule(module);
           return true;
         });
   }
@@ -229,13 +231,13 @@ class Context : public vmill::Context {
   virtual ~Context(void) {}
 
  protected:
-  void VisitLiftedModule(llvm::Module *module) override {
+  void SaveLiftedModule(const std::shared_ptr<llvm::Module> &module) override {
     std::stringstream ss;
     ss << FLAGS_workspace + "/bitcode/" << std::hex << time(nullptr) << ".bc";
     auto save_path = ss.str();
     LOG(INFO)
         << "Caching module to " << save_path;
-    remill::StoreModuleToFile(module, save_path);
+    remill::StoreModuleToFile(module.get(), save_path);
   }
 };
 

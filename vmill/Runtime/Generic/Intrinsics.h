@@ -22,10 +22,23 @@
 
 extern "C" {
 
+[[gnu::used]]
+State *__vmill_allocate_state(void);
+
+[[gnu::used]]
+void __vmill_free_state(State *state);
+
 // Schedule a state for running.
 [[gnu::used]]
 extern void __vmill_schedule(State &state, addr_t pc, Memory *memory,
                              vmill::TaskStatus status);
+
+
+[[gnu::used, gnu::const]]
+extern Memory *__vmill_allocate_address_space(void);
+
+[[gnu::used]]
+extern void __vmill_free_address_space(Memory *);
 
 // Clone an address space. The clone will be a copy-on-write version of the
 // original. It is safe to use the original and clone concurrently. This is

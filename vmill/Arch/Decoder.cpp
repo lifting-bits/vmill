@@ -1,5 +1,20 @@
-/* Copyright 2016 Peter Goodman (peter@trailofbits.com), all rights reserved. */
+/*
+ * Copyright (c) 2017 Trail of Bits, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
+#include <gflags/gflags.h>
 #include <glog/logging.h>
 
 #include <algorithm>
@@ -14,6 +29,8 @@
 #include "vmill/Arch/Decoder.h"
 #include "vmill/Context/AddressSpace.h"
 #include "vmill/Util/Hash.h"
+
+DECLARE_bool(enable_code_versioning);
 
 namespace vmill {
 namespace {
@@ -50,6 +67,12 @@ static void AddSuccessorsToWorkList(const remill::Instruction &inst,
     case remill::Instruction::kCategoryAsyncHyperCall:
       break;
 
+    case remill::Instruction::kCategoryDirectFunctionCall:
+      // NOTE(pag): These targets are added to the successor trace list, and
+      //            direct function calls are lifted using the
+      //            `__remill_function_call` intrinsic.
+      break;
+
     case remill::Instruction::kCategoryNormal:
     case remill::Instruction::kCategoryNoOp:
     case remill::Instruction::kCategoryConditionalAsyncHyperCall:
@@ -57,7 +80,6 @@ static void AddSuccessorsToWorkList(const remill::Instruction &inst,
       break;
 
     case remill::Instruction::kCategoryDirectJump:
-    case remill::Instruction::kCategoryDirectFunctionCall:
       work_list.insert(inst.branch_taken_pc);
       break;
 
@@ -102,6 +124,10 @@ static void AddSuccessorsToTraceList(const remill::Arch *arch,
 //        work_list.insert(inst.next_pc);
 //      }
 //      break;
+
+    case remill::Instruction::kCategoryDirectFunctionCall:
+      work_list.insert(inst.branch_taken_pc);
+      break;
 
     // Thunks, e.g. `jmp [0xf00]`.
     case remill::Instruction::kCategoryIndirectJump: {

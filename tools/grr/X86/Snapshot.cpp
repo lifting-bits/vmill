@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <gflags/gflags.h>
 #include <glog/logging.h>
 
 #ifdef __x86_64__
@@ -32,6 +33,8 @@
 #define HAS_FEATURE_AVX512 1
 #define ADDRESS_SIZE_BITS 64  // ptrace process state will be 64 bit.
 #include "remill/Arch/X86/Runtime/State.h"
+
+DECLARE_uint64(breakpoint);
 
 namespace grr {
 
@@ -71,7 +74,11 @@ void CopyX86TraceeState(pid_t pid, pid_t tid, int64_t memory_id,
   gpr.r13.qword = regs.r13;
   gpr.r14.qword = regs.r14;
   gpr.r15.qword = regs.r15;
-  gpr.rip.qword = regs.rip - 1;  // Subtract off size of `int3`.
+  gpr.rip.qword = regs.rip;
+
+  if (FLAGS_breakpoint) {
+    gpr.rip.qword -= 1;  // Subtract off size of `int3`.
+  }
 
   // Copy in the segments.
   auto &seg = state.seg;

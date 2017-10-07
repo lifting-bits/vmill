@@ -65,9 +65,6 @@ class LifterImpl : public Lifter {
   llvm::Function *LiftTraceIntoModule(
       const DecodedTrace &trace, llvm::Module *module) override;
 
-  // Host architectures.
-  const remill::Arch * const host_arch;
-
   // LLVM context that manages all modules.
   const std::shared_ptr<llvm::LLVMContext> context;
 
@@ -87,13 +84,18 @@ class LifterImpl : public Lifter {
 
 LifterImpl::LifterImpl(const std::shared_ptr<llvm::LLVMContext> &context_)
     : Lifter(),
-      host_arch(remill::GetHostArch()),
       context(context_),
       semantics(remill::LoadTargetSemantics(context.get())),
       intrinsics(semantics.get()),
       lifter(remill::AddressType(semantics.get()), &intrinsics) {
 
-  host_arch->PrepareModule(semantics.get());
+  auto target_arch = remill::GetTargetArch();
+
+  LOG(INFO)
+      << "Preparing module " << semantics->getName().str() << " for lifting "
+      << remill::GetArchName(target_arch->arch_name) << " code";
+
+  target_arch->PrepareModule(semantics.get());
 
   remill::ForEachISel(
       semantics.get(),
@@ -112,6 +114,48 @@ static std::string LiftedFunctionName(uint64_t pc, uint64_t hash) {
   ns << "_" << std::hex << pc << "_" << std::hex << hash;
   return ns.str();
 }
+
+#if 0
+static llvm::Constant *CloneConstant(llvm::Constant *val);
+
+static std::vector<llvm::Constant *> CloneContents(
+    llvm::ConstantAggregate *agg) {
+  auto num_elems = agg->getNumOperands();
+  std::vector<llvm::Constant *> clones(num_elems);
+  for (auto i = 0U; i < num_elems; ++i) {
+    clones[i] = CloneConstant(agg->getAggregateElement(i));
+  }
+  return clones;
+}
+
+static llvm::Constant *CloneConstant(llvm::Constant *val) {
+  if (llvm::isa<llvm::ConstantData>(val) ||
+      llvm::isa<llvm::ConstantAggregateZero>(val)) {
+    return val;
+  }
+
+  std::vector<llvm::Constant *> elements;
+  if (auto agg = llvm::dyn_cast<llvm::ConstantAggregate>(val)) {
+    CloneContents(agg);
+  }
+
+  if (auto arr = llvm::dyn_cast<llvm::ConstantArray>(val)) {
+    return llvm::ConstantArray::get(arr->getType(), elements);
+
+  } else if (auto vec = llvm::dyn_cast<llvm::ConstantVector>(val)) {
+    return llvm::ConstantVector::get(elements);
+
+  } else if (auto obj = llvm::dyn_cast<llvm::ConstantStruct>(val)) {
+    return llvm::ConstantStruct::get(obj->getType(), elements);
+
+  } else {
+    LOG(FATAL)
+        << "Cannot clone " << remill::LLVMThingToString(val);
+    return val;
+  }
+}
+
+#endif
 
 static llvm::Function *DeclareFunctionInModule(llvm::Function *func,
                                                llvm::Module *dest_module) {
@@ -139,17 +183,19 @@ static llvm::GlobalVariable *DeclareVarInModule(llvm::GlobalVariable *var,
 
   auto type = var->getValueType();
   dest_var = new llvm::GlobalVariable(
-      type, var->isConstant(), var->getLinkage(), nullptr,
-      var->getName(), var->getThreadLocalMode(),
+      *dest_module, type, var->isConstant(), var->getLinkage(), nullptr,
+      var->getName(), nullptr, var->getThreadLocalMode(),
       var->getType()->getAddressSpace());
 
   dest_var->copyAttributesFrom(var);
 
   if (var->hasInitializer()) {
-    LOG(ERROR)
-        << "Substituting null initializer for " << var->getName().str();
+    auto initializer = var->getInitializer();
+    CHECK(!initializer->needsRelocation())
+        << "Initializer of global " << var->getName().str()
+        << " cannot be trivially copied to the destination module.";
 
-    dest_var->setInitializer(llvm::Constant::getNullValue(type));
+    dest_var->setInitializer(initializer);
   }
 
   return dest_var;
@@ -190,10 +236,8 @@ static void MoveFunctionIntoModule(llvm::Function *func,
       // Substitute globals in the operands.
       for (auto &op : inst.operands()) {
         auto used_val = op.get();
-
         auto used_func = llvm::dyn_cast<llvm::Function>(used_val);
         auto used_var = llvm::dyn_cast<llvm::GlobalVariable>(used_val);
-
         if (used_func) {
           op.set(DeclareFunctionInModule(used_func, dest_module));
 
@@ -288,7 +332,6 @@ llvm::Function *LifterImpl::LiftTraceIntoModule(
   for (const auto &entry : insts) {
     auto block = GetOrCreateBlock(entry.first);
     auto &inst = const_cast<remill::Instruction &>(entry.second);
-//    LOG(ERROR) << inst.Serialize();
     if (!lifter.LiftIntoBlock(inst, block)) {
       remill::AddTerminatingTailCall(block, intrinsics.error);
       continue;
@@ -307,15 +350,17 @@ llvm::Function *LifterImpl::LiftTraceIntoModule(
         break;
 
       case remill::Instruction::kCategoryDirectJump:
-      case remill::Instruction::kCategoryDirectFunctionCall:
         llvm::BranchInst::Create(GetOrCreateBlock(inst.branch_taken_pc),
                                  block);
         break;
-
       case remill::Instruction::kCategoryIndirectJump:
         remill::AddTerminatingTailCall(block, intrinsics.jump);
         break;
 
+      // Lift direct and indirect functions calls to go through the
+      // `__remill_function_call` intrinsic, even though the direct targets
+      // will have been lifted.
+      case remill::Instruction::kCategoryDirectFunctionCall:
       case remill::Instruction::kCategoryIndirectFunctionCall:
         remill::AddTerminatingTailCall(block, intrinsics.function_call);
         break;

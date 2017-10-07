@@ -20,10 +20,13 @@ static Memory *SysExit(Memory *memory, State *state,
                        const SystemCallABI &syscall) {
   int exit_code = EXIT_SUCCESS;
   if (!syscall.TryGetArgs(memory, state, &exit_code)) {
+    STRACE_ERROR(exit, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   } else {
-    exit(exit_code);
-    return memory;
+    STRACE_SUCCESS(exit, "status=%d", exit_code);
+    __vmill_free_address_space(memory);
+    __vmill_free_state(state);
+    return nullptr;
   }
 }
 
@@ -63,6 +66,7 @@ static Memory *SysSetHostName(Memory *memory, State *state,
   addr_t name = 0;
   size_t len = 0;
   if (!syscall.TryGetArgs(memory, state, &name, &len)) {
+    STRACE_ERROR(sethostname, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
 
   } else if (HOST_NAME_MAX < len) {
@@ -77,11 +81,18 @@ static Memory *SysSetHostName(Memory *memory, State *state,
   // The hostname passed to `sethostname` is a C string, and it is shorter
   // than the explicitly specified length.
   if (name_len < len) {
+    STRACE_ERROR(sethostname, "Readable name length is %d < %d bytes",
+                 name_len, len);
     return syscall.SetReturn(memory, state, -ENAMETOOLONG);
   }
 
-  (void) sethostname(gHostName, len);
-  return syscall.SetReturn(memory, state, -errno);
+  auto ret = sethostname(gHostName, len);
+  if (!ret) {
+    STRACE_SUCCESS(sethostname, "name=%s", gHostName);
+    return syscall.SetReturn(memory, state, 0);
+  } else {
+    return syscall.SetReturn(memory, state, -errno);
+  }
 }
 
 //static void SetDomainName(const struct utsname &, linux_oldold_utsname *) {}
@@ -98,11 +109,13 @@ static Memory *SysUname(Memory *memory, State *state,
                         const SystemCallABI &syscall) {
   addr_t buf = 0;
   if (!syscall.TryGetArgs(memory, state, &buf)) {
+    STRACE_ERROR(uname, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
   struct utsname info = {};
   if (-1 == uname(&info)) {
+    STRACE_ERROR(uname, "Couldn't get uname: %s", strerror(errno));
     return syscall.SetReturn(memory, state, -errno);
   }
 
@@ -115,8 +128,11 @@ static Memory *SysUname(Memory *memory, State *state,
   SetDomainName(info, &compat);
 
   if (TryWriteMemory(memory, buf, info)) {
+    STRACE_SUCCESS(uname, "sysname=%s, nodename=%s, release=%s, version=%s",
+                   info.sysname, info.nodename, info.release, info.version);
     return syscall.SetReturn(memory, state, 0);
   } else {
+    STRACE_ERROR(uname, "Couldn't write uname info");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 }
@@ -124,26 +140,34 @@ static Memory *SysUname(Memory *memory, State *state,
 // Emulate an `getuid` system call.
 static Memory *SysGetUserId(Memory *memory, State *state,
                             const SystemCallABI &syscall) {
-  return syscall.SetReturn(memory, state, getuid());
+  auto id = getuid();
+  STRACE_SUCCESS(getuid, "user id=%u", id);
+  return syscall.SetReturn(memory, state, id);
 }
 
 // Emulate an `geteuid` system call.
 static Memory *SysGetEffectiveUserId(Memory *memory, State *state,
                                      const SystemCallABI &syscall) {
-  return syscall.SetReturn(memory, state, geteuid());
+  auto id = geteuid();
+  STRACE_SUCCESS(geteuid, "effective user id=%u", id);
+  return syscall.SetReturn(memory, state, id);
 }
 
 
 // Emulate an `getgid` system call.
 static Memory *SysGetGroupId(Memory *memory, State *state,
                              const SystemCallABI &syscall) {
-  return syscall.SetReturn(memory, state, getgid());
+  auto id = getgid();
+  STRACE_SUCCESS(getgid, "group id=%u", id);
+  return syscall.SetReturn(memory, state, id);
 }
 
 // Emulate an `getegid` system call.
 static Memory *SysGetEffectiveGroupId(Memory *memory, State *state,
                                       const SystemCallABI &syscall) {
-  return syscall.SetReturn(memory, state, getegid());
+  auto id = getegid();
+  STRACE_SUCCESS(getegid, "effective group id=%u", id);
+  return syscall.SetReturn(memory, state, id);
 }
 
 }  // namespace

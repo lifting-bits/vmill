@@ -1,4 +1,18 @@
-/* Copyright 2017 Peter Goodman (peter@trailofbits.com), all rights reserved. */
+/*
+ * Copyright (c) 2017 Trail of Bits, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 #ifndef VMILL_CONTEXT_CONTEXT_H_
 #define VMILL_CONTEXT_CONTEXT_H_
@@ -101,7 +115,13 @@ class Context {
   static void *gLRUState;
 
  protected:
-  virtual void VisitLiftedModule(llvm::Module *module);
+  void LoadLiftedModule(const std::shared_ptr<llvm::Module> &module);
+
+  virtual void SaveLiftedModule(const std::shared_ptr<llvm::Module> &module);
+
+  // LLVM context shared by all modules so that we can easily share LLVM types
+  // and constants across the modules.
+  std::shared_ptr<llvm::LLVMContext> context;
 
  private:
   friend class Executor;
@@ -115,10 +135,6 @@ class Context {
 
   // List of all address spaces.
   std::vector<AddressSpace *> address_spaces;
-
-  // LLVM context shared by all modules so that we can easily share LLVM types
-  // and constants across the modules.
-  std::shared_ptr<llvm::LLVMContext> context;
 
   // Shared instruction lifter.
   std::shared_ptr<Lifter> lifter;
@@ -136,10 +152,10 @@ class Context {
 
   // Cache mapping active traces to their LLVM functions. This cache is
   // invalidated any time executable code is modified, removed, or created.
-  std::unordered_map<LiveTraceId, llvm::Function *> active_cache;
+  std::unordered_map<LiveTraceId, llvm::Function *> live_trace_cache;
 
   // The full cache, mapping traces to their LLVM functions.
-  std::unordered_map<LiftedTraceId, llvm::Function *> cache;
+  std::unordered_map<LiftedTraceId, llvm::Function *> lifted_trace_cache;
 };
 
 using ContextPtr = std::unique_ptr<Context>;

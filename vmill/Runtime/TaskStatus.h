@@ -13,8 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TOOLS_VMILL_VMILL_RUNTIME_TASKSTATUS_H_
-#define TOOLS_VMILL_VMILL_RUNTIME_TASKSTATUS_H_
+
+#ifndef VMILL_RUNTIME_TASKSTATUS_H_
+#define VMILL_RUNTIME_TASKSTATUS_H_
 
 namespace vmill {
 
@@ -30,4 +31,4 @@ enum TaskStatus {
 
 }  // namespace vmill
 
-#endif  // TOOLS_VMILL_VMILL_RUNTIME_TASKSTATUS_H_
+#endif  // VMILL_RUNTIME_TASKSTATUS_H_

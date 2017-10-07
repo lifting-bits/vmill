@@ -61,7 +61,8 @@ size_t CopyStringFromMemory(Memory *memory, addr_t addr,
   size_t i = 0;
   max_len = NumReadableBytes(memory, addr, max_len);
   for (; i < max_len; ++i) {
-    val[i] = static_cast<char>(__remill_read_memory_8(memory, addr));
+    val[i] = static_cast<char>(__remill_read_memory_8(
+        memory, addr + static_cast<addr_t>(i)));
     if (!val[i]) {
       break;
     }
@@ -75,7 +76,7 @@ size_t CopyStringToMemory(Memory *memory, addr_t addr, const char *val,
   len = NumWritableBytes(memory, addr, len);
   for (; i < len; ++i) {
     memory = __remill_write_memory_8(
-        memory, addr, static_cast<uint8_t>(val[i]));
+        memory, addr + static_cast<addr_t>(i), static_cast<uint8_t>(val[i]));
     if (!val[i]) {
       break;
     }

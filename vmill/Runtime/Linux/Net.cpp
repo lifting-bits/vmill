@@ -22,13 +22,17 @@ static Memory *SysSocket(Memory *memory, State *state,
   int type = 0;
   int protocol = 0;
   if (!syscall.TryGetArgs(memory, state, &domain, &type, &protocol)) {
+    STRACE_ERROR(socket, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
   auto fd = socket(domain, type, protocol);
   if (-1 == fd) {
+    STRACE_ERROR(socket, "Couldn't open socket: %s", strerror(errno));
     return syscall.SetReturn(memory, state, -errno);
   } else {
+    STRACE_SUCCESS(socket, "domain=%d, type=%d, protocol=%d, fd=%d",
+                   domain, type, protocol, fd);
     return syscall.SetReturn(memory, state, fd);
   }
 }
@@ -39,20 +43,25 @@ static Memory *SysBind(Memory *memory, State *state,
   addr_t addr = 0;
   socklen_t addrlen = 0;
   if (!syscall.TryGetArgs(memory, state, &sockfd, &addr, &addrlen)) {
+    STRACE_ERROR(bind, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
   struct sockaddr addr_val = {};
   if (addr) {
     if (!TryReadMemory(memory, addr, &addr_val)) {
+      STRACE_ERROR(bind, "Couldn't read address");
       return syscall.SetReturn(memory, state, -EFAULT);
     }
   }
 
   auto ret = bind(sockfd, (addr ? &addr_val : nullptr), addrlen);
   if (-1 == ret) {
+    STRACE_ERROR(bind, "Couldn't bind socket %d: %s", sockfd, strerror(errno));
     return syscall.SetReturn(memory, state, -errno);
   } else {
+    STRACE_SUCCESS(bind, "fd=%d, addr=%s, len=%s, ret=%d",
+                   sockfd, addr_val.sa_data, addrlen, ret);
     return syscall.SetReturn(memory, state, ret);
   }
 }
@@ -63,20 +72,26 @@ static Memory *SysConnect(Memory *memory, State *state,
   addr_t addr = 0;
   socklen_t addrlen = 0;
   if (!syscall.TryGetArgs(memory, state, &sockfd, &addr, &addrlen)) {
+    STRACE_ERROR(connect, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
   struct sockaddr addr_val = {};
   if (addr) {
     if (!TryReadMemory(memory, addr, &addr_val)) {
+      STRACE_ERROR(connect, "Couldn't read address");
       return syscall.SetReturn(memory, state, -EFAULT);
     }
   }
 
   auto ret = connect(sockfd, (addr ? &addr_val : nullptr), addrlen);
   if (-1 == ret) {
+    STRACE_ERROR(connect, "Couldn't connect to socket %d: %s",
+                 sockfd, strerror(errno));
     return syscall.SetReturn(memory, state, -errno);
   } else {
+    STRACE_SUCCESS(connect, "fd=%d, addr=%s, len=%s, ret=%d",
+                   sockfd, addr_val.sa_data, addrlen, ret);
     return syscall.SetReturn(memory, state, ret);
   }
 }
@@ -86,13 +101,17 @@ static Memory *SysListen(Memory *memory, State *state,
   int sockfd = -1;
   int backlog = 0;
   if (!syscall.TryGetArgs(memory, state, &sockfd, &backlog)) {
+    STRACE_ERROR(listen, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
   auto ret = listen(sockfd, backlog);
   if (-1 == ret) {
+    STRACE_ERROR(listen, "Couldn't listend to socket %d: %s",
+                 sockfd, strerror(errno));
     return syscall.SetReturn(memory, state, -errno);
   } else {
+    STRACE_SUCCESS(listen, "fd=%d, backlog=%d, ret=%d", sockfd, backlog, ret);
     return syscall.SetReturn(memory, state, ret);
   }
 }
@@ -111,6 +130,7 @@ static Memory *DoSysAccept(Memory *memory, State *state,
 
   if (addr) {
     if (!TryReadMemory(memory, addr_len, &addr_len_val)) {
+      STRACE_ERROR(accept_generic, "Can't read address length");
       return syscall.SetReturn(memory, state, -EFAULT);
     }
 
@@ -118,6 +138,7 @@ static Memory *DoSysAccept(Memory *memory, State *state,
 
     if (!CanReadMemory(memory, addr, addr_len_val) ||
         !CanWriteMemory(memory, addr, addr_len_val)) {
+      STRACE_ERROR(accept_generic, "Can't read or write address");
       return syscall.SetReturn(memory, state, -EFAULT);
     }
 
@@ -129,6 +150,8 @@ static Memory *DoSysAccept(Memory *memory, State *state,
       (addr_len ? &addr_len_val : nullptr), flags);
 
   if (-1 == ret_fd) {
+    STRACE_ERROR(accept_generic, "Can't accept on fd %d: %s",
+                 fd, strerror(errno));
     return syscall.SetReturn(memory, state, -errno);
   }
 
@@ -136,9 +159,13 @@ static Memory *DoSysAccept(Memory *memory, State *state,
     memory = CopyToMemory(memory, addr, &gSockAddrBuf, addr_len_val);
 
     if (!TryWriteMemory(memory, addr_len, addr_len_val)) {
+      STRACE_ERROR(accept_generic, "Can't write address length.");
       return syscall.SetReturn(memory, state, -EFAULT);
     }
   }
+
+  STRACE_SUCCESS(accept_generic, "fd=%d, flags=%d, ret_fd=%d",
+                 fd, flags, ret_fd);
 
   return syscall.SetReturn(memory, state, ret_fd);
 }
@@ -149,8 +176,10 @@ static Memory *SysAccept(Memory *memory, State *state,
   addr_t addr = 0;
   addr_t addr_len = 0;
   if (!syscall.TryGetArgs(memory, state, &fd, &addr, &addr_len)) {
+    STRACE_ERROR(accept, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
+
   return DoSysAccept(memory, state, syscall, fd, addr, addr_len, 0);
 }
 
@@ -161,6 +190,7 @@ static Memory *SysAccept4(Memory *memory, State *state,
   addr_t addr_len = 0;
   int flags = 0;
   if (!syscall.TryGetArgs(memory, state, &fd, &addr, &addr_len, &flags)) {
+    STRACE_ERROR(accept4, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
   return DoSysAccept(memory, state, syscall, fd, addr, addr_len, flags);
@@ -172,6 +202,7 @@ static Memory *SysGetSockName(Memory *memory, State *state,
   addr_t addr = 0;
   addr_t len = 0;
   if (!syscall.TryGetArgs(memory, state, &fd, &addr, &len)) {
+    STRACE_ERROR(getsockname, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
@@ -207,6 +238,7 @@ static Memory *SysGetPeerName(Memory *memory, State *state,
   addr_t addr = 0;
   addr_t len = 0;
   if (!syscall.TryGetArgs(memory, state, &fd, &addr, &len)) {
+    STRACE_ERROR(getpeername, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 

@@ -22,6 +22,7 @@ static Memory *SysAccess(Memory *memory, State *state,
   addr_t path = 0;
   int type = 0;
   if (!syscall.TryGetArgs(memory, state, &path, &type)) {
+    STRACE_ERROR(access, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
@@ -29,19 +30,23 @@ static Memory *SysAccess(Memory *memory, State *state,
   gPath[PATH_MAX] = '\0';
 
   if (path_len >= PATH_MAX) {
+    STRACE_ERROR(access, "Path name too long: %s", gPath);
     return syscall.SetReturn(memory, state, -ENAMETOOLONG);
 
   // The string read does not end in a NUL-terminator; i.e. we read less
   // than `PATH_MAX`, but as much as we could without faulting, and we didn't
   // read the NUL char.
   } else if ('\0' != gPath[path_len]) {
+    STRACE_ERROR(access, "Non-NUL-terminated path");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
   auto ret = access(gPath, type);
   if (-1 == ret) {
+    STRACE_ERROR(access, "Cann't access %s: %s", gPath, strerror(errno));
     return syscall.SetReturn(memory, state, -errno);
   } else {
+    STRACE_SUCCESS(access, "path=%s, type=%d, ret=%d", gPath, type, ret);
     return syscall.SetReturn(memory, state, ret);
   }
 }
@@ -57,19 +62,29 @@ static Memory *SysLlseek(Memory *memory, State *state,
 
   if (!syscall.TryGetArgs(memory, state, &fd, &offset_high, &offset_low,
                           &result_addr, &whence)) {
+    STRACE_ERROR(llseek, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  off64_t offset = (off64_t(offset_high) << 32UL) | off64_t(offset_low);
-  offset = lseek64(fd, offset, whence);
-  if (static_cast<off64_t>(-1LL) == offset) {
+  uint64_t offset = offset_high;
+  offset <<= 32;
+  offset |= offset_low;
+
+  auto offset64 = static_cast<off64_t>(offset);
+  auto new_offset64 = lseek64(fd, offset64, whence);
+  if (static_cast<off64_t>(-1) == new_offset64) {
+    STRACE_ERROR(llseek, "fd=%d, offset=%ld, whence=%d: %s",
+                 fd, offset64, whence, strerror(errno));
     return syscall.SetReturn(memory, state, -errno);
   }
 
-  if (!TryWriteMemory(memory, result_addr, offset)) {
+  if (!TryWriteMemory(memory, result_addr, new_offset64)) {
+    STRACE_ERROR(llseek, "Couldn't write back new offset");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
+  STRACE_SUCCESS(llseek, "fd=%d, offset=%ld, whence=%d, new offset=%ld",
+                 fd, offset64, whence, new_offset64);
   return syscall.SetReturn(memory, state, 0);
 }
 
@@ -106,16 +121,18 @@ void CopyStat(const struct stat &info, T *info32) {
   info32->st_ctim.tv_nsec = static_cast<uint32_t>(info.st_ctim.tv_nsec);
 }
 
-// Emulate a 32-bit `stat` system call.
+// Emulate a `stat` system call.
 template <typename T>
 static Memory *SysStat(Memory *memory, State *state,
                        const SystemCallABI &syscall) {
   addr_t path = 0;
   addr_t buf = 0;
   if (!syscall.TryGetArgs(memory, state, &path, &buf)) {
+    STRACE_ERROR(stat, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
 
   } else if (!path || !buf) {
+    STRACE_ERROR(stat, "NULL path or buf");
     return syscall.SetReturn(memory, state, -EINVAL);
   }
 
@@ -123,17 +140,20 @@ static Memory *SysStat(Memory *memory, State *state,
   gPath[PATH_MAX] = '\0';
 
   if (path_len >= PATH_MAX) {
+    STRACE_ERROR(stat, "Path name too long: %s", gPath);
     return syscall.SetReturn(memory, state, -ENAMETOOLONG);
 
   // The string read does not end in a NUL-terminator; i.e. we read less
   // than `PATH_MAX`, but as much as we could without faulting, and we didn't
   // read the NUL char.
   } else if ('\0' != gPath[path_len]) {
+    STRACE_ERROR(stat, "Non-NUL-terminated path");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
   struct stat info = {};
-  if (stat(gPath, &info)) {
+  if (::stat(gPath, &info)) {
+    STRACE_ERROR(stat, "Can't stat path %s: %s", gPath, strerror(errno));
     return syscall.SetReturn(memory, state, -errno);
   }
 
@@ -141,22 +161,26 @@ static Memory *SysStat(Memory *memory, State *state,
   CopyStat(info, &info32);
 
   if (TryWriteMemory(memory, buf, info32)) {
+    STRACE_SUCCESS(stat, "path=%s", gPath);
     return syscall.SetReturn(memory, state, 0);
   } else {
+    STRACE_ERROR(stat, "Can't write stat buff back to memory");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 }
 
-// Emulate a 32-bit `lstat` system call.
+// Emulate an `lstat` system call.
 template <typename T>
 static Memory *SysLstat(Memory *memory, State *state,
                         const SystemCallABI &syscall) {
   addr_t path = 0;
   addr_t buf = 0;
   if (!syscall.TryGetArgs(memory, state, &path, &buf)) {
+    STRACE_ERROR(lstat, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
 
   } else if (!path || !buf) {
+    STRACE_ERROR(lstat, "NULL path or buf");
     return syscall.SetReturn(memory, state, -EINVAL);
   }
 
@@ -164,17 +188,20 @@ static Memory *SysLstat(Memory *memory, State *state,
   gPath[PATH_MAX] = '\0';
 
   if (path_len >= PATH_MAX) {
+    STRACE_ERROR(lstat, "Path name too long: %s", gPath);
     return syscall.SetReturn(memory, state, -ENAMETOOLONG);
 
   // The string read does not end in a NUL-terminator; i.e. we read less
   // than `PATH_MAX`, but as much as we could without faulting, and we didn't
   // read the NUL char.
   } else if ('\0' != gPath[path_len]) {
+    STRACE_ERROR(lstat, "Non-NUL-terminated path");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
   struct stat info = {};
   if (lstat(gPath, &info)) {
+    STRACE_ERROR(lstat, "Can't lstat path %s: %s", gPath, strerror(errno));
     return syscall.SetReturn(memory, state, -errno);
   }
 
@@ -182,28 +209,34 @@ static Memory *SysLstat(Memory *memory, State *state,
   CopyStat(info, &info32);
 
   if (TryWriteMemory(memory, buf, info32)) {
+    STRACE_SUCCESS(lstat, "path=%s", gPath);
     return syscall.SetReturn(memory, state, 0);
   } else {
+    STRACE_ERROR(lstat, "Can't write stat buff back to memory");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 }
 
-// Emulate a 32-bit `fstat` system call.
+// Emulate a an `fstat` system call.
 template <typename T>
 static Memory *SysFstat(Memory *memory, State *state,
                         const SystemCallABI &syscall) {
   int fd = -1;
   addr_t buf = 0;
   if (!syscall.TryGetArgs(memory, state, &fd, &buf)) {
+    STRACE_ERROR(fstat, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   } else if (0 > fd) {
+    STRACE_ERROR(fstat, "Bad fd %d", fd);
     return syscall.SetReturn(memory, state, -EBADFD);
   } else if (!buf) {
+    STRACE_ERROR(fstat, "NULL buffer");
     return syscall.SetReturn(memory, state, -EINVAL);
   }
 
   struct stat info = {};
   if (fstat(fd, &info)) {
+    STRACE_ERROR(fstat, "Can't fstat fd %d: %s", fd, strerror(errno));
     return syscall.SetReturn(memory, state, -errno);
   }
 
@@ -211,8 +244,10 @@ static Memory *SysFstat(Memory *memory, State *state,
   CopyStat(info, &info32);
 
   if (TryWriteMemory(memory, buf, info32)) {
+    STRACE_SUCCESS(fstat, "fd=%d", fd);
     return syscall.SetReturn(memory, state, 0);
   } else {
+    STRACE_ERROR(fstat, "Can't write stat buff back to memory");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 }

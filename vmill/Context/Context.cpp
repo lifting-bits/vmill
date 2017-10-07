@@ -1,8 +1,27 @@
-/* Copyright 2017 Peter Goodman (peter@trailofbits.com), all rights reserved. */
+/*
+ * Copyright (c) 2017 Trail of Bits, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
+#include <gflags/gflags.h>
 #include <glog/logging.h>
 
+#include <cinttypes>
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <memory>
 #include <utility>
 
 #include <llvm/IR/Function.h>
@@ -38,8 +57,8 @@ Context::Context(const Context &parent)
       executor(parent.executor),
       tasks(parent.tasks),
       modules(parent.modules),
-      active_cache(parent.active_cache),
-      cache(parent.cache) {
+      live_trace_cache(parent.live_trace_cache),
+      lifted_trace_cache(parent.lifted_trace_cache) {
 
   address_spaces.reserve(parent.address_spaces.size());
   for (auto space : parent.address_spaces) {
@@ -116,18 +135,45 @@ void Context::ScheduleTask(const Task &task) {
   tasks.push_back(task);
 }
 
-void Context::VisitLiftedModule(llvm::Module *) {}
+// Load all the lifted functions from an already cached module.
+void Context::LoadLiftedModule(const std::shared_ptr<llvm::Module> &module) {
+  modules.push_back(module);
+  auto num_traces = 0;
+  for (auto &func : *module) {
+    auto name = func.getName().str();
+    uint64_t pc = 0;
+    uint64_t hash = 0;
+    char dummy = '\0';  // We want to fail to get this.
+    auto num_parts = sscanf(name.c_str(), "_%" SCNx64 "_%" SCNx64 "%c",
+                            &pc, &hash, &dummy);
+    if (2 != num_parts) {
+      continue;
+    }
+
+    num_traces += 1;
+    LiftedTraceId lift_id = {pc, hash};
+    lifted_trace_cache[lift_id] = &func;
+  }
+
+  LOG(INFO)
+      << "Loaded " << std::dec << num_traces
+      << " traces from module " << module->getName().str();
+}
+
+void Context::SaveLiftedModule(const std::shared_ptr<llvm::Module> &) {}
 
 // Lift code for a task.
 llvm::Function *Context::GetLiftedFunctionForTask(const Task &task) {
   if (gLRUAddressSpace->CodeVersionIsInvalid()) {
-    active_cache.clear();
+    LOG(INFO)
+        << "Code version is invalid, clearing the active cache";
+    live_trace_cache.clear();
   }
 
   auto code_version = gLRUAddressSpace->CodeVersion();
   LiveTraceId live_id = {task.pc, code_version};
-  auto it = active_cache.find(live_id);
-  if (it != active_cache.end()) {
+  auto it = live_trace_cache.find(live_id);
+  if (it != live_trace_cache.end()) {
     return it->second;
   }
 
@@ -136,23 +182,30 @@ llvm::Function *Context::GetLiftedFunctionForTask(const Task &task) {
   // Decode the requested trace, and perhaps way more.
   auto module = std::make_shared<llvm::Module>("", *context);
   auto decoded_traces = DecodeTraces(*gLRUAddressSpace, task.pc);
+  auto num_lifted_traces = 0;
   for (const auto &trace : decoded_traces) {
     LiftedTraceId lift_id = {trace.entry_pc, trace.hash};
-    auto &lifted_func = cache[lift_id];
+    auto &lifted_func = lifted_trace_cache[lift_id];
     if (!lifted_func) {
+      num_lifted_traces += 1;
       lifted_func = lifter->LiftTraceIntoModule(trace, module.get());
     }
 
-    live_id = {task.pc, code_version};
-    active_cache[live_id] = lifted_func;
+    live_id = {trace.entry_pc, code_version};
+    live_trace_cache[live_id] = lifted_func;
 
     if (trace.entry_pc == task.pc) {
       ret_func = lifted_func;
     }
   }
 
-  VisitLiftedModule(module.get());
-  modules.emplace_back(std::move(module));
+  if (num_lifted_traces) {
+    LOG(INFO)
+        << "Lifted " << std::dec << num_lifted_traces << " of "
+        << decoded_traces.size() << " decoded traces";
+    SaveLiftedModule(module);
+    modules.emplace_back(std::move(module));
+  }
 
   CHECK(ret_func != nullptr);
 

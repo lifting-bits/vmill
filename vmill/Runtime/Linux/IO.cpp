@@ -27,23 +27,29 @@ static Memory *SysRead(Memory *memory, State *state,
   size_t size = 0;
 
   if (!syscall.TryGetArgs(memory, state, &fd, &buf, &size)) {
+    STRACE_ERROR(read, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
   // TODO(pag): Not 100% right; can have partial reads at the page granularity.
   if (!CanWriteMemory(memory, buf, size)) {
+    STRACE_ERROR(read, "Can't read into whole buffer.");
     syscall.SetReturn(memory, state, -EFAULT);
     return memory;
   }
 
   ssize_t read_bytes = 0;
   for (auto max_bytes = static_cast<ssize_t>(size); read_bytes < max_bytes; ) {
+
     errno = 0;
-    auto num_bytes = read(fd, gIOBuffer, kIOBufferSize);
+    auto remaining_bytes = max_bytes - read_bytes;
+    auto wanted_bytes = std::min<ssize_t>(remaining_bytes, kIOBufferSize);
+    auto num_bytes = read(fd, gIOBuffer, static_cast<size_t>(wanted_bytes));
     if (0 >= num_bytes) {
       if (read_bytes) {
-        return syscall.SetReturn(memory, state, read_bytes);
+        break;
       } else {
+        STRACE_ERROR(read, "Error reading: %s", strerror(errno));
         return syscall.SetReturn(memory, state, -errno);
       }
     } else {
@@ -54,6 +60,7 @@ static Memory *SysRead(Memory *memory, State *state,
     }
   }
 
+  STRACE_SUCCESS(read, "fd=%d, size=%d/%d", fd, read_bytes, size);
   return syscall.SetReturn(memory, state, read_bytes);
 }
 
@@ -65,11 +72,13 @@ static Memory *SysWrite(Memory *memory, State *state,
   size_t size = 0;
 
   if (!syscall.TryGetArgs(memory, state, &fd, &buf, &size)) {
+    STRACE_ERROR(write, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
   // TODO(pag): Not 100% right; can have partial reads at the page granularity.
   if (!CanReadMemory(memory, buf, size)) {
+    STRACE_ERROR(write, "Can't read from whole buffer.");
     syscall.SetReturn(memory, state, -EFAULT);
     return memory;
   }
@@ -86,8 +95,9 @@ static Memory *SysWrite(Memory *memory, State *state,
     auto num_bytes = write(fd, gIOBuffer, num_to_copy);
     if (0 >= num_bytes) {
       if (written_bytes) {
-        return syscall.SetReturn(memory, state, written_bytes);
+        break;
       } else {
+        STRACE_ERROR(write, "Error writing: %s", strerror(errno));
         return syscall.SetReturn(memory, state, -errno);
       }
     } else {
@@ -95,10 +105,9 @@ static Memory *SysWrite(Memory *memory, State *state,
     }
   }
 
+  STRACE_SUCCESS(write, "fd=%d, size=%d/%d", written_bytes, size);
   return syscall.SetReturn(memory, state, written_bytes);
 }
-
-#define DEBUG_STRACE(fmt, ...) printf(fmt "\n", #__VA_ARGS__)
 
 // Emulate an `open` system call.
 static Memory *SysOpen(Memory *memory, State *state,
@@ -107,6 +116,7 @@ static Memory *SysOpen(Memory *memory, State *state,
   int oflag = 0;
   mode_t mode = 0;
   if (!syscall.TryGetArgs(memory, state, &path, &oflag, &mode)) {
+    STRACE_ERROR(open, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
@@ -114,21 +124,25 @@ static Memory *SysOpen(Memory *memory, State *state,
   gPath[PATH_MAX] = '\0';
 
   if (path_len >= PATH_MAX) {
+    STRACE_ERROR(open, "Path name too long: %s", gPath);
     return syscall.SetReturn(memory, state, -ENAMETOOLONG);
 
   // The string read does not end in a NUL-terminator; i.e. we read less
   // than `PATH_MAX`, but as much as we could without faulting, and we didn't
   // read the NUL char.
   } else if ('\0' != gPath[path_len]) {
+    STRACE_ERROR(open, "Non-NUL-terminated path");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
   auto fd = open(gPath, oflag, mode);
-  DEBUG_STRACE("open(%s, %d, %d) -> %d", gPath, oflag, mode, fd);
 
   if (-1 == fd) {
+    STRACE_ERROR(open, "Couldn't open %s: %s", gPath, strerror(errno));
     return syscall.SetReturn(memory, state, -errno);
   } else {
+    STRACE_SUCCESS(open, "path=%s, flags=%x, mode=%o, fd=%d",
+                   gPath, oflag, mode, fd);
     return syscall.SetReturn(memory, state, fd);
   }
 }
@@ -138,11 +152,17 @@ static Memory *SysClose(Memory *memory, State *state,
                         const SystemCallABI &syscall) {
   int fd = -1;
   if (!syscall.TryGetArgs(memory, state, &fd)) {
+    STRACE_ERROR(close, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
+  errno = 0;
   auto ret = close(fd);
-  DEBUG_STRACE("close(%d) -> %d", fd, ret);
+  if (errno) {
+    STRACE_ERROR(close, "Error closing fd %d: %s", fd, strerror(errno));
+  } else {
+    STRACE_SUCCESS(close, "fd=%d, ret=%d", fd, ret);
+  }
   return syscall.SetReturn(memory, state, ret * errno);
 }
 
@@ -152,6 +172,7 @@ static Memory *SysIoctl(Memory *memory, State *state,
   int fd = -1;
   unsigned long request = 0;
   if (!syscall.TryGetArgs(memory, state, &fd, &request)) {
+    STRACE_ERROR(ioctl, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
