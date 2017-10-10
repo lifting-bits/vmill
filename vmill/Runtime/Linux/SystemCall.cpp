@@ -218,6 +218,44 @@ struct linux_new_utsname {
   char domainname[kNewUTSNameLen + 1];
 };
 
+enum SegContentType : uint32_t {
+  kSegContentsData,
+  kSegContentsDataExpandDown,
+  kSegContentsNonConformingCode,
+  kSegContentsConformingCode
+};
+
+struct linux_X86_user_desc {
+  uint32_t entry_number;
+  uint32_t base_addr;
+  uint32_t limit;
+  bool seg_32bit:1;
+  SegContentType contents:2;
+  bool read_exec_only:1;
+  bool limit_in_pages:1;
+  bool seg_not_present:1;
+  bool useable:1;
+#if defined(VMILL_RUNTIME_X86) && VMILL_RUNTIME_X86 == 64
+  uint64_t lm:1;
+  uint64_t _padding:24;
+#else
+  uint64_t _padding:25;
+#endif
+
+  // NOTE(pag): This intentially ignores `lm` because 32-bit code does not
+  //            use that.
+  bool IsEmpty(void) const {
+    return !base_addr && !limit && !contents && read_exec_only &&
+           !seg_32bit && !limit_in_pages && seg_not_present && !useable;
+  }
+
+  bool IsZero(void) const {
+    return !base_addr && !limit && !contents && !read_exec_only &&
+           !seg_32bit && !limit_in_pages && !seg_not_present && !useable;
+
+  }
+};
+
 }  // namespace
 
 #include "vmill/Runtime/Linux/Clock.cpp"
@@ -227,6 +265,7 @@ struct linux_new_utsname {
 #include "vmill/Runtime/Linux/MM.cpp"
 #include "vmill/Runtime/Linux/Net.cpp"
 #include "vmill/Runtime/Linux/Sys.cpp"
+#include "vmill/Runtime/Linux/Thread.cpp"
 
 namespace {
 
@@ -271,6 +310,8 @@ static Memory *SystemCall32(Memory *memory, State *state,
     case 196: return SysLstat<linux32_stat64>(memory, state, syscall);
     case 197: return SysFstat<linux32_stat64>(memory, state, syscall);
     case 240: return SysFutex<linux32_timespec>(memory, state, syscall);
+    case 243: return SysSetThreadArea<linux_X86_user_desc>(
+        memory, state, syscall);
     default:
       STRACE_ERROR(unsupported, "nr=%d", syscall_num);
       return syscall.SetReturn(memory, state, -ENOSYS);

@@ -1,4 +1,18 @@
-/* Copyright 2017 Peter Goodman (peter@trailofbits.com), all rights reserved. */
+/*
+ * Copyright (c) 2017 Trail of Bits, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 #include <algorithm>
 #include <cinttypes>
@@ -26,7 +40,7 @@
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 
-#include "grr/Snapshot.h"
+#include "vmill/Context/Snapshot.h"
 
 #include "remill/Arch/Arch.h"
 #include "remill/Arch/Name.h"
@@ -42,13 +56,13 @@ DEFINE_string(workspace, "", "Path to a directory in which the snapshot and "
 DECLARE_string(arch);
 DECLARE_string(os);
 
-namespace grr {
+namespace vmill {
 // Copy the register state from the tracee with PID `pid` into the file
 // with FD `fd`.
 extern void CopyX86TraceeState(pid_t pid, pid_t tid, int64_t memory_id,
                                snapshot::Program *snapshot);
 
-}  // namespace grr
+}  // namespace vmill
 
 namespace {
 
@@ -66,7 +80,7 @@ static std::string gCorePath;
 
 static std::string gMemPath;
 
-static grr::snapshot::Program gSnapshot;
+static vmill::snapshot::Program gSnapshot;
 
 // Extract out the arguments of the tracee from the arguments to the tracer.
 bool ExtractTraceeArgs(int *argc, char **argv) {
@@ -388,14 +402,12 @@ static uint64_t GetMaxStackSize(void) {
     struct rlimit limit;
     getrlimit(RLIMIT_STACK, &limit);
     LOG(INFO)
-        << "Current stack size limit is " << limit.rlim_cur;
-
-    LOG(INFO)
-        << "Absolute maximum stack size is " << limit.rlim_max;
+        << "Current stack size limit is " << std::dec << limit.rlim_cur;
 
     uint64_t our_max = 16ULL << 20ULL;
-    max_stack_size = std::min<uint64_t>(limit.rlim_max, our_max);
-    max_stack_size = std::max<uint64_t>(limit.rlim_cur, max_stack_size);
+    max_stack_size = std::max<uint64_t>(limit.rlim_cur, our_max);
+    LOG(INFO)
+        << "New stack size limit is " << std::dec << max_stack_size;
   }
 
   return max_stack_size;
@@ -447,7 +459,7 @@ static std::string PageRangeName(const std::string &line) {
 
 // Parse a line from `/proc/<pid>/maps` and fill in a `PageInfo` structure.
 static bool ReadPageInfoLine(const std::string &line,
-                             grr::snapshot::AddressSpace *memory) {
+                             vmill::snapshot::AddressSpace *memory) {
   auto cline = line.c_str();
   uint64_t begin = 0;
   uint64_t end = 0;
@@ -492,42 +504,42 @@ static bool ReadPageInfoLine(const std::string &line,
   info->set_name(PageRangeName(line));
 
   if (strstr(path, "[stack]")) {
-    info->set_kind(grr::snapshot::kLinuxStackPageRange);
+    info->set_kind(vmill::snapshot::kLinuxStackPageRange);
 
     auto curr_stack_size = end - begin;
     auto new_stack_size = std::max(curr_stack_size, GetMaxStackSize());
 
-    LOG(INFO)
-        << "New stack size is " << new_stack_size;
-
     info->set_base(static_cast<int64_t>(end - new_stack_size));
 
+    LOG(INFO)
+        << "New stack base is " << std::hex << info->base() << std::dec;
+
   } else if (strstr(path, "[vvar]")) {
-    info->set_kind(grr::snapshot::kLinuxVVarPageRange);
+    info->set_kind(vmill::snapshot::kLinuxVVarPageRange);
 
   } else if (strstr(path, "[vdso]")) {
-    info->set_kind(grr::snapshot::kLinuxVDSOPageRange);
+    info->set_kind(vmill::snapshot::kLinuxVDSOPageRange);
 
   } else if (strstr(path, "[vsyscall]")) {
-    info->set_kind(grr::snapshot::kLinuxVSysCallPageRange);
+    info->set_kind(vmill::snapshot::kLinuxVSysCallPageRange);
 
   } else if (strstr(path, "[heap]")) {
-    info->set_kind(grr::snapshot::kLinuxHeapPageRange);
+    info->set_kind(vmill::snapshot::kLinuxHeapPageRange);
 
   } else if (path[0]) {
-    info->set_kind(grr::snapshot::kFileBackedPageRange);
+    info->set_kind(vmill::snapshot::kFileBackedPageRange);
     info->set_file_path(path);
     info->set_file_offset(static_cast<int64_t>(offset));
 
   } else {
-    info->set_kind(grr::snapshot::kAnonymousPageRange);
+    info->set_kind(vmill::snapshot::kAnonymousPageRange);
   }
 
   return true;
 }
 
 // Read out the ranges of mapped pages.
-static void ReadTraceePageMaps(pid_t pid, grr::snapshot::AddressSpace *memory) {
+static void ReadTraceePageMaps(pid_t pid, vmill::snapshot::AddressSpace *memory) {
   std::stringstream ss;
   ss << "/proc/" << pid << "/maps";
 
@@ -568,7 +580,7 @@ static char gPageBuff[kPageBuffSize];
 
 // Copy memory from the tracee into the snapshot file.
 static void CopyTraceeMemory(
-    pid_t pid, const grr::snapshot::AddressSpace *memory) {
+    pid_t pid, const vmill::snapshot::AddressSpace *memory) {
 
   // Open up the file that maps in the processes's memory; succeeded is not
   // a strict requirement given the ptrace-based fallback.
@@ -595,7 +607,7 @@ static void CopyTraceeMemory(
 
     // The mapping is originally file-backed. Start by copying in the original
     // backing data.
-    if (info.kind() == grr::snapshot::kFileBackedPageRange) {
+    if (info.kind() == vmill::snapshot::kFileBackedPageRange) {
       int mapped_file_fd = open(info.file_path().c_str(), O_RDONLY);
       if (-1 != mapped_file_fd) {
         lseek(mapped_file_fd, info.file_offset(), SEEK_SET);
@@ -603,7 +615,7 @@ static void CopyTraceeMemory(
         LOG(INFO)
             << "Copying " << std::dec << size_to_copy << " bytes from "
             << info.file_path() << " at offset " << std::hex
-            << info.file_offset() << " into " << dest_path;
+            << info.file_offset() << " into " << dest_path << std::dec;
 
         for (i = 0; i < size_to_copy; i += kPageBuffSize) {
           memset(gPageBuff, 0, kPageBuffSize);
@@ -623,22 +635,23 @@ static void CopyTraceeMemory(
         << "Copying " << std::dec << size_to_copy
         << " bytes from the tracee's memory (" << source_path << ") from "
         << std::hex << info.base() << " to " << std::hex << info.limit()
-        << " into " << dest_path;
+        << " into " << dest_path << std::dec;
 
     // Start by trying to copy from the `/proc/<pid>/mem` file.
-    for (i = 0; i < size_to_copy; i += kPageBuffSize) {
-      auto page_addr = static_cast<uint64_t>(info.limit()) + i;
-      lseek(mem_fd, info.base() + i, SEEK_SET);
+    for (uint64_t i = 0; i < size_to_copy; i += kPageBuffSize) {
+      auto page_addr = static_cast<uint64_t>(info.base()) + i;
+      lseek(mem_fd, static_cast<int64_t>(page_addr), SEEK_SET);
       memset(gPageBuff, 0, kPageBuffSize);
 
       if (kPageBuffSize == read(mem_fd, gPageBuff, kPageBuffSize) ||
-          CopyTraceeMemoryWithPtrace(pid, page_addr, kPageBuffSize,
-                                     gPageBuff)) {
+          CopyTraceeMemoryWithPtrace(pid, page_addr,
+                                     kPageBuffSize, gPageBuff)) {
         lseek(dest_fd, i, SEEK_SET);
         write(dest_fd, gPageBuff, kPageBuffSize);
       } else {
         LOG(WARNING)
-            << "Can't copy memory at offset " << std::hex << page_addr;
+            << "Can't copy memory at offset " << std::hex << page_addr
+            << std::dec;
       }
     }
     close(dest_fd);
@@ -657,7 +670,7 @@ static void SaveSnapshotFile(void) {
 
 // Create a snapshot file of the tracee.
 static void SnapshotTracee(pid_t pid) {
-  int64_t memory_id = 0;
+  int64_t memory_id = 1;
 
   auto memory = gSnapshot.add_address_spaces();
   memory->set_id(memory_id);
@@ -673,14 +686,14 @@ static void SnapshotTracee(pid_t pid) {
       case remill::kArchX86_AVX512:
         LOG(INFO)
             << "Writing X86 register state into " << gSnapshotPath;
-        grr::CopyX86TraceeState(pid, tid, memory_id, &gSnapshot);
+        vmill::CopyX86TraceeState(pid, tid, memory_id, &gSnapshot);
         break;
       case remill::kArchAMD64:
       case remill::kArchAMD64_AVX:
       case remill::kArchAMD64_AVX512:
         LOG(INFO)
             << "Writing AMD64 register state into " << gSnapshotPath;
-        grr::CopyX86TraceeState(pid, tid, memory_id, &gSnapshot);
+        vmill::CopyX86TraceeState(pid, tid, memory_id, &gSnapshot);
         break;
 
       default:

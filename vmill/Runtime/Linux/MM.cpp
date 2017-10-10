@@ -316,7 +316,6 @@ static Memory *SysMunmap(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EINVAL);
   }
 
-
   STRACE_SUCCESS(munmap, "addr=%lx, size=%lx", addr, size);
   memory = __vmill_free_memory(memory, addr, size);
   return syscall.SetReturn(memory, state, 0);

@@ -183,7 +183,6 @@ std::list<DecodedTrace> DecodeTraces(AddressSpace &addr_space,
 
   DecoderWorkList trace_list;
   DecoderWorkList work_list;
-  std::set<uint64_t> seen_trace_list;
 
   DLOG(INFO)
       << "Recursively decoding machine code, beginning at "
@@ -196,11 +195,11 @@ std::list<DecodedTrace> DecodeTraces(AddressSpace &addr_space,
     const auto trace_pc = *trace_it;
     trace_list.erase(trace_it);
 
-    if (seen_trace_list.count(trace_pc)) {
+    if (addr_space.IsMarkedTraceHead(trace_pc)) {
       continue;
     }
 
-    seen_trace_list.insert(trace_pc);
+    addr_space.MarkAsTraceHead(trace_pc);
     work_list.insert(trace_pc);
 
     DecodedTrace trace;

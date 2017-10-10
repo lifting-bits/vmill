@@ -143,9 +143,7 @@ void Context::LoadLiftedModule(const std::shared_ptr<llvm::Module> &module) {
     auto name = func.getName().str();
     uint64_t pc = 0;
     uint64_t hash = 0;
-    char dummy = '\0';  // We want to fail to get this.
-    auto num_parts = sscanf(name.c_str(), "_%" SCNx64 "_%" SCNx64 "%c",
-                            &pc, &hash, &dummy);
+    auto num_parts = sscanf(name.c_str(), "_%" SCNx64 "_%" SCNx64, &pc, &hash);
     if (2 != num_parts) {
       continue;
     }
@@ -171,6 +169,7 @@ llvm::Function *Context::GetLiftedFunctionForTask(const Task &task) {
   }
 
   auto code_version = gLRUAddressSpace->CodeVersion();
+
   LiveTraceId live_id = {task.pc, code_version};
   auto it = live_trace_cache.find(live_id);
   if (it != live_trace_cache.end()) {

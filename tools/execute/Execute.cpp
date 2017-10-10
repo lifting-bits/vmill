@@ -32,8 +32,6 @@
 #include <llvm/IR/Module.h>
 #include <llvm/Support/ManagedStatic.h>
 
-#include "grr/Snapshot.h"
-
 #include "remill/Arch/Arch.h"
 #include "remill/Arch/Name.h"
 #include "remill/BC/Util.h"
@@ -45,6 +43,7 @@
 #include "vmill/BC/Runtime.h"
 #include "vmill/Context/AddressSpace.h"
 #include "vmill/Context/Context.h"
+#include "vmill/Context/Snapshot.h"
 
 DEFINE_string(workspace, ".", "Path to workspace in which the snapshot file is"
                               " stored, and in which files will be placed.");
@@ -54,7 +53,7 @@ DEFINE_string(executor, "native", "Type of the executor to run.");
 DECLARE_string(arch);
 DECLARE_string(os);
 
-namespace grr {
+namespace vmill {
 namespace {
 
 using AddressSpaceIdToMemoryMap = std::unordered_map<int64_t, void *>;
@@ -71,7 +70,7 @@ ProgramSnapshotPtr LoadSnapshotFromFile(void) {
       << "Snapshot file " << snapshot_path
       << " could not be opened for reading";
 
-  ProgramSnapshotPtr snap(new grr::snapshot::Program);
+  ProgramSnapshotPtr snap(new snapshot::Program);
   CHECK(snap->ParseFromIstream(&fs))
       << "Unable parse snapshot file " << snapshot_path;
 
@@ -82,8 +81,8 @@ ProgramSnapshotPtr LoadSnapshotFromFile(void) {
 }
 
 // Load in the data from the snapshotted page range into the address space.
-static void LoadPageRangeFromFile(vmill::AddressSpace *addr_space,
-                                  const grr::snapshot::PageRange &range) {
+static void LoadPageRangeFromFile(AddressSpace *addr_space,
+                                  const snapshot::PageRange &range) {
   std::stringstream ss;
   ss << FLAGS_workspace << "/memory/" << range.name();
   auto path = ss.str();
@@ -132,9 +131,8 @@ static void LoadPageRangeFromFile(vmill::AddressSpace *addr_space,
 
 // Go through the snapshotted pages and copy them into the address space.
 static void LoadAddressSpaceFromSnapshot(
-    vmill::Context &context,
-    AddressSpaceIdToMemoryMap &addr_space_ids,
-    const grr::snapshot::AddressSpace &orig_addr_space) {
+    Context &context, AddressSpaceIdToMemoryMap &addr_space_ids,
+    const snapshot::AddressSpace &orig_addr_space) {
 
   LOG(INFO)
       << "Initializing address space " << orig_addr_space.id();
@@ -181,7 +179,7 @@ static void LoadAddressSpaceFromSnapshot(
 }
 
 static void LoadSnapshotIntoContext(const ProgramSnapshotPtr &snapshot,
-                                    vmill::Context &context) {
+                                    Context &context) {
   LOG(INFO) << "Loading address space information from snapshot";
   AddressSpaceIdToMemoryMap address_space_ids;
   for (const auto &address_space : snapshot->address_spaces()) {
@@ -190,28 +188,29 @@ static void LoadSnapshotIntoContext(const ProgramSnapshotPtr &snapshot,
   }
 
   LOG(INFO) << "Loading task information.";
-  for (const auto &thread : snapshot->threads()) {
-    int64_t addr_space_id = thread.address_space_id();
+  for (const auto &task : snapshot->tasks()) {
+    int64_t addr_space_id = task.address_space_id();
     CHECK(address_space_ids.count(addr_space_id))
         << "Invalid address space id " << std::dec << addr_space_id
         << " for task";
 
     auto memory = address_space_ids[addr_space_id];
-    auto pc = static_cast<uint64_t>(thread.pc());
+    auto pc = static_cast<uint64_t>(task.pc());
 
     LOG(INFO)
         << "Adding task starting execution at " << std::hex << pc
         << " in address space " << std::dec << addr_space_id;
 
-    context.CreateInitialTask(thread.state(), pc, memory);
+    context.CreateInitialTask(task.state(), pc, memory);
   }
 }
 
 }  // namespace
 
-class Context : public vmill::Context {
+class ExecContext : public Context {
  public:
-  Context(void) {
+  ExecContext(void)
+      : last_clock(0) {
     auto bitcode_dir = FLAGS_workspace + "/bitcode";
     CHECK(remill::TryCreateDirectory(bitcode_dir))
         << "Could not create bitcode cache directory " << bitcode_dir;
@@ -228,23 +227,35 @@ class Context : public vmill::Context {
         });
   }
 
-  virtual ~Context(void) {}
+  virtual ~ExecContext(void) {}
 
  protected:
   void SaveLiftedModule(const std::shared_ptr<llvm::Module> &module) override {
-    std::stringstream ss;
-    ss << FLAGS_workspace + "/bitcode/" << std::hex << time(nullptr) << ".bc";
-    auto save_path = ss.str();
+    auto save_path = GetFileName();
     LOG(INFO)
         << "Caching module to " << save_path;
     remill::StoreModuleToFile(module.get(), save_path);
   }
+
+  std::string GetFileName(void) {
+    auto now = clock();
+    std::stringstream ss;
+    ss << FLAGS_workspace + "/bitcode/" << std::hex << now;
+    if (now == last_clock) {
+      ss << "." << random();
+    }
+    ss << ".bc";
+    last_clock = now;
+    return ss.str();
+  }
+
+  clock_t last_clock;
 };
 
 static void Run(const ProgramSnapshotPtr &snapshot) {
 
   LOG(INFO) << "Creating execution context.";
-  Context context;
+  ExecContext context;
 
   LOG(INFO) << "Creating executor.";
 
@@ -259,7 +270,7 @@ static void Run(const ProgramSnapshotPtr &snapshot) {
 //  context->Execute();
 }
 
-}  // namespace grr
+}  // namespace vmill
 
 int main(int argc, char **argv) {
 
@@ -284,7 +295,7 @@ int main(int argc, char **argv) {
   CHECK(FLAGS_arch.empty() && FLAGS_os.empty())
       << "The architecture and OS names must NOT be manually specified.";
 
-  auto snapshot = grr::LoadSnapshotFromFile();
+  auto snapshot = vmill::LoadSnapshotFromFile();
 
   // Take the target architecture from the snapshot file.
   FLAGS_arch = snapshot->arch();
@@ -298,7 +309,7 @@ int main(int argc, char **argv) {
   CHECK(remill::kOSInvalid != os_name)
       << "Invalid OS " << FLAGS_os;
 
-  grr::Run(snapshot);
+  vmill::Run(snapshot);
 
   llvm::llvm_shutdown();
   google::ShutDownCommandLineFlags();

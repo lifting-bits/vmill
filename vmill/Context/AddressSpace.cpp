@@ -78,17 +78,25 @@ class MemoryMap {
     return left->BaseAddress() < right->BaseAddress();
   }
 
+  inline void InvalidateCodeVersion(void) {
+    code_version_is_valid = false;
+  }
+
   virtual uint8_t Read(uint64_t address) = 0;
 
   virtual void Write(uint64_t address, uint8_t val) = 0;
 
   virtual MemoryMapPtr Clone(void) = 0;
 
+  virtual uint64_t CodeVersion(void) = 0;
+
   MemoryMapPtr Copy(uint64_t clone_base, uint64_t clone_limit);
 
  protected:
   const uint64_t base_address;
   const uint64_t limit_address;
+  uint64_t code_version;
+  bool code_version_is_valid;
 
   uint8_t *data;
   MemoryMapPtr parent;
@@ -105,6 +113,8 @@ class MemoryMap {
 MemoryMap::MemoryMap(uint64_t base_address_, uint64_t limit_address_)
     : base_address(base_address_),
       limit_address(limit_address_),
+      code_version(0),
+      code_version_is_valid(false),
       data(nullptr),
       parent(nullptr) {}
 
@@ -130,6 +140,7 @@ class ArrayMemoryMap : public MemoryMap {
     data = steal->data;
     steal->data = nullptr;
   }
+
   uint8_t Read(uint64_t address) override {
     return data[address - base_address];
   }
@@ -139,6 +150,8 @@ class ArrayMemoryMap : public MemoryMap {
   }
 
   MemoryMapPtr Clone(void) override;
+
+  uint64_t CodeVersion(void) override;
 };
 
 static_assert(sizeof(ArrayMemoryMap) == sizeof(MemoryMap),
@@ -162,6 +175,10 @@ class EmptyMemoryMap : public MemoryMap {
 
   MemoryMapPtr Clone(void) override {
     return std::make_shared<EmptyMemoryMap>(base_address, limit_address);
+  }
+
+  uint64_t CodeVersion(void) override {
+    return 0;
   }
 };
 
@@ -198,6 +215,10 @@ class CopyOnWriteMemoryMap : public MemoryMap {
     return std::make_shared<CopyOnWriteMemoryMap>(parent);
   }
 
+  uint64_t CodeVersion(void) override {
+    return parent->CodeVersion();
+  }
+
  private:
   using MemoryMap::MemoryMap;
 };
@@ -222,6 +243,19 @@ MemoryMapPtr MemoryMap::Copy(uint64_t clone_base, uint64_t clone_limit) {
     }
   }
   return array_backed;
+}
+
+uint64_t ArrayMemoryMap::CodeVersion(void) {
+  if (code_version_is_valid) {
+    return code_version;
+  }
+
+  XXH64_state_t state = {};
+  XXH64_reset(&state, 0);
+  XXH64_update(&state, data, Size());
+  code_version = XXH64_digest(&state);
+  code_version_is_valid = true;
+  return code_version;
 }
 
 AddressSpace::AddressSpace(void)
@@ -265,21 +299,21 @@ uint64_t AddressSpace::CodeVersion(void) {
     return code_version;
   }
 
+  trace_heads.clear();
+
   XXH64_state_t state = {};
   XXH64_reset(&state, 0);
 
-  uint8_t bytes[kPageSize];
-  auto num_pages = 0;
+  auto num_maps = 0;
   for (auto &map : this->maps) {
     auto addr = map->BaseAddress();
     auto limit_addr = map->LimitAddress();
     for (; addr < limit_addr; addr += kPageSize) {
       if (CanExecute(addr)) {
-        for (uint64_t i = 0; i < kPageSize; ++i) {
-          bytes[i] = map->Read(addr + i);
-        }
-        num_pages += 1;
-        XXH64_update(&state, bytes, kPageSize);
+        num_maps += 1;
+        uint64_t map_code_version = map->CodeVersion();
+        XXH64_update(&state, &map_code_version, sizeof(map_code_version));
+        break;
       }
     }
   }
@@ -289,9 +323,17 @@ uint64_t AddressSpace::CodeVersion(void) {
 
   LOG(INFO)
       << "New code version " << std::hex << code_version << " is a hash of "
-      << std::dec << num_pages << " executable pages";
+      << std::dec << num_maps << " memory maps";
 
   return code_version;
+}
+
+void AddressSpace::MarkAsTraceHead(uint64_t pc) {
+  trace_heads.insert(pc);
+}
+
+bool AddressSpace::IsMarkedTraceHead(uint64_t pc) const {
+  return 0 != trace_heads.count(pc);
 }
 
 // Clear out the contents of this address space.
@@ -323,7 +365,8 @@ bool AddressSpace::TryRead(uint64_t addr, uint8_t *val) {
   if (!CanRead(addr)) {
     return false;
   } else {
-    *val = FindRange(addr)->Read(addr);
+    const auto &range = FindRange(addr);
+    *val = range->Read(addr);
     return true;
   }
 }
@@ -332,15 +375,17 @@ bool AddressSpace::TryWrite(uint64_t addr, uint8_t val) {
   if (!CanWrite(addr)) {
     return false;
   } else {
+    const auto &range = FindRange(addr);
     if (CanExecute(addr)) {
       if (!code_version_is_invalid) {
         LOG(INFO)
             << "Invalidating code version because of write to executable "
             << "memory at " << std::hex << addr << std::dec;
         code_version_is_invalid = true;
+        range->InvalidateCodeVersion();
       }
     }
-    FindRange(addr)->Write(addr, val);
+    range->Write(addr, val);
     return true;
   }
 }

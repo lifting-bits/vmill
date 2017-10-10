@@ -88,9 +88,11 @@ static Memory *SysSetHostName(Memory *memory, State *state,
 
   auto ret = sethostname(gHostName, len);
   if (!ret) {
-    STRACE_SUCCESS(sethostname, "name=%s", gHostName);
+    STRACE_SUCCESS(sethostname, "name=%s, len=%d", gHostName, len);
     return syscall.SetReturn(memory, state, 0);
   } else {
+    STRACE_ERROR(sethostname, "Can't set host name to %s: %s",
+                 gHostName, strerror(errno));
     return syscall.SetReturn(memory, state, -errno);
   }
 }

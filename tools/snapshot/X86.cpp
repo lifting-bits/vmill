@@ -27,7 +27,7 @@
 
 #include "remill/Arch/Arch.h"
 
-#include "grr/Snapshot.h"
+#include "vmill/Context/Snapshot.h"
 
 #define HAS_FEATURE_AVX 1
 #define HAS_FEATURE_AVX512 1
@@ -36,7 +36,21 @@
 
 DECLARE_uint64(breakpoint);
 
-namespace grr {
+namespace vmill {
+
+static bool TryGetDescriptorBase(pid_t tid, const SegmentSelector &ss,
+                                 uint32_t *addr) {
+  errno = 0;
+  struct user_desc area = {};
+  ptrace(static_cast<enum __ptrace_request>(25 /* PTRACE_GET_THREAD_AREA */),
+         tid, ss.index, &area);
+  if (!errno) {
+    *addr = area.base_addr;
+    return true;
+  } else {
+    return false;
+  }
+}
 
 // Copy the register state from the tracee with PID `pid` and TID `tid` into
 // the file with FD `fd`.
@@ -82,12 +96,12 @@ void CopyX86TraceeState(pid_t pid, pid_t tid, int64_t memory_id,
 
   // Copy in the segments.
   auto &seg = state.seg;
-  seg.cs = regs.cs;
-  seg.ds = regs.ds;
-  seg.fs = regs.fs;
-  seg.gs = regs.gs;
-  seg.es = regs.es;
-  seg.ss = regs.ss;
+  seg.cs.flat = regs.cs;
+  seg.ds.flat = regs.ds;
+  seg.fs.flat = regs.fs;
+  seg.gs.flat = regs.gs;
+  seg.es.flat = regs.es;
+  seg.ss.flat = regs.ss;
 
   auto &addr = state.addr;
   addr.fs_base.qword = regs.fs_base;
@@ -97,13 +111,14 @@ void CopyX86TraceeState(pid_t pid, pid_t tid, int64_t memory_id,
   // host, the TLS entry is 12 in the GDT [1].
   //
   // [1] http://lxr.free-electrons.com/source/arch/x86/um/os-Linux/tls.c#L18
-  if (remill::GetTargetArch()->address_size == 32) {
-    errno = 0;
-    struct user_desc area = {};
-    ptrace(static_cast<enum __ptrace_request>(25 /* PTRACE_GET_THREAD_AREA */),
-           tid, 12, &area);
-    if (!errno) {
-      addr.gs_base.dword = area.base_addr;
+  // [2] https://code.woboq.org/linux/linux/arch/x86/include/asm/segment.h.html#_M/GDT_ENTRY_TLS_MIN
+  if (remill::GetTargetArch()->IsX86()) {
+    if (!addr.gs_base.qword) {
+      TryGetDescriptorBase(tid, seg.gs, &(addr.gs_base.dword));
+    }
+
+    if (!addr.fs_base.qword) {
+      TryGetDescriptorBase(tid, seg.fs, &(addr.fs_base.dword));
     }
   }
 
@@ -125,10 +140,10 @@ void CopyX86TraceeState(pid_t pid, pid_t tid, int64_t memory_id,
   // Opportunistic copying of ST(i) regs.
   for (size_t i = 0; i < 8; ++i) {
     auto entry = *reinterpret_cast<long double *>(&(fpregs.st[i].st));
-    st.elems[i].val = static_cast<float64_t>(entry);
+    st.elems[i].val = static_cast<double>(entry);
   }
 
-  auto thread_info = program->add_threads();
+  auto thread_info = program->add_tasks();
   thread_info->set_pc(static_cast<int64_t>(gpr.rip.qword));
   thread_info->set_state(&state, sizeof(State));
   thread_info->set_address_space_id(memory_id);
@@ -153,7 +168,9 @@ void CopyX86TraceeState(pid_t pid, pid_t tid, int64_t memory_id,
       << "  r14 = " << std::hex << gpr.r14.qword << std::endl
       << "  r15 = " << std::hex << gpr.r15.qword << std::endl
       << "  rip = " << std::hex << gpr.rip.qword << std::endl
+      << "  fs index = " << std::dec << seg.fs.index << std::endl
       << "  fs base = " << std::hex << addr.fs_base.qword << std::endl
+      << "  gs index = " << std::dec << seg.gs.index << std::endl
       << "  gs base = " << std::hex << addr.gs_base.qword << std::endl
       << std::dec;
 #else
@@ -167,5 +184,5 @@ void CopyX86TraceeState(pid_t pid, pid_t tid, int64_t memory_id,
 #endif  // __x86_64__
 }
 
-}  // namespace grr
+}  // namespace vmill
 

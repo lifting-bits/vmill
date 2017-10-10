@@ -102,6 +102,10 @@ class AddressSpace {
   //            thereby making it valid.
   uint64_t CodeVersion(void);
 
+  void MarkAsTraceHead(uint64_t pc);
+
+  bool IsMarkedTraceHead(uint64_t pc) const;
+
  private:
   AddressSpace(AddressSpace &&) = delete;
   AddressSpace &operator=(const AddressSpace &) = delete;
@@ -146,6 +150,9 @@ class AddressSpace {
   // are cloned from it, so that we can partition code caches according to
   // a common ancestry.
   uint64_t code_version;
+
+  // Set of lifted trace heads observed for this code version.
+  std::unordered_set<uint64_t> trace_heads;
 };
 
 }  // namespace vmill

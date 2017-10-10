@@ -24,7 +24,29 @@ list(APPEND PROJECT_INCLUDEDIRECTORIES "${VMILL_TOOLS_DIR}")
 list(APPEND PROJECT_DEFINITIONS "VMILL_INSTALL_RUNTIME_DIR=\"${CMAKE_INSTALL_PREFIX}/share/vmill/${REMILL_LLVM_VERSION}/runtime/\"")
 list(APPEND PROJECT_DEFINITIONS "VMILL_BUILD_RUNTIME_DIR=\"${CMAKE_CURRENT_BINARY_DIR}/vmill/Runtime/\"")
 
+# protobuf
+find_package(Protobuf REQUIRED)
+list(APPEND PROJECT_LIBRARIES ${Protobuf_LIBRARIES})
+list(APPEND PROJECT_INCLUDEDIRECTORIES ${Protobuf_INCLUDE_DIR})
+list(APPEND PROJECT_DEFINITIONS "GOOGLE_PROTOBUF_NO_RTTI")
+
+#
+# protobuf file generation 
+#
+
+# this function can't be told where to store the output files! we have to add the whole binary directory
+# to the include directories (or change it and lose compatibility with the system libraries)
+protobuf_generate_cpp(PROJECT_PROTOBUFSOURCEFILES PROJECT_PROTOBUFHEADERFILES
+                      "${CMAKE_CURRENT_SOURCE_DIR}/vmill/Context/Snapshot.proto")
+list(APPEND PROJECT_INCLUDEDIRECTORIES ${CMAKE_CURRENT_BINARY_DIR})
+list(APPEND PROJECT_INCLUDEDIRECTORIES ${PROJECT_PROTOBUFHEADERFILES})
+
+# disable -Werror on these file since they have been generated
+set_source_files_properties(${PROJECT_PROTOBUFSOURCEFILES} PROPERTIES COMPILE_FLAGS "-Wno-sign-conversion -Wno-shorten-64-to-32 -Wno-conversion")
+set_source_files_properties(${PROJECT_PROTOBUFHEADERFILES} PROPERTIES COMPILE_FLAGS "-Wno-sign-conversion -Wno-shorten-64-to-32 -Wno-conversion")
+
 add_library(${PROJECT_NAME} STATIC
+    ${PROJECT_PROTOBUFSOURCEFILES}
     vmill/Arch/Decoder.cpp
     vmill/BC/Executor.cpp
     vmill/BC/NativeExecutor.cpp
@@ -45,8 +67,10 @@ target_include_directories(${PROJECT_NAME} PUBLIC SYSTEM ${PROJECT_INCLUDEDIRECT
 target_compile_definitions(${PROJECT_NAME} PUBLIC ${PROJECT_DEFINITIONS})
 set_target_properties(${PROJECT_NAME} PROPERTIES COMPILE_FLAGS ${PROJECT_CXXFLAGS})
 
+set(VMILL_INCLUDEDIRECTORIES ${PROJECT_INCLUDEDIRECTORIES})
 
 add_subdirectory(vmill/Runtime)
 
-add_subdirectory(tools/grr)
+add_subdirectory(tools/snapshot)
+add_subdirectory(tools/execute)
 add_subdirectory(tools/microx)
