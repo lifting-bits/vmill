@@ -43,8 +43,9 @@ static Memory *SysAccess(Memory *memory, State *state,
 
   auto ret = access(gPath, type);
   if (-1 == ret) {
-    STRACE_ERROR(access, "Cann't access %s: %s", gPath, strerror(errno));
-    return syscall.SetReturn(memory, state, -errno);
+    auto err = errno;
+    STRACE_ERROR(access, "Can't access %s: %s", gPath, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
   } else {
     STRACE_SUCCESS(access, "path=%s, type=%d, ret=%d", gPath, type, ret);
     return syscall.SetReturn(memory, state, ret);
@@ -73,9 +74,10 @@ static Memory *SysLlseek(Memory *memory, State *state,
   auto offset64 = static_cast<off64_t>(offset);
   auto new_offset64 = lseek64(fd, offset64, whence);
   if (static_cast<off64_t>(-1) == new_offset64) {
+    auto err = errno;
     STRACE_ERROR(llseek, "fd=%d, offset=%ld, whence=%d: %s",
-                 fd, offset64, whence, strerror(errno));
-    return syscall.SetReturn(memory, state, -errno);
+                 fd, offset64, whence, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
   }
 
   if (!TryWriteMemory(memory, result_addr, new_offset64)) {
@@ -153,8 +155,9 @@ static Memory *SysStat(Memory *memory, State *state,
 
   struct stat info = {};
   if (::stat(gPath, &info)) {
-    STRACE_ERROR(stat, "Can't stat path %s: %s", gPath, strerror(errno));
-    return syscall.SetReturn(memory, state, -errno);
+    auto err = errno;
+    STRACE_ERROR(stat, "Can't stat path %s: %s", gPath, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
   }
 
   T info32 = {};
@@ -201,8 +204,9 @@ static Memory *SysLstat(Memory *memory, State *state,
 
   struct stat info = {};
   if (lstat(gPath, &info)) {
-    STRACE_ERROR(lstat, "Can't lstat path %s: %s", gPath, strerror(errno));
-    return syscall.SetReturn(memory, state, -errno);
+    auto err = errno;
+    STRACE_ERROR(lstat, "Can't lstat path %s: %s", gPath, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
   }
 
   T info32 = {};
@@ -236,8 +240,9 @@ static Memory *SysFstat(Memory *memory, State *state,
 
   struct stat info = {};
   if (fstat(fd, &info)) {
-    STRACE_ERROR(fstat, "Can't fstat fd %d: %s", fd, strerror(errno));
-    return syscall.SetReturn(memory, state, -errno);
+    auto err = errno;
+    STRACE_ERROR(fstat, "Can't fstat fd %d: %s", fd, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
   }
 
   T info32 = {};
@@ -250,6 +255,61 @@ static Memory *SysFstat(Memory *memory, State *state,
     STRACE_ERROR(fstat, "Can't write stat buff back to memory");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
+}
+
+static Memory *SysGetCurrentWorkingDirectory(Memory *memory, State *state,
+                                             const SystemCallABI &syscall) {
+  addr_t buf = 0;
+  addr_t size = 0;
+  if (!syscall.TryGetArgs(memory, state, &buf, &size)) {
+    STRACE_ERROR(getcwd, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  if (!buf) {
+    STRACE_ERROR(getcwd, "Invalid ");
+  }
+
+  char *path_buf = &(gPath[0]);
+  if (size >= PATH_MAX) {
+    path_buf = nullptr;
+  }
+
+  auto ret = getcwd(path_buf, size);
+  if (!ret) {
+    auto err = errno;
+    STRACE_ERROR(getcwd, "Couldn't get current working directory: %s",
+                 strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  }
+
+  auto cwd_len = strlen(ret);
+  if (size <= cwd_len) {
+    if (ret != &(gPath[0])) {
+      free(ret);
+    }
+    STRACE_ERROR(getcwd, "Buffer size %d < %d too small", size, cwd_len + 1);
+    return syscall.SetReturn(memory, state, -ERANGE);
+  }
+
+  auto copied_len = CopyStringToMemory(memory, buf, ret, cwd_len);
+
+  // Kernel returns the length of the buffer filled, including the NUL-
+  // terminator.
+  auto len_or_err = static_cast<int>(cwd_len + 1);
+
+  if (copied_len == cwd_len) {
+    STRACE_SUCCESS(getcwd, "path=%s, len=%u", ret, cwd_len);
+  } else {
+    STRACE_ERROR(getcwd, "Couldn't copy path to memory");
+    len_or_err = -EFAULT;
+  }
+
+  if (ret != &(gPath[0])) {
+    free(ret);
+  }
+
+  return syscall.SetReturn(memory, state, len_or_err);
 }
 
 }  // namespace

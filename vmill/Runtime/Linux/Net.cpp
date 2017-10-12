@@ -28,8 +28,9 @@ static Memory *SysSocket(Memory *memory, State *state,
 
   auto fd = socket(domain, type, protocol);
   if (-1 == fd) {
-    STRACE_ERROR(socket, "Couldn't open socket: %s", strerror(errno));
-    return syscall.SetReturn(memory, state, -errno);
+    auto err = errno;
+    STRACE_ERROR(socket, "Couldn't open socket: %s", strerror(err));
+    return syscall.SetReturn(memory, state, -err);
   } else {
     STRACE_SUCCESS(socket, "domain=%d, type=%d, protocol=%d, fd=%d",
                    domain, type, protocol, fd);
@@ -57,8 +58,9 @@ static Memory *SysBind(Memory *memory, State *state,
 
   auto ret = bind(sockfd, (addr ? &addr_val : nullptr), addrlen);
   if (-1 == ret) {
-    STRACE_ERROR(bind, "Couldn't bind socket %d: %s", sockfd, strerror(errno));
-    return syscall.SetReturn(memory, state, -errno);
+    auto err = errno;
+    STRACE_ERROR(bind, "Couldn't bind socket %d: %s", sockfd, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
   } else {
     STRACE_SUCCESS(bind, "fd=%d, addr=%s, len=%s, ret=%d",
                    sockfd, addr_val.sa_data, addrlen, ret);
@@ -86,9 +88,10 @@ static Memory *SysConnect(Memory *memory, State *state,
 
   auto ret = connect(sockfd, (addr ? &addr_val : nullptr), addrlen);
   if (-1 == ret) {
+    auto err = errno;
     STRACE_ERROR(connect, "Couldn't connect to socket %d: %s",
-                 sockfd, strerror(errno));
-    return syscall.SetReturn(memory, state, -errno);
+                 sockfd, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
   } else {
     STRACE_SUCCESS(connect, "fd=%d, addr=%s, len=%s, ret=%d",
                    sockfd, addr_val.sa_data, addrlen, ret);
@@ -107,9 +110,10 @@ static Memory *SysListen(Memory *memory, State *state,
 
   auto ret = listen(sockfd, backlog);
   if (-1 == ret) {
+    auto err = errno;
     STRACE_ERROR(listen, "Couldn't listend to socket %d: %s",
-                 sockfd, strerror(errno));
-    return syscall.SetReturn(memory, state, -errno);
+                 sockfd, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
   } else {
     STRACE_SUCCESS(listen, "fd=%d, backlog=%d, ret=%d", sockfd, backlog, ret);
     return syscall.SetReturn(memory, state, ret);
@@ -150,9 +154,10 @@ static Memory *DoSysAccept(Memory *memory, State *state,
       (addr_len ? &addr_len_val : nullptr), flags);
 
   if (-1 == ret_fd) {
+    auto err = errno;
     STRACE_ERROR(accept_generic, "Can't accept on fd %d: %s",
-                 fd, strerror(errno));
-    return syscall.SetReturn(memory, state, -errno);
+                 fd, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
   }
 
   if (addr && addr_len) {
@@ -208,6 +213,7 @@ static Memory *SysGetSockName(Memory *memory, State *state,
 
   socklen_t len_val = 0;
   if (!TryReadMemory(memory, len, &len_val)) {
+    STRACE_ERROR(getsockname, "Couldn't copy sock len.");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
@@ -215,6 +221,7 @@ static Memory *SysGetSockName(Memory *memory, State *state,
 
   if (!CanReadMemory(memory, addr, len_val) ||
       !CanWriteMemory(memory, addr, len_val)) {
+    STRACE_ERROR(getsockname, "Couldn't copy sock address to/from memory.");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
@@ -223,12 +230,17 @@ static Memory *SysGetSockName(Memory *memory, State *state,
   if (!getsockname(fd, &gSockAddrBuf, &len_val)) {
     CopyToMemory(memory, addr, &gSockAddrBuf, len_val);
     if (!TryWriteMemory(memory, len, &len_val)) {
+      STRACE_ERROR(getsockname, "Couldn't copy sock address to memory.");
       return syscall.SetReturn(memory, state, -EFAULT);
     } else {
+      STRACE_SUCCESS(getsockname, "sa_data=%s, sa_family=%s",
+                     gSockAddrBuf.sa_data, gSockAddrBuf.sa_family);
       return syscall.SetReturn(memory, state, 0);
     }
   } else {
-    return syscall.SetReturn(memory, state, -errno);
+    auto err = errno;
+    STRACE_ERROR(getsockname, "Error: %s", strerror(err));
+    return syscall.SetReturn(memory, state, -err);
   }
 }
 
@@ -244,6 +256,7 @@ static Memory *SysGetPeerName(Memory *memory, State *state,
 
   socklen_t len_val = 0;
   if (!TryReadMemory(memory, len, &len_val)) {
+    STRACE_ERROR(getpeername, "Couldn't copy sock len.");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
@@ -251,6 +264,7 @@ static Memory *SysGetPeerName(Memory *memory, State *state,
 
   if (!CanReadMemory(memory, addr, len_val) ||
       !CanWriteMemory(memory, addr, len_val)) {
+    STRACE_ERROR(getpeername, "Couldn't copy sock address to/from memory.");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
@@ -259,12 +273,17 @@ static Memory *SysGetPeerName(Memory *memory, State *state,
   if (!getpeername(fd, &gSockAddrBuf, &len_val)) {
     CopyToMemory(memory, addr, &gSockAddrBuf, len_val);
     if (!TryWriteMemory(memory, len, &len_val)) {
+      STRACE_ERROR(getpeername, "Couldn't copy sock address to memory.");
       return syscall.SetReturn(memory, state, -EFAULT);
     } else {
+      STRACE_SUCCESS(getpeername, "sa_data=%s, sa_family=%s",
+                     gSockAddrBuf.sa_data, gSockAddrBuf.sa_family);
       return syscall.SetReturn(memory, state, 0);
     }
   } else {
-    return syscall.SetReturn(memory, state, -errno);
+    auto err = errno;
+    STRACE_ERROR(getpeername, "Error: %s", strerror(err));
+    return syscall.SetReturn(memory, state, -err);
   }
 }
 
@@ -280,22 +299,29 @@ static Memory *SysSocketPair(Memory *memory, State *state,
   addr_t socket_vector = 0;
   if (!syscall.TryGetArgs(memory, state, &domain, &type,
                           &protocol, &socket_vector)) {
+    STRACE_ERROR(socketpair, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
   SocketVector vec = {};
   if (!TryReadMemory(memory, socket_vector, &vec)) {
+    STRACE_ERROR(socketpair, "Couldn't read vector from memory");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
   if (!socketpair(domain, type, protocol, vec.pair)) {
     if (!TryWriteMemory(memory, socket_vector, vec)) {
+      STRACE_ERROR(socketpair, "Couldn't write vector to memory");
       return syscall.SetReturn(memory, state, -EFAULT);
     } else {
+      STRACE_SUCCESS(socketpair, "domain=%d, type=%d, protocol=%d",
+                     domain, type, protocol);
       return syscall.SetReturn(memory, state, 0);
     }
   } else {
-    return syscall.SetReturn(memory, state, -errno);
+    auto err = errno;
+    STRACE_ERROR(socketpair, "Error: %s", strerror(err));
+    return syscall.SetReturn(memory, state, -err);
   }
 }
 

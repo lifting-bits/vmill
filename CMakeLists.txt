@@ -52,6 +52,7 @@ add_library(${PROJECT_NAME} STATIC
     vmill/BC/NativeExecutor.cpp
     vmill/BC/Lifter.cpp
     vmill/BC/Runtime.cpp
+    vmill/BC/Util.cpp
     vmill/Context/AddressSpace.cpp
     vmill/Context/Context.cpp
     vmill/Util/Hash.cpp

@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 
+#define likely(x) __builtin_expect((x), 1)
+#define unlikely(x) __builtin_expect((x), 0)
+
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 
@@ -340,6 +343,7 @@ bool AddressSpace::IsMarkedTraceHead(uint64_t pc) const {
 void AddressSpace::Kill(void) {
   maps.clear();
   page_to_map.clear();
+  last_mapped_page = page_to_map.end();
   is_dead = true;
 }
 
@@ -362,21 +366,19 @@ bool AddressSpace::CanExecute(uint64_t addr) const {
 
 // Read/write a byte to memory.
 bool AddressSpace::TryRead(uint64_t addr, uint8_t *val) {
-  if (!CanRead(addr)) {
-    return false;
-  } else {
+  if (likely(CanRead(addr))) {
     const auto &range = FindRange(addr);
     *val = range->Read(addr);
     return true;
+  } else {
+    return false;
   }
 }
 
 bool AddressSpace::TryWrite(uint64_t addr, uint8_t val) {
-  if (!CanWrite(addr)) {
-    return false;
-  } else {
+  if (likely(CanWrite(addr))) {
     const auto &range = FindRange(addr);
-    if (CanExecute(addr)) {
+    if (unlikely(CanExecute(addr))) {
       if (!code_version_is_invalid) {
         LOG(INFO)
             << "Invalidating code version because of write to executable "
@@ -387,6 +389,8 @@ bool AddressSpace::TryWrite(uint64_t addr, uint8_t val) {
     }
     range->Write(addr, val);
     return true;
+  } else {
+    return false;
   }
 }
 
@@ -476,7 +480,6 @@ static std::vector<MemoryMapPtr> RemoveRange(
 
 void AddressSpace::SetPermissions(uint64_t base_, size_t size, bool can_read,
                                   bool can_write, bool can_exec) {
-
   auto base = AlignDownToPage(base_);
   auto limit = base + RoundUpToPage(size);
 
@@ -517,7 +520,7 @@ void AddressSpace::SetPermissions(uint64_t base_, size_t size, bool can_read,
     if (code_version_is_invalid) {
       LOG(INFO)
           << "Invalidating code version because of change of permissions "
-          << "of memory [" << std::hex << base << ", " << std::hex << limit
+          << "of memory [" << std::hex << base << ", " << limit
           << ")" << std::dec;
     }
   }
@@ -530,17 +533,24 @@ void AddressSpace::AddMap(uint64_t base_, size_t size,
 
   if (is_dead) {
     LOG(ERROR)
-        << "Trying to map range ["
-        << std::hex << base << ", " << std::hex << limit
-        << ") in destroyed address space.";
+        << "Trying to map range [" << std::hex << base << ", " << limit
+        << ") in destroyed address space." << std::dec;
     return;
   }
 
-  DLOG(INFO)
-      << "AddMap: [" << std::hex << base << ", " << std::hex << limit << ")";
+  LOG(INFO)
+      << "Mapping range [" << std::hex << base << ", " << limit
+      << ")" << std::dec;
 
   auto old_ranges = RemoveRange(maps, base, limit);
   CheckRanges(old_ranges);
+
+  if (old_ranges.size() < maps.size()) {
+    LOG(INFO)
+        << "New map [" << std::hex << base << ", " << limit << ")"
+        << " overlapped with " << std::dec << (maps.size() - old_ranges.size())
+        << " existing maps";
+  }
 
   auto new_map = std::make_shared<EmptyMemoryMap>(base, limit);
   SetPermissions(base, (limit - base), can_read, can_write, can_exec);
@@ -556,8 +566,9 @@ void AddressSpace::RemoveMap(uint64_t base_, size_t size) {
   auto base = AlignDownToPage(base_);
   auto limit = base + RoundUpToPage(size);
 
-  DLOG(INFO)
-      << "RemoveMap: [" << std::hex << base << ", " << std::hex << limit << ")";
+  LOG(INFO)
+      << "Unmapping range [" << std::hex << base << ", "
+      << limit << ")" << std::dec;
 
   if (is_dead) {
     LOG(ERROR)
@@ -597,7 +608,8 @@ bool AddressSpace::NearestLimitAddress(
   if (is_dead) {
     LOG(ERROR)
         << "Trying to query nearest limit address of "
-        << std::hex << find << " in destroyed address space.";
+        << std::hex << find << " in destroyed address space"
+        << std::dec;
     return false;
   }
 
@@ -622,7 +634,8 @@ bool AddressSpace::NearestBaseAddress(
   if (is_dead) {
     LOG(ERROR)
         << "Trying to query nearest base address of "
-        << std::hex << find << " in destroyed address space.";
+        << std::hex << find << " in destroyed address space"
+        << std::dec;
     return false;
   }
 
@@ -671,9 +684,10 @@ void AddressSpace::CheckRanges(std::vector<MemoryMapPtr> &r) {
 }
 
 void AddressSpace::CreatePageToRangeMap(void) {
+  last_mapped_page = page_to_map.end();
+
   auto old_size = page_to_map.size();
   page_to_map.clear();
-
 
   std::sort(maps.begin(), maps.end(),
             [=] (const MemoryMapPtr &left, const MemoryMapPtr &right) {
@@ -688,10 +702,8 @@ void AddressSpace::CreatePageToRangeMap(void) {
       page_to_map[addr] = map;
     }
   }
-}
 
-#define likely(x) __builtin_expect((x), 1)
-#define unlikely(x) __builtin_expect((x), 0)
+}
 
 const MemoryMapPtr &AddressSpace::FindRange(uint64_t addr) {
   if (unlikely(is_dead)) {
@@ -699,12 +711,17 @@ const MemoryMapPtr &AddressSpace::FindRange(uint64_t addr) {
   }
 
   auto page_addr = AlignDownToPage(addr);
-  auto &range = page_to_map[page_addr];
-  if (!range) {
-    range = invalid_map;
+  if (last_mapped_page != page_to_map.end() &&
+      page_addr == last_mapped_page->first) {
+    return last_mapped_page->second;
   }
 
-  return range;
+  last_mapped_page = page_to_map.find(page_addr);
+  if (last_mapped_page == page_to_map.end()) {
+    return invalid_map;
+  } else {
+    return last_mapped_page->second;
+  }
 }
 
 // Log out the current state of the memory maps.

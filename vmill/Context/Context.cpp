@@ -51,21 +51,6 @@ Context::Context(void)
   address_spaces.push_back(dead_space);
 }
 
-Context::Context(const Context &parent)
-    : context(parent.context),
-      lifter(parent.lifter),
-      executor(parent.executor),
-      tasks(parent.tasks),
-      modules(parent.modules),
-      live_trace_cache(parent.live_trace_cache),
-      lifted_trace_cache(parent.lifted_trace_cache) {
-
-  address_spaces.reserve(parent.address_spaces.size());
-  for (auto space : parent.address_spaces) {
-    address_spaces.push_back(new AddressSpace(*space));
-  }
-}
-
 Context::~Context(void) {
   for (auto space : address_spaces) {
     if (space) {
@@ -141,16 +126,13 @@ void Context::LoadLiftedModule(const std::shared_ptr<llvm::Module> &module) {
   auto num_traces = 0;
   for (auto &func : *module) {
     auto name = func.getName().str();
-    uint64_t pc = 0;
-    uint64_t hash = 0;
-    auto num_parts = sscanf(name.c_str(), "_%" SCNx64 "_%" SCNx64, &pc, &hash);
-    if (2 != num_parts) {
-      continue;
+    TraceId id = {};
+    auto num_parts = sscanf(name.c_str(), "_%" SCNx64 "_%" SCNx64,
+                            &id.hash1, &id.hash2);
+    if (2 == num_parts) {
+      num_traces += 1;
+      trace_cache[id] = &func;
     }
-
-    num_traces += 1;
-    LiftedTraceId lift_id = {pc, hash};
-    lifted_trace_cache[lift_id] = &func;
   }
 
   LOG(INFO)
@@ -162,13 +144,14 @@ void Context::SaveLiftedModule(const std::shared_ptr<llvm::Module> &) {}
 
 // Lift code for a task.
 llvm::Function *Context::GetLiftedFunctionForTask(const Task &task) {
-  if (gLRUAddressSpace->CodeVersionIsInvalid()) {
+  const auto addr_space = AddressSpaceOf(task.memory);
+  if (addr_space->CodeVersionIsInvalid()) {
     LOG(INFO)
         << "Code version is invalid, clearing the active cache";
     live_trace_cache.clear();
   }
 
-  auto code_version = gLRUAddressSpace->CodeVersion();
+  auto code_version = addr_space->CodeVersion();
 
   LiveTraceId live_id = {task.pc, code_version};
   auto it = live_trace_cache.find(live_id);
@@ -179,21 +162,26 @@ llvm::Function *Context::GetLiftedFunctionForTask(const Task &task) {
   llvm::Function *ret_func = nullptr;
 
   // Decode the requested trace, and perhaps way more.
-  auto module = std::make_shared<llvm::Module>("", *context);
-  auto decoded_traces = DecodeTraces(*gLRUAddressSpace, task.pc);
+  std::shared_ptr<llvm::Module> module;
+  auto decoded_traces = DecodeTraces(*addr_space, task.pc);
   auto num_lifted_traces = 0;
+
   for (const auto &trace : decoded_traces) {
-    LiftedTraceId lift_id = {trace.entry_pc, trace.hash};
-    auto &lifted_func = lifted_trace_cache[lift_id];
+    auto &lifted_func = trace_cache[trace.id];
     if (!lifted_func) {
+      if (!module) {
+        std::stringstream ss;
+        ss << std::hex << task.pc << "_at_" << code_version;
+        module = std::make_shared<llvm::Module>(ss.str(), *context);
+      }
       num_lifted_traces += 1;
       lifted_func = lifter->LiftTraceIntoModule(trace, module.get());
     }
 
-    live_id = {trace.entry_pc, code_version};
+    live_id = {trace.pc, code_version};
     live_trace_cache[live_id] = lifted_func;
 
-    if (trace.entry_pc == task.pc) {
+    if (trace.pc == task.pc) {
       ret_func = lifted_func;
     }
   }

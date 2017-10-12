@@ -24,6 +24,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "vmill/Arch/Decoder.h"
 #include "vmill/BC/Lifter.h"
 #include "vmill/Runtime/TaskStatus.h"
 #include "vmill/Util/Hash.h"
@@ -60,20 +61,10 @@ struct LiveTraceId {
   }
 };
 
-struct LiftedTraceId {
- public:
-  uint64_t pc;  // Entry PC of the trace.
-  uint64_t hash;  // Hash of the bytes of the machine code in the trace.
-
-  inline bool operator==(const LiftedTraceId &that) const {
-    return pc == that.pc && hash == that.hash;
-  }
-};
-
 }  // namespace vmill
 
+VMILL_MAKE_STD_HASH_OVERRIDE(vmill::TraceId)
 VMILL_MAKE_STD_HASH_OVERRIDE(vmill::LiveTraceId)
-VMILL_MAKE_STD_HASH_OVERRIDE(vmill::LiftedTraceId)
 
 namespace vmill {
 
@@ -84,9 +75,6 @@ class Context {
   virtual ~Context(void);
 
   Context(void);
-
-  // Create a clone of an existing `Context`.
-  explicit Context(const Context &);
 
   // Creates a new address space, and returns an opaque handle to it.
   void *CreateAddressSpace(void);
@@ -126,6 +114,7 @@ class Context {
  private:
   friend class Executor;
 
+  Context(const Context &) = delete;
   Context(const Context &&) = delete;
   Context &operator=(Context &) = delete;
   Context &operator=(Context &&) = delete;
@@ -141,7 +130,7 @@ class Context {
 
   // Shared instruction executor, so that compiled code is shared across
   // contexts.
-  std::shared_ptr<Executor> executor;
+  std::unique_ptr<Executor> executor;
 
   // List of tasks available for scheduling.
   std::list<Task> tasks;
@@ -155,7 +144,7 @@ class Context {
   std::unordered_map<LiveTraceId, llvm::Function *> live_trace_cache;
 
   // The full cache, mapping traces to their LLVM functions.
-  std::unordered_map<LiftedTraceId, llvm::Function *> lifted_trace_cache;
+  std::unordered_map<TraceId, llvm::Function *> trace_cache;
 };
 
 using ContextPtr = std::unique_ptr<Context>;

@@ -52,6 +52,7 @@
 
 #include "vmill/Arch/Decoder.h"
 #include "vmill/BC/Lifter.h"
+#include "vmill/BC/Util.h"
 
 namespace vmill {
 namespace {
@@ -100,7 +101,9 @@ LifterImpl::LifterImpl(const std::shared_ptr<llvm::LLVMContext> &context_)
   remill::ForEachISel(
       semantics.get(),
       [=] (llvm::GlobalVariable *, llvm::Function *sem) -> void {
-        sem->addFnAttr(llvm::Attribute::OptimizeNone);
+        if (sem) {
+          sem->addFnAttr(llvm::Attribute::OptimizeNone);
+        }
       });
 }
 
@@ -109,149 +112,10 @@ LifterImpl::~LifterImpl(void) {}
 // The function's lifted name contains both its position in memory (`pc`) and
 // the contents of memory (instruction bytes). This makes it sensitive to self-
 // modifying code.
-static std::string LiftedFunctionName(uint64_t pc, uint64_t hash) {
+static std::string LiftedFunctionName(TraceId id) {
   std::stringstream ns;
-  ns << "_" << std::hex << pc << "_" << std::hex << hash;
+  ns << "_" << std::hex << id.hash1 << "_" << id.hash2;
   return ns.str();
-}
-
-#if 0
-static llvm::Constant *CloneConstant(llvm::Constant *val);
-
-static std::vector<llvm::Constant *> CloneContents(
-    llvm::ConstantAggregate *agg) {
-  auto num_elems = agg->getNumOperands();
-  std::vector<llvm::Constant *> clones(num_elems);
-  for (auto i = 0U; i < num_elems; ++i) {
-    clones[i] = CloneConstant(agg->getAggregateElement(i));
-  }
-  return clones;
-}
-
-static llvm::Constant *CloneConstant(llvm::Constant *val) {
-  if (llvm::isa<llvm::ConstantData>(val) ||
-      llvm::isa<llvm::ConstantAggregateZero>(val)) {
-    return val;
-  }
-
-  std::vector<llvm::Constant *> elements;
-  if (auto agg = llvm::dyn_cast<llvm::ConstantAggregate>(val)) {
-    CloneContents(agg);
-  }
-
-  if (auto arr = llvm::dyn_cast<llvm::ConstantArray>(val)) {
-    return llvm::ConstantArray::get(arr->getType(), elements);
-
-  } else if (auto vec = llvm::dyn_cast<llvm::ConstantVector>(val)) {
-    return llvm::ConstantVector::get(elements);
-
-  } else if (auto obj = llvm::dyn_cast<llvm::ConstantStruct>(val)) {
-    return llvm::ConstantStruct::get(obj->getType(), elements);
-
-  } else {
-    LOG(FATAL)
-        << "Cannot clone " << remill::LLVMThingToString(val);
-    return val;
-  }
-}
-
-#endif
-
-static llvm::Function *DeclareFunctionInModule(llvm::Function *func,
-                                               llvm::Module *dest_module) {
-  auto dest_func = dest_module->getFunction(func->getName());
-  if (dest_func) {
-    return dest_func;
-  }
-
-  dest_func = llvm::Function::Create(
-      func->getFunctionType(), func->getLinkage(),
-      func->getName(), dest_module);
-
-  dest_func->copyAttributesFrom(func);
-  dest_func->setVisibility(func->getVisibility());
-
-  return dest_func;
-}
-
-static llvm::GlobalVariable *DeclareVarInModule(llvm::GlobalVariable *var,
-                                                llvm::Module *dest_module) {
-  auto dest_var = dest_module->getGlobalVariable(var->getName());
-  if (dest_var) {
-    return dest_var;
-  }
-
-  auto type = var->getValueType();
-  dest_var = new llvm::GlobalVariable(
-      *dest_module, type, var->isConstant(), var->getLinkage(), nullptr,
-      var->getName(), nullptr, var->getThreadLocalMode(),
-      var->getType()->getAddressSpace());
-
-  dest_var->copyAttributesFrom(var);
-
-  if (var->hasInitializer()) {
-    auto initializer = var->getInitializer();
-    CHECK(!initializer->needsRelocation())
-        << "Initializer of global " << var->getName().str()
-        << " cannot be trivially copied to the destination module.";
-
-    dest_var->setInitializer(initializer);
-  }
-
-  return dest_var;
-}
-
-template <typename T>
-static void ClearMetaData(T *value) {
-  llvm::SmallVector<std::pair<unsigned, llvm::MDNode *>, 4> mds;
-  value->getAllMetadata(mds);
-  for (auto md_info : mds) {
-    value->setMetadata(md_info.first, nullptr);
-  }
-}
-
-// Move a function from one module into another module.
-static void MoveFunctionIntoModule(llvm::Function *func,
-                                   llvm::Module *dest_module) {
-  CHECK(&(func->getContext()) == &(dest_module->getContext()))
-      << "Cannot move function across two independent LLVM contexts.";
-
-  auto source_module = func->getParent();
-  CHECK(source_module != dest_module)
-      << "Cannot move function to the same module.";
-
-  CHECK(!dest_module->getFunction(func->getName()))
-      << "Function " << func->getName().str()
-      << " already exists in destination module.";
-
-  func->removeFromParent();
-  dest_module->getFunctionList().push_back(func);
-
-  ClearMetaData(func);
-
-  for (auto &block : *func) {
-    for (auto &inst : block) {
-      ClearMetaData(&inst);
-
-      // Substitute globals in the operands.
-      for (auto &op : inst.operands()) {
-        auto used_val = op.get();
-        auto used_func = llvm::dyn_cast<llvm::Function>(used_val);
-        auto used_var = llvm::dyn_cast<llvm::GlobalVariable>(used_val);
-        if (used_func) {
-          op.set(DeclareFunctionInModule(used_func, dest_module));
-
-        } else if (used_var) {
-          op.set(DeclareVarInModule(used_var, dest_module));
-
-        } else {
-          CHECK(!llvm::isa<llvm::GlobalValue>(used_val))
-              << "Cannot move global value " << used_val->getName().str()
-              << " into destination module.";
-        }
-      }
-    }
-  }
 }
 
 // Optimize the lifted function. This ends up being pretty slow because it
@@ -293,7 +157,7 @@ llvm::Function *LifterImpl::LiftTraceIntoModule(
     const DecodedTrace &trace, llvm::Module *module) {
 
   const auto &insts = trace.instructions;
-  const auto func_name = LiftedFunctionName(trace.entry_pc, trace.hash);
+  const auto func_name = LiftedFunctionName(trace.id);
 
   auto context_ptr = context.get();
   CHECK(context_ptr == &(module->getContext()));
@@ -319,12 +183,12 @@ llvm::Function *LifterImpl::LiftTraceIntoModule(
 
   // Create a branch from the entrypoint of the lifted function to the basic
   // block representing the first decoded instruction.
-  auto entry_block = GetOrCreateBlock(trace.entry_pc);
+  auto entry_block = GetOrCreateBlock(trace.pc);
   llvm::BranchInst::Create(entry_block, &(func->front()));
 
   // Guarantee that a basic block exists, even if the first instruction
   // failed to decode.
-  if (!insts.count(trace.entry_pc)) {
+  if (!insts.count(trace.pc)) {
     remill::AddTerminatingTailCall(entry_block, intrinsics.error);
   }
 

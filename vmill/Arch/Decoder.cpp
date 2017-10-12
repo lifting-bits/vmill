@@ -28,6 +28,7 @@
 
 #include "vmill/Arch/Decoder.h"
 #include "vmill/Context/AddressSpace.h"
+#include "vmill/Etc/xxHash/xxhash.h"
 #include "vmill/Util/Hash.h"
 
 DECLARE_bool(enable_code_versioning);
@@ -160,13 +161,20 @@ static void AddSuccessorsToTraceList(const remill::Arch *arch,
 }
 
 // The 'version' of this trace is a hash of the instruction bytes.
-static uint64_t HashTraceInstructions(const InstructionMap &insts) {
-  std::stringstream is;
+static TraceId HashTraceInstructions(const DecodedTrace &trace) {
+  XXH64_state_t state1;
+  XXH64_state_t state2;
+
+  const auto &insts = trace.instructions;
+  XXH64_reset(&state1, 0x414141deadbeef);
+  XXH64_reset(&state2, insts.size());
+
   for (const auto &entry : insts) {
-    is << entry.second.bytes;
+    XXH64_update(&state1, entry.second.bytes.data(), entry.second.bytes.size());
+    XXH64_update(&state2, entry.second.bytes.data(), entry.second.bytes.size());
   }
-  auto bytes = is.str();
-  return Hash(bytes);
+
+  return {XXH64_digest(&state1), XXH64_digest(&state2)};
 }
 
 }  // namespace
@@ -203,7 +211,7 @@ std::list<DecodedTrace> DecodeTraces(AddressSpace &addr_space,
     work_list.insert(trace_pc);
 
     DecodedTrace trace;
-    trace.entry_pc = trace_pc;
+    trace.pc = trace_pc;
 
     while (!work_list.empty()) {
       auto entry_it = work_list.begin();
@@ -229,12 +237,12 @@ std::list<DecodedTrace> DecodeTraces(AddressSpace &addr_space,
       AddSuccessorsToTraceList(arch, addr_space, inst, trace_list);
     }
 
-    trace.hash = HashTraceInstructions(trace.instructions);
+    trace.id = HashTraceInstructions(trace);
 
     LOG(INFO)
         << "Decoded " << trace.instructions.size()
         << " instructions starting from "
-        << std::hex << trace.entry_pc << std::dec;
+        << std::hex << trace.pc << std::dec;
 
     traces.push_back(std::move(trace));
   }

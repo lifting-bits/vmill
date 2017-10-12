@@ -40,17 +40,17 @@ static Memory *SysRead(Memory *memory, State *state,
 
   ssize_t read_bytes = 0;
   for (auto max_bytes = static_cast<ssize_t>(size); read_bytes < max_bytes; ) {
-
-    errno = 0;
     auto remaining_bytes = max_bytes - read_bytes;
     auto wanted_bytes = std::min<ssize_t>(remaining_bytes, kIOBufferSize);
+    errno = 0;
     auto num_bytes = read(fd, gIOBuffer, static_cast<size_t>(wanted_bytes));
     if (0 >= num_bytes) {
-      if (read_bytes) {
+      if (read_bytes || !errno) {
         break;
       } else {
-        STRACE_ERROR(read, "Error reading: %s", strerror(errno));
-        return syscall.SetReturn(memory, state, -errno);
+        auto err = errno;
+        STRACE_ERROR(read, "Error reading: %s", strerror(err));
+        return syscall.SetReturn(memory, state, -err);
       }
     } else {
       memory = CopyToMemory(memory, buf, gIOBuffer,
@@ -97,8 +97,9 @@ static Memory *SysWrite(Memory *memory, State *state,
       if (written_bytes) {
         break;
       } else {
-        STRACE_ERROR(write, "Error writing: %s", strerror(errno));
-        return syscall.SetReturn(memory, state, -errno);
+        auto err = errno;
+        STRACE_ERROR(write, "Error writing: %s", strerror(err));
+        return syscall.SetReturn(memory, state, -err);
       }
     } else {
       written_bytes += num_bytes;
@@ -138,8 +139,9 @@ static Memory *SysOpen(Memory *memory, State *state,
   auto fd = open(gPath, oflag, mode);
 
   if (-1 == fd) {
-    STRACE_ERROR(open, "Couldn't open %s: %s", gPath, strerror(errno));
-    return syscall.SetReturn(memory, state, -errno);
+    auto err = errno;
+    STRACE_ERROR(open, "Couldn't open %s: %s", gPath, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
   } else {
     STRACE_SUCCESS(open, "path=%s, flags=%x, mode=%o, fd=%d",
                    gPath, oflag, mode, fd);
@@ -178,7 +180,13 @@ static Memory *SysIoctl(Memory *memory, State *state,
 
   switch (request) {
     case TCGETS:
+      STRACE_ERROR(ioctl_tcgets, "No tty.");
+      return syscall.SetReturn(memory, state, -ENOTTY);
     case TCSETS:
+      STRACE_ERROR(ioctl_tcsets, "No tty.");
+      return syscall.SetReturn(memory, state, -ENOTTY);
+    case TIOCGWINSZ:
+      STRACE_ERROR(ioctl_tiocgwinsz, "No tty.");
       return syscall.SetReturn(memory, state, -ENOTTY);
     default:
       return syscall.SetReturn(memory, state, -EINVAL);

@@ -131,7 +131,9 @@ class AddressSpace {
   std::vector<MemoryMapPtr> maps;
 
   // A cache mapping pages accessed to the range.
-  std::unordered_map<uint64_t, MemoryMapPtr> page_to_map;
+  using PageCache = std::unordered_map<uint64_t, MemoryMapPtr>;
+  PageCache page_to_map;
+  PageCache::iterator last_mapped_page;
 
   // Sets of pages that are readable, writable, and executable.
   std::unordered_set<uint64_t> page_is_readable;

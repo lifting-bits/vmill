@@ -91,9 +91,10 @@ static Memory *SysSetHostName(Memory *memory, State *state,
     STRACE_SUCCESS(sethostname, "name=%s, len=%d", gHostName, len);
     return syscall.SetReturn(memory, state, 0);
   } else {
+    auto err = errno;
     STRACE_ERROR(sethostname, "Can't set host name to %s: %s",
-                 gHostName, strerror(errno));
-    return syscall.SetReturn(memory, state, -errno);
+                 gHostName, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
   }
 }
 
@@ -117,8 +118,9 @@ static Memory *SysUname(Memory *memory, State *state,
 
   struct utsname info = {};
   if (-1 == uname(&info)) {
-    STRACE_ERROR(uname, "Couldn't get uname: %s", strerror(errno));
-    return syscall.SetReturn(memory, state, -errno);
+    auto err = errno;
+    STRACE_ERROR(uname, "Couldn't get uname: %s", strerror(err));
+    return syscall.SetReturn(memory, state, -err);
   }
 
   linux_new_utsname compat = {};

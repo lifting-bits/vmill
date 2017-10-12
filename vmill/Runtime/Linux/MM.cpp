@@ -52,6 +52,12 @@ static addr_t FindRegionToMap(Memory *memory, addr_t size,
     auto where = std::max<addr_t>(
         std::min<addr_t>(guess, alloc_max - size), kAllocMin);
 
+    // The number is interpreted as a negative number. `mmap`s return value
+    // must be positive, otherwise it will be treated as encoding `errno`.
+    if (0 >= static_cast<addr_diff_t>(where)) {
+      continue;
+    }
+
     // There is no next mapping. This implies that `where` is not part of
     // any mapping. That being the case, `where` must be beyond any other
     // mapping, and so we have trivially discovered a hole.
@@ -111,7 +117,7 @@ static Memory *SysBrk(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  STRACE_ERROR(brk, "addr=%lx, suppressed", addr);
+  STRACE_ERROR(brk, "addr=%" PRIxADDR ", suppressed", addr);
   return syscall.SetReturn(memory, state, -ENOMEM);
 }
 
@@ -119,7 +125,6 @@ static Memory *SysBrk(Memory *memory, State *state,
 static Memory *SysMmap(Memory *memory, State *state,
                        const SystemCallABI &syscall,
                        addr_t offset_scale=1) {
-
   addr_t addr = 0;
   addr_t size = 0;
   int prot = 0;
@@ -132,8 +137,10 @@ static Memory *SysMmap(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
+  auto input_addr = addr;
   offset *= offset_scale;
-  size = AlignToPage(size);
+
+  size = AlignToNextPage(size);
   if (!size) {  // Size not page aligned.
     STRACE_ERROR(mmap, "Zero-sized allocation");
     return syscall.SetReturn(memory, state, -EINVAL);
@@ -151,13 +158,13 @@ static Memory *SysMmap(Memory *memory, State *state,
       return syscall.SetReturn(memory, state, -EBADFD);
 
     } else if (0 > offset || offset % 4096) {  // Not page-aligned.
-      STRACE_ERROR(mmap, "Unaligned offset %lx of fd %d", offset, fd);
+      STRACE_ERROR(mmap, "Unaligned offset %" PRIxADDR " of fd %d", offset, fd);
       return syscall.SetReturn(memory, state, -EINVAL);
     }
 
     if (offset > (offset + static_cast<ssize_t>(size))) {  // Signed overflow.
-      STRACE_ERROR(mmap, "Signed overflow of offset %ls and size %lx for fd %d",
-                   offset, size, fd);
+      STRACE_ERROR(mmap, "Signed overflow of offset %" PRIxADDR " and size %"
+                   PRIxADDR " for fd %d", offset, size, fd);
       return syscall.SetReturn(memory, state, -EOVERFLOW);
     }
   }
@@ -175,9 +182,15 @@ static Memory *SysMmap(Memory *memory, State *state,
   }
 
   // Unsupported flags.
-  if ((MAP_SHARED & flags) || (MAP_GROWSDOWN & flags)) {
-    STRACE_ERROR(mmap, "Unsupported flag %x", flags);
+  if ((MAP_GROWSDOWN & flags)) {
+    STRACE_ERROR(mmap, "Unsupported flag: MAP_GROWSDOWN", flags);
     return syscall.SetReturn(memory, state, -EINVAL);
+  }
+
+  // TODO(pag): Handle this at the VMill level?
+  if ((MAP_SHARED & flags)) {
+    flags &= ~MAP_SHARED;
+    flags |= MAP_PRIVATE;
   }
 
   // Required flags.
@@ -211,7 +224,7 @@ static Memory *SysMmap(Memory *memory, State *state,
   if (!addr) {
     addr = FindRegionToMap(memory, size, max_addr);
     if (!addr) {
-      STRACE_ERROR(mmap, "Out of memory for request of size %lx", size);
+      STRACE_ERROR(mmap, "Out of memory for request of size %" PRIxADDR, size);
       return syscall.SetReturn(memory, state, -ENOMEM);
     }
   }
@@ -225,24 +238,27 @@ static Memory *SysMmap(Memory *memory, State *state,
   if (0 <= fd) {
     old_offset = lseek(fd, 0, SEEK_CUR);
     if (-1 == old_offset) {
+      auto err = errno;
       STRACE_ERROR(mmap, "Couldn't get old seek position for fd %d: %s",
-                   fd, strerror(errno));
-      return syscall.SetReturn(memory, state, -errno);
+                   fd, strerror(err));
+      return syscall.SetReturn(memory, state, -err);
     }
 
     // Seek to the end of the range where we want to `mmap`. This is a dumb
     // way of checking to see that the region of memory is big enough to be
     // `mmap`ed.
     if (-1 == lseek(fd, offset + static_cast<off_t>(size), SEEK_SET)) {
+      auto err = errno;
       STRACE_ERROR(mmap, "Couldn't get set seek position for fd %d: %s",
-                   fd, strerror(errno));
-      memory = syscall.SetReturn(memory, state, -errno);
+                   fd, strerror(err));
+      memory = syscall.SetReturn(memory, state, -err);
     }
 
     if (-1 == lseek(fd, offset, SEEK_SET)) {
-      STRACE_ERROR(mmap, "Couldn't reset old seek position for fd %d: %s",
-                   fd, strerror(errno));
-      memory = syscall.SetReturn(memory, state, -errno);
+      auto err = errno;
+      STRACE_ERROR(mmap, "Couldn't set new seek position for fd %d: %s",
+                   fd, strerror(err));
+      memory = syscall.SetReturn(memory, state, -err);
       lseek(fd, old_offset, SEEK_SET);  // Maintain transparency.
       return memory;
     }
@@ -262,10 +278,11 @@ static Memory *SysMmap(Memory *memory, State *state,
       // head to its prior value to maintain transparency, then free the just
       // allocated memory.
       if (-1 == ret) {
+        auto err = errno;
         STRACE_ERROR(mmap, "Couldn't copy bytes from backing fd %d: %s",
-                     fd, strerror(errno));
+                     fd, strerror(err));
 
-        memory = syscall.SetReturn(memory, state, -errno);
+        memory = syscall.SetReturn(memory, state, -err);
         lseek(fd, old_offset, SEEK_SET);  // Reset.
         return __vmill_free_memory(memory, addr, size);
 
@@ -296,8 +313,10 @@ static Memory *SysMmap(Memory *memory, State *state,
   }
 
   STRACE_SUCCESS(
-      mmap, "size=%lx, read=%d, write=%d, exec=%d, fd=%d, offset=%lx, return=%lx",
-      size, can_read, can_write, can_exec, fd, offset, addr);
+      mmap, "addr=%" PRIxADDR ", size=%" PRIxADDR ", read=%d, "
+            "write=%d, exec=%d, fd=%d, offset=%" PRIxADDR
+            ", return=%" PRIxADDR,
+      input_addr, size, can_read, can_write, can_exec, fd, offset, addr);
 
   return syscall.SetReturn(memory, state, addr);
 }
@@ -311,12 +330,19 @@ static Memory *SysMunmap(Memory *memory, State *state,
     STRACE_ERROR(munmap, "Can't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
 
-  } else if (addr != (addr & ~4095UL)) {
-    STRACE_ERROR(munmap, "Unaligned address %lx", addr);
+  } else if (addr != AlignToPage(addr)) {
+    STRACE_ERROR(munmap, "Unaligned address %" PRIxADDR, addr);
+    return syscall.SetReturn(memory, state, -EINVAL);
+
+  }
+
+  size = AlignToNextPage(size);
+  if (!size) {
+    STRACE_ERROR(munmap, "Zero-sized munmap");
     return syscall.SetReturn(memory, state, -EINVAL);
   }
 
-  STRACE_SUCCESS(munmap, "addr=%lx, size=%lx", addr, size);
+  STRACE_SUCCESS(munmap, "addr=%" PRIxADDR ", size=%" PRIxADDR, addr, size);
   memory = __vmill_free_memory(memory, addr, size);
   return syscall.SetReturn(memory, state, 0);
 }
@@ -333,13 +359,20 @@ static Memory *SysMprotect(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
+  size = AlignToNextPage(size);
+  if (!size) {
+    STRACE_ERROR(mprotect, "Zero-sized munmap");
+    return syscall.SetReturn(memory, state, -EINVAL);
+  }
+
   bool can_read = PROT_READ & prot;
   bool can_write = PROT_WRITE & prot;
   bool can_exec = PROT_EXEC & prot;
 
   STRACE_SUCCESS(
-      mprotect, "addr=%lx, size=%lx, read=%d, write=%d, exec=%d",
-      addr, size, can_read, can_write, can_exec);
+      mprotect, "addr=%" PRIxADDR ", size=%" PRIxADDR
+      ", read=%d, write=%d, exec=%d", addr, size, can_read,
+      can_write, can_exec);
 
   memory = __vmill_protect_memory(memory, addr, size, can_read,
                                   can_write, can_exec);

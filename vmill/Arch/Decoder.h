@@ -29,9 +29,20 @@ class AddressSpace;
 
 using InstructionMap = std::map<uint64_t, remill::Instruction>;
 
+// Hash of the bytes of the machine code in the trace.
+struct TraceId {
+ public:
+  uint64_t hash1;
+  uint64_t hash2;
+
+  inline bool operator==(const TraceId &that) const {
+    return hash1 == that.hash1 && hash2 == that.hash2;
+  }
+};
+
 struct DecodedTrace {
-  uint64_t entry_pc;
-  uint64_t hash;
+  uint64_t pc;  // Entry PC of the trace.
+  TraceId id;  //
   InstructionMap instructions;
 };
 

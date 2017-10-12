@@ -83,8 +83,11 @@ static Memory *SysFutex(Memory *memory, State *state,
       (uaddr2 ? &uaddr2_val : nullptr), val3);
 
   if (-1 == ret) {
-    return syscall.SetReturn(memory, state, -errno);
+    auto err = errno;
+    STRACE_ERROR(futex, "%s", strerror(err));
+    return syscall.SetReturn(memory, state, -err);
   } else {
+    STRACE_SUCCESS(futex, "op=%d, val=%d, val3=%d, ret=%d", op, val, val3, ret);
     return syscall.SetReturn(memory, state, ret);
   }
 }

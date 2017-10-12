@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cerrno>
+#include <cinttypes>
 #include <climits>
 #include <cstdint>
 #include <cstring>
@@ -50,8 +51,16 @@
 #define ANSI_COLOR_CYAN    "\x1b[36m"
 #define ANSI_COLOR_RESET   "\x1b[0m"
 
+#if 32 == ADDRESS_SIZE_BITS
+# define PRIdADDR PRId32
+# define PRIxADDR PRIx32
+#else
+# define PRIdADDR PRId64
+# define PRIxADDR PRIx64
+#endif
+
 #define STRACE_SYSCALL_NUM(nr) \
-    fprintf(stderr, ANSI_COLOR_YELLOW "%lu:" ANSI_COLOR_RESET, nr)
+    fprintf(stderr, ANSI_COLOR_YELLOW "%u:" ANSI_COLOR_RESET, nr)
 
 #define STRACE_ERROR(syscall, fmt, ...) \
     fprintf(stderr, ANSI_COLOR_RED #syscall ":" fmt ANSI_COLOR_RESET "\n", \
@@ -302,13 +311,21 @@ static Memory *SystemCall32(Memory *memory, State *state,
     case 122: return SysUname<linux_new_utsname>(memory, state, syscall);
     case 125: return SysMprotect(memory, state, syscall);
     case 140: return SysLlseek(memory, state, syscall);
-    case 174:  // SYS_sys_rt_sigaction, don't handle for now.
-    case 175:  // SYS_sys_rt_sigprocmask, don't handle for now.
+    case 174:
+      STRACE_ERROR(rt_sigaction, "Suppressed");
       return syscall.SetReturn(memory, state, 0);
+    case 175:
+      STRACE_ERROR(rt_sigprocmask, "Suppressed");
+      return syscall.SetReturn(memory, state, 0);
+    case 183: return SysGetCurrentWorkingDirectory(memory, state, syscall);
     case 192: return SysMmap(memory, state, syscall, kPageSize);
     case 195: return SysStat<linux32_stat64>(memory, state, syscall);
     case 196: return SysLstat<linux32_stat64>(memory, state, syscall);
     case 197: return SysFstat<linux32_stat64>(memory, state, syscall);
+    case 199: return SysGetUserId(memory, state, syscall);
+    case 200: return SysGetGroupId(memory, state, syscall);
+    case 201: return SysGetEffectiveUserId(memory, state, syscall);
+    case 202: return SysGetEffectiveGroupId(memory, state, syscall);
     case 240: return SysFutex<linux32_timespec>(memory, state, syscall);
     case 243: return SysSetThreadArea<linux_X86_user_desc>(
         memory, state, syscall);

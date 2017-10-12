@@ -58,6 +58,9 @@
 #include "vmill/Context/Context.h"
 #include "vmill/Util/Timer.h"
 
+DEFINE_bool(disable_optimizer, false,
+            "Should the optimized machine code be produced?");
+
 namespace vmill {
 namespace {
 
@@ -339,7 +342,6 @@ class NativeExecutor : public Executor, llvm::JITSymbolResolver {
 
   LiftedFunctionType *CompileLiftedFunction(llvm::Function *func);
 
-
   template <typename T>
   T TryFindFunction(const char *name) {
     auto sym = findSymbol(name);
@@ -358,6 +360,17 @@ class NativeExecutor : public Executor, llvm::JITSymbolResolver {
     return sym;
   }
 };
+
+static llvm::CodeGenOpt::Level CodeGenOptLevel(void) {
+  return llvm::CodeGenOpt::None;
+
+  // TODO(pag): Using anything above `None` produces bugs :-(
+  if (FLAGS_disable_optimizer) {
+    return llvm::CodeGenOpt::Less;
+  } else {
+    return llvm::CodeGenOpt::Aggressive;
+  }
+}
 
 // Compile the code in `module` into a compiled object.
 CompiledModule *NativeExecutor::Compile(llvm::Module *module) {
@@ -433,8 +446,8 @@ NativeExecutor::NativeExecutor(
 
   machine = std::unique_ptr<llvm::TargetMachine>(target->createTargetMachine(
       host_triple, cpu, GetNativeFeatureString(), options,
-      llvm::Reloc::PIC_, llvm::CodeModel::Default,
-      llvm::CodeGenOpt::Aggressive));
+      llvm::Reloc::PIC_, llvm::CodeModel::JITDefault,
+      CodeGenOptLevel()));
 
   CHECK(machine)
       << "Cannot create target machine for triple "

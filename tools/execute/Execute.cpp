@@ -27,6 +27,8 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
@@ -41,6 +43,7 @@
 #include "vmill/BC/Executor.h"
 #include "vmill/BC/Lifter.h"
 #include "vmill/BC/Runtime.h"
+#include "vmill/BC/Util.h"
 #include "vmill/Context/AddressSpace.h"
 #include "vmill/Context/Context.h"
 #include "vmill/Context/Snapshot.h"
@@ -209,47 +212,51 @@ static void LoadSnapshotIntoContext(const ProgramSnapshotPtr &snapshot,
 
 class ExecContext : public Context {
  public:
-  ExecContext(void)
-      : last_clock(0) {
+  ExecContext(void) {
+
     auto bitcode_dir = FLAGS_workspace + "/bitcode";
     CHECK(remill::TryCreateDirectory(bitcode_dir))
         << "Could not create bitcode cache directory " << bitcode_dir;
 
+    std::vector<std::string> loaded_file_paths;
     remill::ForEachFileInDirectory(
         bitcode_dir,
-        [=] (const std::string &bitcode_path) -> bool {
-          LOG(INFO)
-              << "Loading cached bitcode from " << bitcode_path;
-          std::shared_ptr<llvm::Module> module(
-              remill::LoadModuleFromFile(context.get(), bitcode_path));
-          LoadLiftedModule(module);
+        [=] (const std::string &path) -> bool {
+          LoadCachedModule(path);
           return true;
         });
+  }
+
+  // Parse a bitcode file saved to disk, and load it into the context.
+  void LoadCachedModule(const std::string &path) {
+    LOG(INFO)
+        << "Loading cached bitcode from " << path;
+
+    std::shared_ptr<llvm::Module> mod(
+        remill::LoadModuleFromFile(context.get(), path, true));
+    if (!mod) {
+      LOG(ERROR)
+          << "Unable to load cached bitcode from " << path;
+      remill::RemoveFile(path);
+    } else {
+      LoadLiftedModule(mod);
+    }
   }
 
   virtual ~ExecContext(void) {}
 
  protected:
+
+  // Save a lifted module to disk, using a mostly random name.
   void SaveLiftedModule(const std::shared_ptr<llvm::Module> &module) override {
-    auto save_path = GetFileName();
+    std::stringstream ss;
+    ss << FLAGS_workspace + "/bitcode/" << module->getName().str() << ".bc";
+    const auto save_path = ss.str();
+
     LOG(INFO)
         << "Caching module to " << save_path;
     remill::StoreModuleToFile(module.get(), save_path);
   }
-
-  std::string GetFileName(void) {
-    auto now = clock();
-    std::stringstream ss;
-    ss << FLAGS_workspace + "/bitcode/" << std::hex << now;
-    if (now == last_clock) {
-      ss << "." << random();
-    }
-    ss << ".bc";
-    last_clock = now;
-    return ss.str();
-  }
-
-  clock_t last_clock;
 };
 
 static void Run(const ProgramSnapshotPtr &snapshot) {
