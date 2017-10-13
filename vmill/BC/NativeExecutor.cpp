@@ -435,6 +435,8 @@ NativeExecutor::NativeExecutor(
   runtime_lib->Finalize();
   LOG(INFO) << "Compiled target runtime.";
 
+  // TODO(pag): Call global constructors in loaded library???
+
   resume = FindFunction<decltype(resume)>("__vmill_resume");
   allocate_state = FindFunction<decltype(allocate_state)>(
       "__vmill_allocate_state");

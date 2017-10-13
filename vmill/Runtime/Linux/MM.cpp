@@ -15,6 +15,7 @@
  */
 
 #include <algorithm>
+#include <new>
 #include <random>
 
 namespace {
@@ -33,10 +34,14 @@ static constexpr addr_t kAllocMin = IF_64BIT_ELSE(k4GiB, k1GiB);
 static constexpr addr_t kAllocMax = IF_64BIT_ELSE((1ULL << 47ULL), k3GiB);
 
 #if 32 == ADDRESS_SIZE_BITS
-static std::ranlux24_base gRandGen(0  /* seed */);
+static std::ranlux24_base gRandGen;
+static constexpr addr_t kRandGenShift = 7;  // Keep high bit is always `0`.
 #else
-static std::ranlux48_base gRandGen(0  /* seed */);
+static std::ranlux48_base gRandGen;
+static constexpr addr_t kRandGenShift = 0;  // keep high 16 bites `0`.
 #endif
+
+static bool gRandGenInitialized = false;
 
 // Go and find an address to map. This performs mostly opaque requests to the
 // VMill memory manager as a way of finding a hole in memory. The idea here is
@@ -44,17 +49,32 @@ static std::ranlux48_base gRandGen(0  /* seed */);
 // for the address space, so instead we'll just make queries to it.
 static addr_t FindRegionToMap(Memory *memory, addr_t size,
                               addr_t alloc_max=kAllocMax) {
+
+  // TODO(pag): Actually handle global constructors somewhere, this is super
+  //            ugly.
+  if (!gRandGenInitialized) {
+    gRandGenInitialized = true;
+    new (&gRandGen) decltype(gRandGen);
+  }
+
   for (auto i = 0; i < 16; ++i) {
     // Guess a random address to allocate. The guess is guaranteed to not be in
     // the zero page, then we will constrain it to be smaller than the maximum
     // allocatable address.
-    auto guess = static_cast<addr_t>(gRandGen() * kPageSize);
+    auto gen = gRandGen();
+    auto guess = (static_cast<addr_t>(gen) << kRandGenShift) &
+                 ~(kPageSize - 1UL);
     auto where = std::max<addr_t>(
         std::min<addr_t>(guess, alloc_max - size), kAllocMin);
 
     // The number is interpreted as a negative number. `mmap`s return value
     // must be positive, otherwise it will be treated as encoding `errno`.
     if (0 >= static_cast<addr_diff_t>(where)) {
+      continue;
+    }
+
+    // Let's try to get a better guess.
+    if (where == kAllocMin) {
       continue;
     }
 

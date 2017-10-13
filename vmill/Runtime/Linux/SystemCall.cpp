@@ -41,6 +41,7 @@
 #include <sys/syscall.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <sys/uio.h>
 #include <sys/utsname.h>
 #include <unistd.h>
 
@@ -282,6 +283,10 @@ struct linux_X86_user_desc {
   }
 };
 
+struct linux_iovec {
+  addr_t iov_base;
+  addr_t iov_len;
+};
 }  // namespace
 
 #include "vmill/Runtime/Linux/Clock.cpp"
@@ -290,6 +295,7 @@ struct linux_X86_user_desc {
 #include "vmill/Runtime/Linux/IO.cpp"
 #include "vmill/Runtime/Linux/MM.cpp"
 #include "vmill/Runtime/Linux/Net.cpp"
+#include "vmill/Runtime/Linux/Process.cpp"
 #include "vmill/Runtime/Linux/Sys.cpp"
 #include "vmill/Runtime/Linux/Thread.cpp"
 
@@ -307,6 +313,7 @@ static Memory *SystemCall32(Memory *memory, State *state,
     case 4: return SysWrite(memory, state, syscall);
     case 5: return SysOpen(memory, state, syscall);
     case 6: return SysClose(memory, state, syscall);
+    case 20: return SysGetProcessId(memory, state, syscall);
     case 24: return SysGetUserId(memory, state, syscall);
     case 33: return SysAccess(memory, state, syscall);
     case 45: return SysBrk(memory, state, syscall);
@@ -315,6 +322,8 @@ static Memory *SystemCall32(Memory *memory, State *state,
     case 50: return SysGetEffectiveGroupId(memory, state, syscall);
     case 54: return SysIoctl(memory, state, syscall);
     case 59: return SysUname<linux_oldold_utsname>(memory, state, syscall);
+    case 64: return SysGetParentProcessId(memory, state, syscall);
+    case 65: return SysGetProcessGroupId(memory, state, syscall);
     case 74: return SysSetHostName(memory, state, syscall);
     case 76: return SysGetRlimit<linux_rlimit>(memory, state, syscall);
     case 78: return SysGetTimeOfDay32(memory, state, syscall);
@@ -330,6 +339,8 @@ static Memory *SystemCall32(Memory *memory, State *state,
     case 122: return SysUname<linux_new_utsname>(memory, state, syscall);
     case 125: return SysMprotect(memory, state, syscall);
     case 140: return SysLlseek(memory, state, syscall);
+    case 145: return SysReadV(memory, state, syscall);
+    case 146: return SysWriteV(memory, state, syscall);
     case 174:
       STRACE_ERROR(rt_sigaction, "Suppressed");
       return syscall.SetReturn(memory, state, 0);
@@ -346,12 +357,13 @@ static Memory *SystemCall32(Memory *memory, State *state,
     case 200: return SysGetGroupId(memory, state, syscall);
     case 201: return SysGetEffectiveUserId(memory, state, syscall);
     case 202: return SysGetEffectiveGroupId(memory, state, syscall);
+    case 224: return SysGetThreadId(memory, state, syscall);
     case 240: return SysFutex<linux32_timespec>(memory, state, syscall);
     case 243: return SysSetThreadArea<linux_X86_user_desc>(
         memory, state, syscall);
     default:
       STRACE_ERROR(unsupported, "nr=%d", syscall_num);
-      return syscall.SetReturn(memory, state, -ENOSYS);
+      return syscall.SetReturn(memory, state, 0);
   }
 }
 
