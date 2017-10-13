@@ -54,8 +54,9 @@
 #include "vmill/BC/Executor.h"
 #include "vmill/BC/Lifter.h"
 #include "vmill/BC/Runtime.h"
-#include "vmill/Context/AddressSpace.h"
 #include "vmill/Context/Context.h"
+#include "vmill/Memory/AddressSpace.h"
+#include "vmill/Util/Compiler.h"
 #include "vmill/Util/Timer.h"
 
 DEFINE_bool(disable_optimizer, false,
@@ -64,101 +65,80 @@ DEFINE_bool(disable_optimizer, false,
 namespace vmill {
 namespace {
 
-inline static AddressSpace *AddressSpaceOf(void *memory) {
-  return Context::gCurrent->AddressSpaceOf(memory);
+extern "C" AddressSpace *__vmill_allocate_address_space(void) {
+  return new AddressSpace;
 }
 
-extern "C" void *__vmill_allocate_address_space(void) {
-  return Context::gCurrent->CreateAddressSpace();
+extern "C" void __vmill_free_address_space(AddressSpace *memory) {
+  delete memory;
 }
 
-extern "C" void __vmill_free_address_space(void *memory) {
-  Context::gCurrent->DestroyAddressSpace(memory);
+extern "C" bool __vmill_can_read_byte(AddressSpace *memory, uint64_t addr) {
+  return memory->CanRead(addr);
 }
 
-extern "C" bool __vmill_can_read_byte(void *memory, uint64_t addr) {
-  return AddressSpaceOf(memory)->CanRead(addr);
+extern "C" bool __vmill_can_write_byte(AddressSpace *memory, uint64_t addr) {
+  return memory->CanWrite(addr);
 }
 
-extern "C" bool __vmill_can_write_byte(void *memory, uint64_t addr) {
-  return AddressSpaceOf(memory)->CanWrite(addr);
-}
-
-extern "C" void *__vmill_allocate_memory(void *memory, uint64_t where,
-                                         uint64_t size) {
-  auto addr_space = AddressSpaceOf(memory);
-  addr_space->AddMap(where, size);
+extern "C" AddressSpace *__vmill_allocate_memory(
+    AddressSpace *memory, uint64_t where, uint64_t size) {
+  memory->AddMap(where, size);
   return memory;
 }
 
-extern "C" void *__vmill_free_memory(void *memory, uint64_t where,
-                                     uint64_t size) {
-  auto addr_space = AddressSpaceOf(memory);
-  addr_space->RemoveMap(where, size);
+extern "C" AddressSpace *__vmill_free_memory(
+    AddressSpace *memory, uint64_t where, uint64_t size) {
+  memory->RemoveMap(where, size);
   return memory;
 }
 
-extern "C" void *__vmill_protect_memory(void *memory, uint64_t where,
-                                        uint64_t size, bool can_read,
-                                        bool can_write, bool can_exec) {
-  auto addr_space = AddressSpaceOf(memory);
-  addr_space->SetPermissions(where, size, can_read, can_write, can_exec);
+extern "C" AddressSpace *__vmill_protect_memory(
+    AddressSpace *memory, uint64_t where, uint64_t size, bool can_read,
+    bool can_write, bool can_exec) {
+  memory->SetPermissions(where, size, can_read, can_write, can_exec);
   return memory;
 }
 
-extern "C" uint64_t __vmill_next_memory_end(void *memory, uint64_t where) {
-  auto addr_space = AddressSpaceOf(memory);
+extern "C" uint64_t __vmill_next_memory_end(
+    AddressSpace *memory, uint64_t where) {
+
   uint64_t nearest_end = 0;
-  if (addr_space->NearestLimitAddress(where, &nearest_end)) {
+  if (memory->NearestLimitAddress(where, &nearest_end)) {
     return nearest_end;
   } else {
     return 0;
   }
 }
 
-extern "C" uint64_t __vmill_prev_memory_begin(void *memory, uint64_t where) {
-  auto addr_space = AddressSpaceOf(memory);
+extern "C" uint64_t __vmill_prev_memory_begin(
+    AddressSpace *memory, uint64_t where) {
   uint64_t nearest_begin = 0;
-  if (addr_space->NearestBaseAddress(where, &nearest_begin)) {
+  if (memory->NearestBaseAddress(where, &nearest_begin)) {
     return nearest_begin;
   } else {
     return 0;
   }
 }
 
-extern "C" void *__vmill_schedule(void *state, uint64_t pc, void *memory,
+extern "C" void *__vmill_schedule(void *state, uint64_t pc,
+                                  AddressSpace *memory,
                                   TaskStatus status) {
   Task task = {state, pc, memory, status};
   Context::gCurrent->ScheduleTask(task);
   return nullptr;
 }
 
-template <typename RT, typename ST, size_t source_size>
-inline static RT ReadMemory(void *memory, uint64_t addr) {
-  static_assert(sizeof(ST) >= source_size,
-                "Invalid `source_size` to `ReadMemory`.");
-
-  auto addr_space = AddressSpaceOf(memory);
-  alignas(ST) uint8_t data[sizeof(ST)] = {};
-  _Pragma("unroll")
-  for (uint64_t i = 0; i < source_size; ++i) {
-    if (!addr_space->TryRead(addr + i, &(data[i]))) {
-      LOG(ERROR)
-          << "Invalid memory read access to address "
-          << std::hex << (addr + i) << " when trying to read "
-          << std::dec << source_size << "-byte object starting from address "
-          << std::hex << addr << std::dec;
-      memset(data, 0, sizeof(ST));
-      break;
-    }
-  }
-  return static_cast<RT>(reinterpret_cast<ST &>(data[0]));
-}
-
 #define MAKE_MEM_READ(ret_type, read_type, suffix, read_size) \
     extern "C" ret_type __remill_read_memory_ ## suffix( \
-        void *memory, uint64_t addr) { \
-      return ReadMemory<ret_type, read_type, read_size>(memory, addr); \
+        AddressSpace *memory, uint64_t addr) { \
+      read_type ret_val = 0; \
+      if (likely(memory->TryRead(addr, &ret_val))) { \
+        return ret_val; \
+      } else { \
+        Context::gFaulted = true; \
+        return 0; \
+      } \
     }
 
 MAKE_MEM_READ(uint8_t, uint8_t, 8, 1)
@@ -167,36 +147,26 @@ MAKE_MEM_READ(uint32_t, uint32_t, 32, 4)
 MAKE_MEM_READ(uint64_t, uint64_t, 64, 8)
 MAKE_MEM_READ(float, float, f32, 4)
 MAKE_MEM_READ(double, double, f64, 8)
-MAKE_MEM_READ(double, long double, f80, 10)
 
 #undef MAKE_MEM_READ
 
-template <typename ST, typename DT, size_t dest_size>
-inline static void WriteMemory(void *memory, uint64_t addr, ST val_) {
-  static_assert(sizeof(DT) >= dest_size,
-                "Invalid `dest_size` to `WriteMemory`.");
-
-  auto addr_space = AddressSpaceOf(memory);
-  auto val = static_cast<DT>(val_);
-  alignas(DT) uint8_t data[sizeof(DT)] = {};
-  memcpy(data, &val, dest_size);
-
-  _Pragma("unroll")
-  for (uint64_t i = 0; i < dest_size; ++i) {
-    if (!addr_space->TryWrite(addr + i, data[i])) {
-      LOG(ERROR)
-          << "Invalid memory write access to address "
-          << std::hex << (addr + i) << " when trying to write "
-          << std::dec << dest_size << "-byte object starting from address "
-          << std::hex << addr << std::dec;
-    }
+extern "C" double __remill_read_memory_f80(
+    AddressSpace *memory, uint64_t addr) {
+  uint8_t data[sizeof(long double)] = {};
+  if (memory->TryRead(addr, data, 10)) {
+    return static_cast<double>(*reinterpret_cast<long double *>(data));
+  } else {
+    Context::gFaulted = true;
+    return 0.0;
   }
 }
 
 #define MAKE_MEM_WRITE(input_type, write_type, suffix, write_size) \
-    extern "C" void *__remill_write_memory_ ## suffix( \
-        void *memory, uint64_t addr, input_type val) { \
-      WriteMemory<input_type, write_type, write_size>(memory, addr, val); \
+    extern "C" AddressSpace *__remill_write_memory_ ## suffix( \
+        AddressSpace *memory, uint64_t addr, input_type val) { \
+      if (unlikely(!memory->TryWrite(addr, val))) { \
+        Context::gFaulted = true; \
+      } \
       return memory; \
     }
 
@@ -206,9 +176,18 @@ MAKE_MEM_WRITE(uint32_t, uint32_t, 32, 4)
 MAKE_MEM_WRITE(uint64_t, uint64_t, 64, 8)
 MAKE_MEM_WRITE(float, float, f32, 4)
 MAKE_MEM_WRITE(double, double, f64, 8)
-MAKE_MEM_WRITE(double, long double, f80, 10)
 
 #undef MAKE_MEM_WRITE
+
+extern "C" AddressSpace *__remill_write_memory_f80(
+    AddressSpace *memory, uint64_t addr, double val) {
+  auto long_val = static_cast<long double>(val);
+  if (!memory->TryWrite(addr, &long_val, 10)) {
+    Context::gFaulted = true;
+  }
+  return memory;
+}
+
 
 static void InitializeCodeGenOnce(void) {
   static bool is_initialized = false;
@@ -362,11 +341,9 @@ class NativeExecutor : public Executor, llvm::JITSymbolResolver {
 };
 
 static llvm::CodeGenOpt::Level CodeGenOptLevel(void) {
-  return llvm::CodeGenOpt::None;
-
   // TODO(pag): Using anything above `None` produces bugs :-(
   if (FLAGS_disable_optimizer) {
-    return llvm::CodeGenOpt::Less;
+    return llvm::CodeGenOpt::None;
   } else {
     return llvm::CodeGenOpt::Aggressive;
   }
@@ -527,7 +504,7 @@ NativeExecutor::LiftedFunctionType *NativeExecutor::CompileLiftedFunction(
     module->setDataLayout(host_arch->DataLayout());
     compiled_module = Compile(module);
     compiled_module->Finalize();
-    LOG(INFO)
+    DLOG(INFO)
         << "JIT compiled module in " << std::dec << timer.ElapsedSeconds()
         << " seconds";
   }

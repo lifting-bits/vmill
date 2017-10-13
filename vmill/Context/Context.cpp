@@ -32,85 +32,24 @@
 #include "vmill/BC/Executor.h"
 #include "vmill/BC/Lifter.h"
 #include "vmill/Context/Context.h"
-#include "vmill/Context/AddressSpace.h"
+#include "vmill/Memory/AddressSpace.h"
 
 namespace vmill {
 
 Context *Context::gCurrent = nullptr;
-AddressSpace *Context::gLRUAddressSpace = nullptr;
-void *Context::gLRUMemory = nullptr;
 void *Context::gLRUState = nullptr;
+bool Context::gFaulted = false;
+uint64_t Context::gFaultAddress = 0;
 
 Context::Context(void)
     : context(new llvm::LLVMContext),
       lifter(vmill::Lifter::Create(context)),
-      executor(vmill::Executor::GetNativeExecutor(context)) {
+      executor(vmill::Executor::GetNativeExecutor(context)) {}
 
-  auto dead_space = new AddressSpace;
-  dead_space->Kill();
-  address_spaces.push_back(dead_space);
-}
-
-Context::~Context(void) {
-  for (auto space : address_spaces) {
-    if (space) {
-      delete space;
-    }
-  }
-}
-
-// Creates a new address space, and returns an opaque handle to it.
-void *Context::CreateAddressSpace(void) {
-  auto id = address_spaces.size();
-  address_spaces.push_back(new AddressSpace);
-  return reinterpret_cast<void *>(id);
-}
-
-// Clones an existing address space, and returns an opaque handle to the
-// clone.
-void *Context::CloneAddressSpace(void *handle) {
-  auto parent_id = reinterpret_cast<uintptr_t>(handle);
-  CHECK(parent_id < address_spaces.size())
-      << "Cannot clone non-existent address space " << parent_id;
-
-  auto parent = address_spaces[parent_id];
-  auto id = address_spaces.size();
-  address_spaces.push_back(new AddressSpace(*parent));
-  return reinterpret_cast<void *>(id);
-}
-
-// Destroys an address space.
-void Context::DestroyAddressSpace(void *handle) {
-  if (handle == gLRUMemory) {
-    gLRUMemory = nullptr;
-    gLRUAddressSpace = nullptr;
-  }
-
-  auto id = reinterpret_cast<uintptr_t>(handle);
-  CHECK(id < address_spaces.size())
-      << "Cannot clone non-existent address space " << id;
-
-  auto addr_space = address_spaces[id];
-  LOG_IF(ERROR, addr_space->IsDead())
-      << "Killing already dead address space " << id;
-  addr_space->Kill();
-}
-
-AddressSpace *Context::AddressSpaceOf(void *handle) const {
-  if (handle == gLRUMemory) {
-    return gLRUAddressSpace;
-  } else {
-    auto id = reinterpret_cast<uintptr_t>(handle);
-    CHECK(id < address_spaces.size())
-        << "Cannot clone non-existent address space " << id;
-    gLRUMemory = handle;
-    gLRUAddressSpace = address_spaces[id];
-    return gLRUAddressSpace;
-  }
-}
+Context::~Context(void) {}
 
 void Context::CreateInitialTask(const std::string &state,
-                                uint64_t pc, void *memory) {
+                                uint64_t pc, AddressSpace *memory) {
   Task task = {executor->AllocateStateInRuntime(state), pc, memory,
                TaskStatus::kTaskStoppedAtSnapshotEntryPoint};
   tasks.push_back(task);
@@ -135,7 +74,7 @@ void Context::LoadLiftedModule(const std::shared_ptr<llvm::Module> &module) {
     }
   }
 
-  LOG(INFO)
+  DLOG(INFO)
       << "Loaded " << std::dec << num_traces
       << " traces from module " << module->getName().str();
 }
@@ -144,10 +83,8 @@ void Context::SaveLiftedModule(const std::shared_ptr<llvm::Module> &) {}
 
 // Lift code for a task.
 llvm::Function *Context::GetLiftedFunctionForTask(const Task &task) {
-  const auto addr_space = AddressSpaceOf(task.memory);
+  const auto addr_space = task.memory;
   if (addr_space->CodeVersionIsInvalid()) {
-    LOG(INFO)
-        << "Code version is invalid, clearing the active cache";
     live_trace_cache.clear();
   }
 
@@ -187,7 +124,7 @@ llvm::Function *Context::GetLiftedFunctionForTask(const Task &task) {
   }
 
   if (num_lifted_traces) {
-    LOG(INFO)
+    DLOG(INFO)
         << "Lifted " << std::dec << num_lifted_traces << " of "
         << decoded_traces.size() << " decoded traces";
     SaveLiftedModule(module);
@@ -209,17 +146,19 @@ bool Context::TryExecuteNextTask(void) {
 
   gCurrent = this;
   gLRUState = task.state;
-  gLRUMemory = nullptr;
-  gLRUAddressSpace = AddressSpaceOf(task.memory);
-  gLRUMemory = task.memory;
+  gFaulted = false;
 
   auto func = GetLiftedFunctionForTask(task);
   executor->Execute(task, func);
 
+  if (gFaulted) {
+    LOG(ERROR)
+        << "Memory access violation while executing in trace "
+        << std::hex << task.pc << std::dec;
+  }
+
   gCurrent = nullptr;
-  gLRUMemory = nullptr;
   gLRUState = nullptr;
-  gLRUAddressSpace = nullptr;
 
   return true;
 }

@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef VMILL_CONTEXT_ADDRESSSPACE_H_
-#define VMILL_CONTEXT_ADDRESSSPACE_H_
+#ifndef VMILL_MEMORY_ADDRESSSPACE_H_
+#define VMILL_MEMORY_ADDRESSSPACE_H_
 
 #include <cstdint>
 #include <map>
@@ -24,18 +24,9 @@
 #include <unordered_set>
 #include <vector>
 
-struct Memory;
+#include "vmill/Memory/MappedRange.h"
 
 namespace vmill {
-
-class AddressSpace;
-using AddressSpacePtr = std::unique_ptr<AddressSpace>;
-using AddressSpaceMap = std::unordered_map<Memory *, AddressSpacePtr>;
-using AddressSpaceVec = std::vector<AddressSpacePtr>;
-
-// Forward declaration of underlying memory map type.
-class MemoryMap;
-using MemoryMapPtr = std::shared_ptr<MemoryMap>;
 
 // Basic memory implementation.
 class AddressSpace {
@@ -44,7 +35,6 @@ class AddressSpace {
 
   // Creates a copy/clone of another address space.
   explicit AddressSpace(const AddressSpace &);
-  explicit AddressSpace(const AddressSpacePtr &);
 
   // Kill this address space. This prevents future allocations, and removes
   // all existing ranges.
@@ -59,9 +49,32 @@ class AddressSpace {
   bool CanWrite(uint64_t addr) const;
   bool CanExecute(uint64_t addr) const;
 
+  bool TryRead(uint64_t addr, void *val, size_t size);
+  bool TryWrite(uint64_t addr, const void *val, size_t size);
+
   // Read/write a byte to memory. Returns `false` if the read or write failed.
   bool TryRead(uint64_t addr, uint8_t *val);
   bool TryWrite(uint64_t addr, uint8_t val);
+
+  // Read/write a word to memory. Returns `false` if the read or write failed.
+  bool TryRead(uint64_t addr, uint16_t *val);
+  bool TryWrite(uint64_t addr, uint16_t val);
+
+  // Read/write a dword to memory. Returns `false` if the read or write failed.
+  bool TryRead(uint64_t addr, uint32_t *val);
+  bool TryWrite(uint64_t addr, uint32_t val);
+
+  // Read/write a qword to memory. Returns `false` if the read or write failed.
+  bool TryRead(uint64_t addr, uint64_t *val);
+  bool TryWrite(uint64_t addr, uint64_t val);
+
+  // Read/write a float to memory. Returns `false` if the read or write failed.
+  bool TryRead(uint64_t addr, float *val);
+  bool TryWrite(uint64_t addr, float val);
+
+  // Read/write a double to memory. Returns `false` if the read or write failed.
+  bool TryRead(uint64_t addr, double *val);
+  bool TryWrite(uint64_t addr, double val);
 
   // Read a byte as an executable byte. This is used for instruction decoding.
   // Returns `false` if the read failed. This function operates on the state
@@ -74,8 +87,8 @@ class AddressSpace {
                       bool can_write, bool can_exec);
 
   // Adds a new memory mapping with default read/write permissions.
-  void AddMap(uint64_t base, size_t size,
-              bool can_read=true, bool can_write=true, bool can_exec=false);
+  void AddMap(uint64_t base, size_t size, bool can_read=true,
+              bool can_write=true, bool can_exec=false);
 
   // Removes a memory mapping.
   void RemoveMap(uint64_t base, size_t size);
@@ -119,10 +132,8 @@ class AddressSpace {
 
   // Find the memory map containing `addr`. If none is found then a "null"
   // map pointer is returned, whose operations will all fail.
-  //
-  // Note:  This may return a reference into `page_to_map`, and so be careful
-  //        when using it!
   const MemoryMapPtr &FindRange(uint64_t addr);
+  const MemoryMapPtr &FindWNXRange(uint64_t addr);
 
   // Used to represent an invalid memory map.
   MemoryMapPtr invalid_map;
@@ -133,7 +144,10 @@ class AddressSpace {
   // A cache mapping pages accessed to the range.
   using PageCache = std::unordered_map<uint64_t, MemoryMapPtr>;
   PageCache page_to_map;
-  PageCache::iterator last_mapped_page;
+  PageCache wnx_page_to_map;
+
+  PageCache::iterator last_read_map;
+  PageCache::iterator last_written_map;
 
   // Sets of pages that are readable, writable, and executable.
   std::unordered_set<uint64_t> page_is_readable;
@@ -159,4 +173,4 @@ class AddressSpace {
 
 }  // namespace vmill
 
-#endif  // VMILL_CONTEXT_ADDRESSSPACE_H_
+#endif  // VMILL_MEMORY_ADDRESSSPACE_H_

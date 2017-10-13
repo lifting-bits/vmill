@@ -25,7 +25,7 @@
 
 #include "vmill/Arch/Decoder.h"
 #include "vmill/BC/Lifter.h"
-#include "vmill/Context/AddressSpace.h"
+#include "vmill/Memory/AddressSpace.h"
 
 DECLARE_string(arch);
 DECLARE_string(os);

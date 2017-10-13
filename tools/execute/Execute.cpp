@@ -44,9 +44,9 @@
 #include "vmill/BC/Lifter.h"
 #include "vmill/BC/Runtime.h"
 #include "vmill/BC/Util.h"
-#include "vmill/Context/AddressSpace.h"
 #include "vmill/Context/Context.h"
 #include "vmill/Context/Snapshot.h"
+#include "vmill/Memory/AddressSpace.h"
 
 DEFINE_string(workspace, ".", "Path to workspace in which the snapshot file is"
                               " stored, and in which files will be placed.");
@@ -59,7 +59,7 @@ DECLARE_string(os);
 namespace vmill {
 namespace {
 
-using AddressSpaceIdToMemoryMap = std::unordered_map<int64_t, void *>;
+using AddressSpaceIdToMemoryMap = std::unordered_map<int64_t, AddressSpace *>;
 
 // Load a snapshot from a file.
 ProgramSnapshotPtr LoadSnapshotFromFile(void) {
@@ -145,7 +145,7 @@ static void LoadAddressSpaceFromSnapshot(
       << "Address space " << std::dec << orig_addr_space.id()
       << " has already been deserialized.";
 
-  void *memory = nullptr;
+  AddressSpace *emu_addr_space = nullptr;
 
   // Create the address space, either as a clone of a parent, or as a new one.
   if (orig_addr_space.has_parent_id()) {
@@ -155,13 +155,12 @@ static void LoadAddressSpaceFromSnapshot(
         << " for address space " << std::dec << orig_addr_space.id();
 
     const auto &parent_mem = addr_space_ids[parent_id];
-    memory = context.CloneAddressSpace(parent_mem);
+    emu_addr_space = new AddressSpace(*parent_mem);
   } else {
-    memory = context.CreateAddressSpace();
+    emu_addr_space = new AddressSpace;
   }
 
-  addr_space_ids[id] = memory;
-  auto emu_addr_space = context.AddressSpaceOf(memory);
+  addr_space_ids[id] = emu_addr_space;
 
   // Bring in the ranges.
   for (const auto &page : orig_addr_space.page_ranges()) {

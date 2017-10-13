@@ -27,8 +27,8 @@
 #include "remill/Arch/Instruction.h"
 
 #include "vmill/Arch/Decoder.h"
-#include "vmill/Context/AddressSpace.h"
 #include "vmill/Etc/xxHash/xxhash.h"
+#include "vmill/Memory/AddressSpace.h"
 #include "vmill/Util/Hash.h"
 
 DECLARE_bool(enable_code_versioning);
@@ -239,7 +239,7 @@ std::list<DecodedTrace> DecodeTraces(AddressSpace &addr_space,
 
     trace.id = HashTraceInstructions(trace);
 
-    LOG(INFO)
+    DLOG(INFO)
         << "Decoded " << trace.instructions.size()
         << " instructions starting from "
         << std::hex << trace.pc << std::dec;

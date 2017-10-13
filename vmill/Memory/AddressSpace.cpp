@@ -14,9 +14,6 @@
  * limitations under the License.
  */
 
-#define likely(x) __builtin_expect((x), 1)
-#define unlikely(x) __builtin_expect((x), 0)
-
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 
@@ -27,9 +24,10 @@
 #include "remill/Arch/Arch.h"
 #include "remill/OS/OS.h"
 
-#include "vmill/Context/AddressSpace.h"
-#include "vmill/Util/Hash.h"
 #include "vmill/Etc/xxHash/xxhash.h"
+#include "vmill/Memory/AddressSpace.h"
+#include "vmill/Util/Compiler.h"
+#include "vmill/Util/Hash.h"
 
 namespace vmill {
 namespace {
@@ -50,220 +48,12 @@ static constexpr inline uint64_t RoundUpToPage(uint64_t size) {
 
 }  // namespace
 
-class ArrayMemoryMap;
-class EmptyMemoryMap;
-class CopyOnWriteMemoryMap;
-
-// Basic information about some region of mapped memory within an address space.
-class MemoryMap {
- public:
-  MemoryMap(uint64_t base_address_, uint64_t limit_address_);
-
-  virtual ~MemoryMap(void);
-
-  inline uint64_t BaseAddress(void) const {
-    return base_address;
-  }
-
-  inline uint64_t LimitAddress(void) const {
-    return limit_address;
-  }
-
-  inline uint64_t Size(void) const {
-    return limit_address - base_address;
-  }
-
-  inline bool Contains(uint64_t address) const {
-    return base_address <= address && address < limit_address;
-  }
-
-  static bool LessThan(const MemoryMapPtr &left, const MemoryMapPtr &right) {
-    return left->BaseAddress() < right->BaseAddress();
-  }
-
-  inline void InvalidateCodeVersion(void) {
-    code_version_is_valid = false;
-  }
-
-  virtual uint8_t Read(uint64_t address) = 0;
-
-  virtual void Write(uint64_t address, uint8_t val) = 0;
-
-  virtual MemoryMapPtr Clone(void) = 0;
-
-  virtual uint64_t CodeVersion(void) = 0;
-
-  MemoryMapPtr Copy(uint64_t clone_base, uint64_t clone_limit);
-
- protected:
-  const uint64_t base_address;
-  const uint64_t limit_address;
-  uint64_t code_version;
-  bool code_version_is_valid;
-
-  uint8_t *data;
-  MemoryMapPtr parent;
-
- private:
-  friend class ArrayMemoryMap;
-  friend class EmptyMemoryMap;
-  friend class CopyOnWriteMemoryMap;
-
-  MemoryMap(const MemoryMap &) = delete;
-  MemoryMap(void) = delete;
-};
-
-MemoryMap::MemoryMap(uint64_t base_address_, uint64_t limit_address_)
-    : base_address(base_address_),
-      limit_address(limit_address_),
-      code_version(0),
-      code_version_is_valid(false),
-      data(nullptr),
-      parent(nullptr) {}
-
-MemoryMap::~MemoryMap(void) {
-  if (data) {
-    delete [] data;
-    data = nullptr;
-  }
-}
-
-// Implements an array-backed memory mapping that is filled with actual data
-// bytes.
-class ArrayMemoryMap : public MemoryMap {
- public:
-  ArrayMemoryMap(uint64_t base_address_, uint64_t limit_address_)
-      : MemoryMap(base_address_, limit_address_) {
-    data = new uint8_t[Size()];
-    memset(data, 0, Size());
-  }
-
-  explicit ArrayMemoryMap(MemoryMap *steal)
-      : MemoryMap(steal->base_address, steal->limit_address) {
-    data = steal->data;
-    steal->data = nullptr;
-  }
-
-  uint8_t Read(uint64_t address) override {
-    return data[address - base_address];
-  }
-
-  void Write(uint64_t address, uint8_t val) override {
-    data[address - BaseAddress()] = val;
-  }
-
-  MemoryMapPtr Clone(void) override;
-
-  uint64_t CodeVersion(void) override;
-};
-
-static_assert(sizeof(ArrayMemoryMap) == sizeof(MemoryMap),
-              "Vtable overwriting won't work!");
-
-// Implements an empty range of memory that is filled with zeroes.
-class EmptyMemoryMap : public MemoryMap {
- public:
-  using MemoryMap::MemoryMap;
-
-  virtual ~EmptyMemoryMap(void) {}
-
-  uint8_t Read(uint64_t) override {
-    return 0;
-  }
-
-  void Write(uint64_t address, uint8_t val) override {
-    auto self = (new (this) ArrayMemoryMap(base_address, limit_address));
-    self->Write(address, val);
-  }
-
-  MemoryMapPtr Clone(void) override {
-    return std::make_shared<EmptyMemoryMap>(base_address, limit_address);
-  }
-
-  uint64_t CodeVersion(void) override {
-    return 0;
-  }
-};
-
-static_assert(sizeof(EmptyMemoryMap) == sizeof(MemoryMap),
-              "Vtable overwriting won't work!");
-
-// Implements a copy-on-write range of memory.
-class CopyOnWriteMemoryMap : public MemoryMap {
- public:
-  explicit CopyOnWriteMemoryMap(MemoryMapPtr parent_)
-      : MemoryMap(parent_->base_address, parent_->limit_address) {
-    while (parent_) {
-      parent = parent_;
-      parent_ = parent->parent;
-    }
-  }
-
-  uint8_t Read(uint64_t address) override {
-    return parent->Read(address);
-  }
-
-  void Write(uint64_t address, uint8_t val) override {
-    auto parent_ptr = parent;
-    auto base_addr = BaseAddress();
-    auto limit_addr = LimitAddress();
-    parent.reset();
-    auto self = new (this) ArrayMemoryMap(base_addr, limit_addr);
-    for (uint64_t index = 0; base_addr < limit_addr; ++base_addr, ++index) {
-      self->data[index] = parent_ptr->Read(base_addr);
-    }
-  }
-
-  MemoryMapPtr Clone(void) override {
-    return std::make_shared<CopyOnWriteMemoryMap>(parent);
-  }
-
-  uint64_t CodeVersion(void) override {
-    return parent->CodeVersion();
-  }
-
- private:
-  using MemoryMap::MemoryMap;
-};
-
-static_assert(sizeof(CopyOnWriteMemoryMap) == sizeof(MemoryMap),
-              "Vtable overwriting won't work!");
-
-// Creates a new `ArrayMemoryMap` that takes over the data of this array memory
-// map, then we convert this array memory map into a copy-on-write memory map,
-// and then clone it.
-MemoryMapPtr ArrayMemoryMap::Clone(void) {
-  auto parent = std::make_shared<ArrayMemoryMap>(this);
-  auto self = new (this) CopyOnWriteMemoryMap(parent);
-  return self->Clone();
-}
-
-MemoryMapPtr MemoryMap::Copy(uint64_t clone_base, uint64_t clone_limit) {
-  auto array_backed = std::make_shared<ArrayMemoryMap>(clone_base, clone_limit);
-  for (; clone_base < clone_limit; ++clone_base) {
-    if (Contains(clone_base)) {
-      array_backed->Write(clone_base, Read(clone_base));
-    }
-  }
-  return array_backed;
-}
-
-uint64_t ArrayMemoryMap::CodeVersion(void) {
-  if (code_version_is_valid) {
-    return code_version;
-  }
-
-  XXH64_state_t state = {};
-  XXH64_reset(&state, 0);
-  XXH64_update(&state, data, Size());
-  code_version = XXH64_digest(&state);
-  code_version_is_valid = true;
-  return code_version;
-}
-
 AddressSpace::AddressSpace(void)
-    : invalid_map(std::make_shared<EmptyMemoryMap>(0, 0)),
+    : invalid_map(MappedRange::CreateInvalid()),
       page_to_map(256),
+      wnx_page_to_map(256),
+      last_read_map(page_to_map.end()),
+      last_written_map(wnx_page_to_map.end()),
       is_dead(false),
       code_version_is_invalid(true),
       code_version(0) {
@@ -285,9 +75,6 @@ AddressSpace::AddressSpace(const AddressSpace &parent)
 
   CreatePageToRangeMap();
 }
-
-AddressSpace::AddressSpace(const AddressSpacePtr &parent_ptr)
-    : AddressSpace(*parent_ptr) {}
 
 // Have we observed a write to executable memory since our last attempt
 // to read from executable memory?
@@ -343,7 +130,7 @@ bool AddressSpace::IsMarkedTraceHead(uint64_t pc) const {
 void AddressSpace::Kill(void) {
   maps.clear();
   page_to_map.clear();
-  last_mapped_page = page_to_map.end();
+  last_read_map = page_to_map.end();
   is_dead = true;
 }
 
@@ -364,47 +151,136 @@ bool AddressSpace::CanExecute(uint64_t addr) const {
   return page_is_executable.count(AlignDownToPage(addr));
 }
 
-// Read/write a byte to memory.
-bool AddressSpace::TryRead(uint64_t addr, uint8_t *val) {
-  if (likely(CanRead(addr))) {
-    const auto &range = FindRange(addr);
-    *val = range->Read(addr);
-    return true;
-  } else {
-    return false;
+bool AddressSpace::TryRead(uint64_t addr, void *val_out, size_t size) {
+  auto out_stream = reinterpret_cast<uint8_t *>(val_out);
+  for (auto page_addr = AlignDownToPage(addr),
+            end_addr = addr + size;
+       page_addr < end_addr;
+       page_addr += kPageSize) {
+
+    const auto &range = FindRange(page_addr);
+    auto page_end_addr = page_addr + kPageSize;
+    auto next_end_addr = std::min(end_addr, page_end_addr);
+    while (addr < next_end_addr) {
+      if (!range->Read(addr++, out_stream++)) {
+        return false;
+      }
+    }
   }
+  return true;
 }
 
-bool AddressSpace::TryWrite(uint64_t addr, uint8_t val) {
-  if (likely(CanWrite(addr))) {
-    const auto &range = FindRange(addr);
-    if (unlikely(CanExecute(addr))) {
+bool AddressSpace::TryWrite(uint64_t addr, const void *val, size_t size) {
+  auto in_stream = reinterpret_cast<const uint8_t *>(val);
+  for (auto page_addr = AlignDownToPage(addr),
+            end_addr = addr + size;
+       page_addr < end_addr;
+       page_addr += kPageSize) {
+
+    if (!CanWrite(page_addr)) {
+      return false;
+    }
+
+    const auto &range = FindRange(page_addr);
+    if (CanExecute(page_addr)) {
+      range->InvalidateCodeVersion();
+
       if (!code_version_is_invalid) {
         LOG(INFO)
             << "Invalidating code version because of write to executable "
             << "memory at " << std::hex << addr << std::dec;
         code_version_is_invalid = true;
-        range->InvalidateCodeVersion();
       }
     }
-    range->Write(addr, val);
+
+    auto page_end_addr = page_addr + kPageSize;
+    auto next_end_addr = std::min(end_addr, page_end_addr);
+
+    while (addr < next_end_addr) {
+      if (!range->Write(addr++, *in_stream++)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// Read/write a byte to memory.
+bool AddressSpace::TryRead(uint64_t addr, uint8_t *val_out) {
+  return FindRange(addr)->Read(addr, val_out);
+}
+
+#define MAKE_TRY_READ(type) \
+    bool AddressSpace::TryRead(uint64_t addr, type *val_out) { \
+      const auto &range = FindRange(addr); \
+      auto out_stream = reinterpret_cast<uint8_t *>(val_out); \
+      if (unlikely(!range->Read(addr, out_stream))) { \
+        return false; \
+      } \
+      if (likely(range->BaseAddress() <= addr && \
+                 (addr + sizeof(type)) <= range->LimitAddress())) { \
+        _Pragma("unroll") \
+        for (size_t i = 1; i < sizeof(type); ++i) { \
+          (void) range->Read(addr + i, &(out_stream[i])); \
+        } \
+        return true; \
+      } else { \
+        return TryRead(addr, val_out, sizeof(type)); \
+      } \
+    }
+
+MAKE_TRY_READ(uint16_t)
+MAKE_TRY_READ(uint32_t)
+MAKE_TRY_READ(uint64_t)
+MAKE_TRY_READ(float)
+MAKE_TRY_READ(double)
+
+#undef MAKE_TRY_READ
+
+bool AddressSpace::TryWrite(uint64_t addr, uint8_t val) {
+  if (likely(FindWNXRange(addr)->Write(addr, val))) {
     return true;
   } else {
-    return false;
+    return TryWrite(addr, &val, sizeof(val));
   }
 }
 
+#define MAKE_TRY_WRITE(type) \
+    bool AddressSpace::TryWrite(uint64_t addr, type val) { \
+      const auto &range = FindWNXRange(addr); \
+      const auto out_stream = reinterpret_cast<const uint8_t *>(&val); \
+      if (likely(range->Write(addr, out_stream[0]) && \
+                 range->BaseAddress() <= addr && \
+                 (addr + sizeof(type)) <= range->LimitAddress())) { \
+        _Pragma("unroll") \
+        for (size_t i = 1; i < sizeof(type); ++i) { \
+          (void) range->Write(addr + i, out_stream[i]); \
+        } \
+        return true; \
+      } else { \
+        return TryWrite(addr, out_stream, sizeof(type)); \
+      } \
+    }
+
+
+MAKE_TRY_WRITE(uint16_t)
+MAKE_TRY_WRITE(uint32_t)
+MAKE_TRY_WRITE(uint64_t)
+MAKE_TRY_WRITE(float)
+MAKE_TRY_WRITE(double)
+#undef MAKE_TRY_WRITE
+
 // Read a byte as an executable byte. This is used for instruction decoding.
 bool AddressSpace::TryReadExecutable(uint64_t addr, uint8_t *val) {
-  if (!CanRead(addr) || !CanExecute(addr)) {
-    return false;
-  } else {
-    if (code_version_is_invalid) {
+  auto &range = FindRange(addr);
+  auto was_readable = range->Read(addr, val);
+  if (likely(was_readable && CanExecute(addr))) {
+    if (unlikely(code_version_is_invalid)) {
       (void) CodeVersion();
     }
-    code_version_is_invalid = false;
-    *val = FindRange(addr)->Read(addr);
     return true;
+  } else {
+    return false;
   }
 }
 
@@ -552,7 +428,7 @@ void AddressSpace::AddMap(uint64_t base_, size_t size,
         << " existing maps";
   }
 
-  auto new_map = std::make_shared<EmptyMemoryMap>(base, limit);
+  auto new_map = MappedRange::Create(base, limit);
   SetPermissions(base, (limit - base), can_read, can_write, can_exec);
 
   maps.swap(old_ranges);
@@ -684,43 +560,67 @@ void AddressSpace::CheckRanges(std::vector<MemoryMapPtr> &r) {
 }
 
 void AddressSpace::CreatePageToRangeMap(void) {
-  last_mapped_page = page_to_map.end();
 
-  auto old_size = page_to_map.size();
+  last_read_map = page_to_map.end();
+  last_written_map = wnx_page_to_map.end();
+
   page_to_map.clear();
+  wnx_page_to_map.clear();
+
+  auto old_read_size = page_to_map.size();
+  auto old_write_size = wnx_page_to_map.size();
 
   std::sort(maps.begin(), maps.end(),
             [=] (const MemoryMapPtr &left, const MemoryMapPtr &right) {
     return left->BaseAddress() < right->BaseAddress();
   });
 
-  page_to_map.reserve(old_size);
+  page_to_map.reserve(old_read_size);
+  wnx_page_to_map.reserve(old_write_size);
+
   for (const auto &map : maps) {
     for (auto addr = map->BaseAddress();
          addr < map->LimitAddress();
          addr += kPageSize) {
-      page_to_map[addr] = map;
+
+      if (page_is_readable.count(addr)) {
+        page_to_map[addr] = map;
+      }
+
+      if (page_is_writable.count(addr) && !page_is_executable.count(addr)) {
+        wnx_page_to_map[addr] = map;
+      }
     }
   }
-
 }
 
 const MemoryMapPtr &AddressSpace::FindRange(uint64_t addr) {
-  if (unlikely(is_dead)) {
-    return invalid_map;
-  }
-
   auto page_addr = AlignDownToPage(addr);
-  if (last_mapped_page != page_to_map.end() &&
-      page_addr == last_mapped_page->first) {
-    return last_mapped_page->second;
+  if (likely(last_read_map != page_to_map.end() &&
+             page_addr == last_read_map->first)) {
+    return last_read_map->second;
   }
 
-  last_mapped_page = page_to_map.find(page_addr);
-  if (last_mapped_page == page_to_map.end()) {
-    return invalid_map;
+  last_read_map = page_to_map.find(page_addr);
+  if (likely(last_read_map != page_to_map.end())) {
+    return last_read_map->second;
   } else {
-    return last_mapped_page->second;
+    return invalid_map;
+  }
+}
+
+const MemoryMapPtr &AddressSpace::FindWNXRange(uint64_t addr) {
+  auto page_addr = AlignDownToPage(addr);
+  if (likely(last_written_map != wnx_page_to_map.end() &&
+             page_addr == last_written_map->first)) {
+    return last_written_map->second;
+  }
+
+  last_written_map = wnx_page_to_map.find(page_addr);
+  if (likely(last_written_map != wnx_page_to_map.end())) {
+    return last_written_map->second;
+  } else {
+    return invalid_map;
   }
 }
 

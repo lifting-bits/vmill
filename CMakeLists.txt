@@ -53,8 +53,9 @@ add_library(${PROJECT_NAME} STATIC
     vmill/BC/Lifter.cpp
     vmill/BC/Runtime.cpp
     vmill/BC/Util.cpp
-    vmill/Context/AddressSpace.cpp
     vmill/Context/Context.cpp
+    vmill/Memory/AddressSpace.cpp
+    vmill/Memory/MappedRange.cpp
     vmill/Util/Hash.cpp
     vmill/Util/Timer.cpp
     vmill/Etc/xxHash/xxhash.c

@@ -59,16 +59,22 @@
 # define PRIxADDR PRIx64
 #endif
 
-#define STRACE_SYSCALL_NUM(nr) \
+#if 0
+# define STRACE_SYSCALL_NUM(nr) \
     fprintf(stderr, ANSI_COLOR_YELLOW "%u:" ANSI_COLOR_RESET, nr)
 
-#define STRACE_ERROR(syscall, fmt, ...) \
+# define STRACE_ERROR(syscall, fmt, ...) \
     fprintf(stderr, ANSI_COLOR_RED #syscall ":" fmt ANSI_COLOR_RESET "\n", \
             ##__VA_ARGS__)
 
-#define STRACE_SUCCESS(syscall, fmt, ...) \
+# define STRACE_SUCCESS(syscall, fmt, ...) \
     fprintf(stderr, ANSI_COLOR_GREEN #syscall ":" fmt ANSI_COLOR_RESET "\n", \
           ##__VA_ARGS__)
+#else
+# define STRACE_SYSCALL_NUM(...)
+# define STRACE_ERROR(...)
+# define STRACE_SUCCESS(...)
+#endif
 
 namespace {
 

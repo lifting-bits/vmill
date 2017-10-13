@@ -47,7 +47,7 @@ struct Task {
  public:
   void *state;
   uint64_t pc;
-  void *memory;
+  AddressSpace *memory;
   TaskStatus status;
 };
 
@@ -68,6 +68,8 @@ VMILL_MAKE_STD_HASH_OVERRIDE(vmill::LiveTraceId)
 
 namespace vmill {
 
+class AddressSpace;
+
 // An execution context. An execution context can contain the state of one or
 // more emulated tasks.
 class Context {
@@ -76,31 +78,17 @@ class Context {
 
   Context(void);
 
-  // Creates a new address space, and returns an opaque handle to it.
-  void *CreateAddressSpace(void);
-
-  // Clones an existing address space, and returns an opaque handle to the
-  // clone.
-  void *CloneAddressSpace(void *);
-
-  // Destroys an address space. This doesn't actually free the underlying
-  // address space. Instead it clears it out so that all future operations
-  // fail.
-  void DestroyAddressSpace(void *);
-
-  // Returns a pointer to the address space associated with a memory handle.
-  AddressSpace *AddressSpaceOf(void *) const;
-
-  void CreateInitialTask(const std::string &state, uint64_t pc, void *memory);
+  void CreateInitialTask(const std::string &state, uint64_t pc,
+                         AddressSpace *memory);
 
   bool TryExecuteNextTask(void);
 
   void ScheduleTask(const Task &task);
 
   static Context *gCurrent;
-  static AddressSpace *gLRUAddressSpace;
-  static void *gLRUMemory;
   static void *gLRUState;
+  static bool gFaulted;
+  static uint64_t gFaultAddress;
 
  protected:
   void LoadLiftedModule(const std::shared_ptr<llvm::Module> &module);
@@ -121,9 +109,6 @@ class Context {
 
   // Lift code for a task.
   llvm::Function *GetLiftedFunctionForTask(const Task &task);
-
-  // List of all address spaces.
-  std::vector<AddressSpace *> address_spaces;
 
   // Shared instruction lifter.
   std::shared_ptr<Lifter> lifter;
