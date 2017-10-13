@@ -35,6 +35,7 @@
 #include <linux/net.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -59,7 +60,7 @@
 # define PRIxADDR PRIx64
 #endif
 
-#if 0
+#if 1
 # define STRACE_SYSCALL_NUM(nr) \
     fprintf(stderr, ANSI_COLOR_YELLOW "%u:" ANSI_COLOR_RESET, nr)
 
@@ -233,6 +234,16 @@ struct linux_new_utsname {
   char domainname[kNewUTSNameLen + 1];
 };
 
+struct linux_rlimit {
+  addr_t rlim_cur;
+  addr_t rlim_max;
+};
+
+struct linux_compat_rlimit {
+  uint32_t rlim_cur;
+  uint32_t rlim_max;
+};
+
 enum SegContentType : uint32_t {
   kSegContentsData,
   kSegContentsDataExpandDown,
@@ -305,8 +316,10 @@ static Memory *SystemCall32(Memory *memory, State *state,
     case 54: return SysIoctl(memory, state, syscall);
     case 59: return SysUname<linux_oldold_utsname>(memory, state, syscall);
     case 74: return SysSetHostName(memory, state, syscall);
+    case 76: return SysGetRlimit<linux_rlimit>(memory, state, syscall);
     case 78: return SysGetTimeOfDay32(memory, state, syscall);
     case 79: return SysSetTimeOfDay32(memory, state, syscall);
+    case 85: return SysReadLink(memory, state, syscall);
     case 90: return SysMmap(memory, state, syscall);
     case 91: return SysMunmap(memory, state, syscall);
     case 102: return SysSocketCall<uint32_t>(memory, state, syscall);
@@ -324,6 +337,7 @@ static Memory *SystemCall32(Memory *memory, State *state,
       STRACE_ERROR(rt_sigprocmask, "Suppressed");
       return syscall.SetReturn(memory, state, 0);
     case 183: return SysGetCurrentWorkingDirectory(memory, state, syscall);
+    case 191: return SysGetRlimit<linux_compat_rlimit>(memory, state, syscall);
     case 192: return SysMmap(memory, state, syscall, kPageSize);
     case 195: return SysStat<linux32_stat64>(memory, state, syscall);
     case 196: return SysLstat<linux32_stat64>(memory, state, syscall);

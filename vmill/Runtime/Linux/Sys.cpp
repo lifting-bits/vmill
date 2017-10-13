@@ -174,4 +174,42 @@ static Memory *SysGetEffectiveGroupId(Memory *memory, State *state,
   return syscall.SetReturn(memory, state, id);
 }
 
+template <typename T>
+static Memory *SysGetRlimit(Memory *memory, State *state,
+                            const SystemCallABI &syscall) {
+  int resource = 0;
+  addr_t rlim_addr = 0;
+  if (!syscall.TryGetArgs(memory, state, &resource, &rlim_addr)) {
+    STRACE_ERROR(rlimit, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  struct rlimit limit = {};
+  if (0 != getrlimit(resource, &limit)) {
+    auto err = errno;
+    STRACE_ERROR(rlimit, "Couldn't get rlimit: %s", strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  }
+
+  T compat_limit = {};
+  using LimT = decltype(compat_limit.rlim_cur);
+
+  compat_limit.rlim_cur = static_cast<LimT>(std::min<rlim_t>(
+      std::numeric_limits<LimT>::max(),
+      limit.rlim_cur));
+
+  compat_limit.rlim_max = static_cast<LimT>(std::min<rlim_t>(
+        std::numeric_limits<LimT>::max(),
+        limit.rlim_max));
+
+  if (!TryWriteMemory(memory, rlim_addr, compat_limit)) {
+    STRACE_ERROR(rlimit, "Couldn't write limit back to memory");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  STRACE_SUCCESS(rlimit, "resource=%d, rlim_cur=%lx, rlim_max=%lx",
+                 resource, limit.rlim_cur, limit.rlim_max);
+  return syscall.SetReturn(memory, state, 0);
+}
+
 }  // namespace

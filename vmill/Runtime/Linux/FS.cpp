@@ -267,7 +267,8 @@ static Memory *SysGetCurrentWorkingDirectory(Memory *memory, State *state,
   }
 
   if (!buf) {
-    STRACE_ERROR(getcwd, "Invalid ");
+    STRACE_ERROR(getcwd, "NULL pointer passed to buffer.");
+    return syscall.SetReturn(memory, state, -EINVAL);
   }
 
   char *path_buf = &(gPath[0]);
@@ -310,6 +311,62 @@ static Memory *SysGetCurrentWorkingDirectory(Memory *memory, State *state,
   }
 
   return syscall.SetReturn(memory, state, len_or_err);
+}
+
+
+static Memory *SysReadLink(Memory *memory, State *state,
+                           const SystemCallABI &syscall) {
+  addr_t path = 0;
+  addr_t buf = 0;
+  addr_t size = 0;
+  if (!syscall.TryGetArgs(memory, state, &path, &buf, &size)) {
+    STRACE_ERROR(readlink, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  if (0 > static_cast<addr_diff_t>(size)) {
+    STRACE_ERROR(readlink, "Negative buffsize");
+    return syscall.SetReturn(memory, state, -EINVAL);
+  }
+
+  if (!buf) {
+    STRACE_ERROR(readlink, "NULL buffer");
+    return syscall.SetReturn(memory, state, -EINVAL);
+  }
+
+  auto path_len = CopyStringFromMemory(memory, path, gPath, PATH_MAX);
+  gPath[PATH_MAX] = '\0';
+  if (!path_len) {
+    STRACE_ERROR(readlink, "Could not read path");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  auto max_size = NumWritableBytes(memory, buf, size);
+  if (!max_size) {
+    STRACE_ERROR(readlink, "Could not write to buf");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  auto link_path = new char[max_size + 1];
+  CopyFromMemory(memory, link_path, buf, max_size);
+
+  auto ret = readlink(gPath, link_path, max_size);
+  if (-1 == ret) {
+    auto err = errno;
+    delete [] link_path;
+    STRACE_ERROR(
+        readlink, "Could not read link of %s into buffer of size %u: %s",
+        gPath, max_size, strerror(errno));
+    return syscall.SetReturn(memory, state, -err);
+  }
+
+  link_path[max_size] = '\0';
+  CopyToMemory(memory, buf, link_path, max_size);
+
+  STRACE_SUCCESS(readlink, "path=%s, link=%s, len=%d", gPath, link_path, ret);
+  delete [] link_path;
+
+  return syscall.SetReturn(memory, state, ret);
 }
 
 }  // namespace
