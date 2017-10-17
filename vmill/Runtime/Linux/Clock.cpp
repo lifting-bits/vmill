@@ -61,7 +61,6 @@ static Memory *SysGetTimeOfDay32(Memory *memory, State *state,
   return syscall.SetReturn(memory, state, -ret);
 }
 
-
 // Emulate a 32-bit `settimeofday` system call.
 static Memory *SysSetTimeOfDay32(Memory *memory, State *state,
                                  const SystemCallABI &syscall) {
@@ -106,5 +105,43 @@ static Memory *SysSetTimeOfDay32(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -err);
   }
 }
+
+// Emulate a 32-bit `gettimeofday` system call.
+static Memory *SysGetTimeOfDay(Memory *memory, State *state,
+                               const SystemCallABI &syscall) {
+  addr_t tv_addr = 0;
+  addr_t tz_addr = 0;
+
+  if (!syscall.TryGetArgs(memory, state, &tv_addr, &tz_addr)) {
+    STRACE_ERROR(gettimeofday, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  struct timeval tv = {};
+  struct timezone tz = {};
+  gettimeofday(&tv, &tz);
+  auto ret = errno;
+
+  if (tv_addr) {
+    if (!TryWriteMemory(memory, tv_addr, &tv)) {
+      STRACE_ERROR(gettimeofday, "Couldn't write timeval to memory");
+      return syscall.SetReturn(memory, state, -EFAULT);
+    }
+  }
+
+  if (tz_addr) {
+    if (!TryWriteMemory(memory, tz_addr, &tz)) {
+      STRACE_ERROR(gettimeofday, "Couldn't write timezone to memory");
+      return syscall.SetReturn(memory, state, -EFAULT);
+    }
+  }
+
+  STRACE_SUCCESS(
+      gettimeofday, "tv_sec=%ld, tv_usec=%ld, tz_minuteswest=%d, tz_dsttime=%d",
+      tv.tv_sec, tv.tv_usec, tz.tz_minuteswest, tz.tz_dsttime);
+
+  return syscall.SetReturn(memory, state, -ret);
+}
+
 
 }  // namespace

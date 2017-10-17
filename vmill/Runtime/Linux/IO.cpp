@@ -244,6 +244,46 @@ static Memory *SysOpen(Memory *memory, State *state,
   }
 }
 
+// Emulate an `openat` system call.
+static Memory *SysOpenAt(Memory *memory, State *state,
+                         const SystemCallABI &syscall) {
+  int dirfd = -1;
+  addr_t path = 0;
+  int oflag = 0;
+  mode_t mode = 0;
+  if (!syscall.TryGetArgs(memory, state, &dirfd, &path, &oflag, &mode)) {
+    STRACE_ERROR(openat, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  auto path_len = CopyStringFromMemory(memory, path, gPath, PATH_MAX);
+  gPath[PATH_MAX] = '\0';
+
+  if (path_len >= PATH_MAX) {
+    STRACE_ERROR(openat, "Path name too long: %s", gPath);
+    return syscall.SetReturn(memory, state, -ENAMETOOLONG);
+
+  // The string read does not end in a NUL-terminator; i.e. we read less
+  // than `PATH_MAX`, but as much as we could without faulting, and we didn't
+  // read the NUL char.
+  } else if ('\0' != gPath[path_len]) {
+    STRACE_ERROR(openat, "Non-NUL-terminated path");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  auto fd = openat(dirfd, gPath, oflag, mode);
+
+  if (-1 == fd) {
+    auto err = errno;
+    STRACE_ERROR(openat, "Couldn't open %s: %s", gPath, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  } else {
+    STRACE_SUCCESS(openat, "dirfd=%d, path=%s, flags=%x, mode=%o, fd=%d",
+                   gPath, oflag, mode, fd);
+    return syscall.SetReturn(memory, state, fd);
+  }
+}
+
 // Emulate a `close` system call.
 static Memory *SysClose(Memory *memory, State *state,
                         const SystemCallABI &syscall) {

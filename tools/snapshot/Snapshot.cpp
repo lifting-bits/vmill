@@ -62,6 +62,9 @@ namespace vmill {
 extern void CopyX86TraceeState(pid_t pid, pid_t tid, int64_t memory_id,
                                snapshot::Program *snapshot);
 
+extern void CopyAArch64TraceeState(pid_t pid, pid_t tid, int64_t memory_id,
+                                   snapshot::Program *snapshot);
+
 }  // namespace vmill
 
 namespace {
@@ -685,15 +688,24 @@ static void SnapshotTracee(pid_t pid) {
       case remill::kArchX86_AVX:
       case remill::kArchX86_AVX512:
         LOG(INFO)
-            << "Writing X86 register state into " << gSnapshotPath;
+            << "Writing X86 register state for thread " << std::dec
+            << tid << " into " << gSnapshotPath;
         vmill::CopyX86TraceeState(pid, tid, memory_id, &gSnapshot);
         break;
       case remill::kArchAMD64:
       case remill::kArchAMD64_AVX:
       case remill::kArchAMD64_AVX512:
         LOG(INFO)
-            << "Writing AMD64 register state into " << gSnapshotPath;
+            << "Writing AMD64 register state for thread " << std::dec
+            << tid << " into " << gSnapshotPath;
         vmill::CopyX86TraceeState(pid, tid, memory_id, &gSnapshot);
+        break;
+
+      case remill::kArchAArch64LittleEndian:
+        LOG(INFO)
+            << "Writing AArch64 register state for thread " << std::dec
+            << tid << " into " << gSnapshotPath;
+        vmill::CopyAArch64TraceeState(pid, tid, memory_id, &gSnapshot);
         break;
 
       default:

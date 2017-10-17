@@ -34,10 +34,10 @@ static constexpr addr_t kAllocMin = IF_64BIT_ELSE(k4GiB, k1GiB);
 static constexpr addr_t kAllocMax = IF_64BIT_ELSE((1ULL << 47ULL), k3GiB);
 
 #if 32 == ADDRESS_SIZE_BITS
-static std::ranlux24_base gRandGen;
+static std::subtract_with_carry_engine<addr_t, 24, 10, 24> gRandGen;
 static constexpr addr_t kRandGenShift = 7;  // Keep high bit is always `0`.
 #else
-static std::ranlux48_base gRandGen;
+static std::subtract_with_carry_engine<addr_t, 48, 5, 12> gRandGen;
 static constexpr addr_t kRandGenShift = 0;  // keep high 16 bites `0`.
 #endif
 

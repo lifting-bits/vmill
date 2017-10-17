@@ -301,10 +301,12 @@ struct linux_iovec {
 
 namespace {
 
+#ifdef VMILL_RUNTIME_X86
+
 // 32-bit system call dispatcher for `int 0x80` and `sysenter` system call
 // entry points.
-static Memory *SystemCall32(Memory *memory, State *state,
-                            const SystemCallABI &syscall) {
+static Memory *X86SystemCall(Memory *memory, State *state,
+                             const SystemCallABI &syscall) {
   auto syscall_num = syscall.GetSystemCallNum(memory, state);
   STRACE_SYSCALL_NUM(syscall_num);
   switch (syscall_num) {
@@ -361,10 +363,81 @@ static Memory *SystemCall32(Memory *memory, State *state,
     case 240: return SysFutex<linux32_timespec>(memory, state, syscall);
     case 243: return SysSetThreadArea<linux_X86_user_desc>(
         memory, state, syscall);
+    case 295: return SysOpenAt(memory, state, syscall);
+    case 307: return SysFAccessAt(memory, state, syscall);
     default:
       STRACE_ERROR(unsupported, "nr=%d", syscall_num);
       return syscall.SetReturn(memory, state, 0);
   }
 }
+
+#endif  // VMILL_RUNTIME_X86
+
+#ifdef VMILL_RUNTIME_AARCH64
+
+// 64-bit system call dispatcher for `svc` system call entry points.
+static Memory *AArch64SystemCall(Memory *memory, State *state,
+                                 const SystemCallABI &syscall) {
+  auto syscall_num = syscall.GetSystemCallNum(memory, state);
+  STRACE_SYSCALL_NUM(syscall_num);
+  switch (syscall_num) {
+    case 93: return SysExit(memory, state, syscall);
+    case 63: return SysRead(memory, state, syscall);
+    case 64: return SysWrite(memory, state, syscall);
+    case 56: return SysOpenAt(memory, state, syscall);
+    case 57: return SysClose(memory, state, syscall);
+    case 172: return SysGetProcessId(memory, state, syscall);
+    case 174: return SysGetUserId(memory, state, syscall);
+    case 48: return SysFAccessAt(memory, state, syscall);
+    case 214: return SysBrk(memory, state, syscall);
+    case 176: return SysGetGroupId(memory, state, syscall);
+    case 175: return SysGetEffectiveUserId(memory, state, syscall);
+    case 177: return SysGetEffectiveGroupId(memory, state, syscall);
+    case 29: return SysIoctl(memory, state, syscall);
+    case 160: return SysUname<linux_new_utsname>(memory, state, syscall);
+    case 173: return SysGetParentProcessId(memory, state, syscall);
+    case 155: return SysGetProcessGroupId(memory, state, syscall);
+    case 161: return SysSetHostName(memory, state, syscall);
+    case 163: return SysGetRlimit<linux_rlimit>(memory, state, syscall);
+    case 78: return SysGetTimeOfDay(memory, state, syscall);
+    case 79: return SysSetTimeOfDay32(memory, state, syscall);
+    case 85: return SysReadLink(memory, state, syscall);
+    case 90: return SysMmap(memory, state, syscall);
+    case 91: return SysMunmap(memory, state, syscall);
+    case 102: return SysSocketCall<uint32_t>(memory, state, syscall);
+    case 106: return SysStat<linux32_stat>(memory, state, syscall);
+    case 107: return SysLstat<linux32_stat>(memory, state, syscall);
+    case 108: return SysFstat<linux32_stat>(memory, state, syscall);
+    case 125: return SysMprotect(memory, state, syscall);
+    case 140: return SysLlseek(memory, state, syscall);
+    case 145: return SysReadV(memory, state, syscall);
+    case 146: return SysWriteV(memory, state, syscall);
+    case 174:
+      STRACE_ERROR(rt_sigaction, "Suppressed");
+      return syscall.SetReturn(memory, state, 0);
+    case 175:
+      STRACE_ERROR(rt_sigprocmask, "Suppressed");
+      return syscall.SetReturn(memory, state, 0);
+    case 183: return SysGetCurrentWorkingDirectory(memory, state, syscall);
+    case 191: return SysGetRlimit<linux_compat_rlimit>(memory, state, syscall);
+    case 192: return SysMmap(memory, state, syscall, kPageSize);
+    case 195: return SysStat<linux32_stat64>(memory, state, syscall);
+    case 196: return SysLstat<linux32_stat64>(memory, state, syscall);
+    case 197: return SysFstat<linux32_stat64>(memory, state, syscall);
+    case 199: return SysGetUserId(memory, state, syscall);
+    case 200: return SysGetGroupId(memory, state, syscall);
+    case 201: return SysGetEffectiveUserId(memory, state, syscall);
+    case 202: return SysGetEffectiveGroupId(memory, state, syscall);
+    case 224: return SysGetThreadId(memory, state, syscall);
+    case 240: return SysFutex<linux32_timespec>(memory, state, syscall);
+    case 243: return SysSetThreadArea<linux_X86_user_desc>(
+        memory, state, syscall);
+    default:
+      STRACE_ERROR(unsupported, "nr=%d", syscall_num);
+      return syscall.SetReturn(memory, state, 0);
+  }
+}
+
+#endif  // VMILL_RUNTIME_AARCH64
 
 }  // namespace

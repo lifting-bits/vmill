@@ -23,6 +23,7 @@ set(VMILL_SNAPSHOT vmill-snapshot-${REMILL_LLVM_VERSION})
 add_executable(${VMILL_SNAPSHOT}
     Snapshot.cpp
     X86.cpp
+    AArch64.cpp
 )
 
 target_link_libraries(${VMILL_SNAPSHOT} PRIVATE vmill ${PROJECT_LIBRARIES})

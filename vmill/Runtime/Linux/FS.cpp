@@ -52,6 +52,46 @@ static Memory *SysAccess(Memory *memory, State *state,
   }
 }
 
+// Emulate an `faccessat` system call.
+static Memory *SysFAccessAt(Memory *memory, State *state,
+                           const SystemCallABI &syscall) {
+  int dirfd = 0;
+  addr_t path = 0;
+  int mode = 0;
+  int flags = 0;
+  if (!syscall.TryGetArgs(memory, state, &dirfd, &path, &mode, &flags)) {
+    STRACE_ERROR(faccessat, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  auto path_len = CopyStringFromMemory(memory, path, gPath, PATH_MAX);
+  gPath[PATH_MAX] = '\0';
+
+  if (path_len >= PATH_MAX) {
+    STRACE_ERROR(faccessat, "Path name too long: %s", gPath);
+    return syscall.SetReturn(memory, state, -ENAMETOOLONG);
+
+  // The string read does not end in a NUL-terminator; i.e. we read less
+  // than `PATH_MAX`, but as much as we could without faulting, and we didn't
+  // read the NUL char.
+  } else if ('\0' != gPath[path_len]) {
+    STRACE_ERROR(faccessat, "Non-NUL-terminated path");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  auto ret = faccessat(dirfd, gPath, mode, flags);
+  if (-1 == ret) {
+    auto err = errno;
+    STRACE_ERROR(faccessat, "Can't access %s: %s", gPath, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  } else {
+    STRACE_SUCCESS(faccessat, "dirfd=%d, path=%s, mode=%o, flags=%x, ret=%d",
+                   dirfd, gPath, mode, flags, ret);
+    return syscall.SetReturn(memory, state, ret);
+  }
+}
+
+
 // Emulate an `llseek` system call.
 static Memory *SysLlseek(Memory *memory, State *state,
                          const SystemCallABI &syscall) {
