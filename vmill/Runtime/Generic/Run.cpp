@@ -43,6 +43,7 @@ Memory *__remill_sync_hyper_call(
       state.gpr.rcx.aword = 0;
       state.gpr.rdx.aword = 0;
 
+# if defined(__x86_64__) || defined(__i386__) || defined(_M_X86)
       asm volatile(
           "cpuid"
           : "=a"(state.gpr.rax.dword),
@@ -54,6 +55,9 @@ Memory *__remill_sync_hyper_call(
             "c"(ecx),
             "d"(edx)
       );
+# else
+      fprintf(stderr, "cpuid unimplemented!!\n");
+# endif
       break;
 
     case SyncHyperCall::kX86ReadTSC:
@@ -66,7 +70,7 @@ Memory *__remill_sync_hyper_call(
             "=d"(state.gpr.rdx.dword)
       );
 # else
-      fprintf(stderr, "rdtscp unimplemented!!\n");
+      fprintf(stderr, "rdtsc unimplemented!!\n");
 # endif
       break;
 
