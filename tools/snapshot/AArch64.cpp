@@ -17,9 +17,16 @@
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 
+#ifndef __linux__
+# error "Unsupported ptrace interface."
+#endif
+
 #ifdef __aarch64__
 # include <sys/ptrace.h>
+# include <sys/uio.h>
 # include <sys/user.h>
+# include <linux/elf.h>
+# include <linux/ptrace.h>
 #endif
 
 #include <cerrno>
@@ -41,8 +48,16 @@ void CopyAArch64TraceeState(pid_t pid, pid_t tid, int64_t memory_id,
                             snapshot::Program *program) {
 #ifdef __aarch64__
   State state = {};
-  struct user_regs_struct regs = {};
-  ptrace(PTRACE_GETREGS, tid, NULL, &regs);
+  PSTATE pstate = {};
+  struct user_pt_regs regs = {};
+  struct user_fpsimd_struct fpregs = {};
+  struct iovec req_vec = {};
+
+  req_vec.iov_base = &regs;
+  req_vec.iov_len = sizeof(regs);
+  ptrace(static_cast<__ptrace_request>(PTRACE_GETREGSET),
+         tid, reinterpret_cast<void *>(NT_PRSTATUS),
+         &req_vec);
 
   // Copy in the general-purpose registers.
   auto &gpr = state.gpr;
@@ -81,7 +96,6 @@ void CopyAArch64TraceeState(pid_t pid, pid_t tid, int64_t memory_id,
   gpr.sp.qword = regs.sp;
   gpr.pc.qword = regs.sp;
 
-  PSTATE pstate = {};
   pstate.flat = regs.pstate;
 
   state.nzcv.n = pstate.N;
@@ -94,12 +108,12 @@ void CopyAArch64TraceeState(pid_t pid, pid_t tid, int64_t memory_id,
   state.sr.c = state.nzcv.c;
   state.sr.v = state.nzcv.v;
 
-  if (FLAGS_breakpoint) {
-    gpr.pc.qword -= 4;  // Subtract off size of an instruction.
-  }
+  // Floating point state.
+  req_vec.iov_base = &fpregs;
+  req_vec.iov_len = sizeof(fpregs);
+  ptrace(static_cast<__ptrace_request>(PTRACE_GETREGSET), tid,
+         reinterpret_cast<void *>(NT_PRFPREG), &req_vec);
 
-  struct user_fpsimd_struct fpregs = {};
-  ptrace(PTRACE_GETFPREGS, tid, NULL, &fpregs);
   state.fpsr.flat = fpregs.fpsr;
   state.fpcr.flat = fpregs.fpcr;
   state.sr.idc = state.fpsr.idc;
@@ -110,6 +124,14 @@ void CopyAArch64TraceeState(pid_t pid, pid_t tid, int64_t memory_id,
   for (unsigned i = 0; i < 32; ++i) {
     state.simd.v[i].dqwords.elems[0] = fpregs.vregs[i];
   }
+
+  // Thread local storage.
+  //
+  // TODO(pag): `tpidrro_el0`?
+  req_vec.iov_base = &state.sr.tpidr_el0;
+  req_vec.iov_len = sizeof(void *);
+  ptrace(static_cast<__ptrace_request>(PTRACE_GETREGSET), tid,
+         reinterpret_cast<void *>(NT_ARM_TLS), &req_vec);
 
   auto thread_info = program->add_tasks();
   thread_info->set_pc(static_cast<int64_t>(gpr.pc.qword));

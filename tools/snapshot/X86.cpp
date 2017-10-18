@@ -38,6 +38,7 @@ DECLARE_uint64(breakpoint);
 
 namespace vmill {
 
+#ifdef __x86_64__
 static bool TryGetDescriptorBase(pid_t tid, const SegmentSelector &ss,
                                  uint32_t *addr) {
   errno = 0;
@@ -56,7 +57,6 @@ static bool TryGetDescriptorBase(pid_t tid, const SegmentSelector &ss,
 // the file with FD `fd`.
 void CopyX86TraceeState(pid_t pid, pid_t tid, int64_t memory_id,
                         snapshot::Program *program) {
-#ifdef __x86_64__
   State state = {};
   struct user_regs_struct regs;
   ptrace(PTRACE_GETREGS, tid, NULL, &regs);
@@ -173,16 +173,19 @@ void CopyX86TraceeState(pid_t pid, pid_t tid, int64_t memory_id,
       << "  gs index = " << std::dec << seg.gs.index << std::endl
       << "  gs base = " << std::hex << addr.gs_base.qword << std::endl
       << std::dec;
+}
+
 #else
+
+// Copy the register state from the tracee with PID `pid` and TID `tid` into
+// the file with FD `fd`.
+void CopyX86TraceeState(pid_t, pid_t, int64_t, snapshot::Program *) {
   LOG(FATAL)
       << "Cannot snapshot x86 program using non-x86_64 build.";
 
-  (void) pid;
-  (void) tid;
-  (void) memory_id;
-  (void) program;
-#endif  // __x86_64__
 }
+
+#endif  // __x86_64__
 
 }  // namespace vmill
 
