@@ -171,4 +171,3 @@ Memory *__remill_async_hyper_call(
 }
 
 }  // extern C
-

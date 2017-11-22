@@ -22,6 +22,10 @@
 # define __USE_POSIX
 #endif  // __USE_POSIX
 
+#ifndef __USE_ATFILE
+# define __USE_ATFILE
+#endif
+
 #include <algorithm>
 #include <cassert>
 #include <cerrno>
@@ -81,7 +85,7 @@
 namespace {
 
 enum : size_t {
-  kIOBufferSize = 4096UL,
+  kIOBufferSize = 4096UL * 4,
   kOldOldUTSNameLen = 8UL,
   kOldUTSNameLen = 64UL,
   kNewUTSNameLen = 64UL
@@ -89,7 +93,7 @@ enum : size_t {
 
 // Intermediate buffer for copying data to/from the runtime memory and the
 // emulated process memory.
-static uint8_t gIOBuffer[kIOBufferSize] = {};
+static uint8_t gIOBuffer[kIOBufferSize + 1] = {};
 
 #ifndef PATH_MAX
 # define PATH_MAX 4096
@@ -97,6 +101,7 @@ static uint8_t gIOBuffer[kIOBufferSize] = {};
 
 // Intermediate buffer for holding file system paths, used in various syscalls.
 static char gPath[PATH_MAX + 1] = {};
+static char gPathAt[PATH_MAX + 1] = {};
 
 #ifndef HOST_NAME_MAX
 # define HOST_NAME_MAX 64
@@ -364,6 +369,8 @@ static Memory *X86SystemCall(Memory *memory, State *state,
     case 243: return SysSetThreadArea<linux_X86_user_desc>(
         memory, state, syscall);
     case 295: return SysOpenAt(memory, state, syscall);
+    case 300: return SysFStatAt<linux32_stat64>(memory, state, syscall);
+    case 305: return SysReadLinkAt(memory, state, syscall);
     case 307: return SysFAccessAt(memory, state, syscall);
     default:
       STRACE_ERROR(unsupported, "nr=%d", syscall_num);
@@ -399,12 +406,12 @@ static Memory *AArch64SystemCall(Memory *memory, State *state,
     case 155: return SysGetProcessGroupId(memory, state, syscall);
     case 161: return SysSetHostName(memory, state, syscall);
     case 163: return SysGetRlimit<linux_rlimit>(memory, state, syscall);
-    case 78: return SysGetTimeOfDay(memory, state, syscall);
-    case 79: return SysSetTimeOfDay32(memory, state, syscall);
-    case 85: return SysReadLink(memory, state, syscall);
-    case 90: return SysMmap(memory, state, syscall);
-    case 91: return SysMunmap(memory, state, syscall);
-    case 102: return SysSocketCall<uint32_t>(memory, state, syscall);
+    case 169: return SysGetTimeOfDay(memory, state, syscall);
+    case 170: return SysSetTimeOfDay32(memory, state, syscall);
+    case 78: return SysReadLinkAt(memory, state, syscall);
+    case 222: return SysMmap(memory, state, syscall);
+    case 215: return SysMunmap(memory, state, syscall);
+#if 0
     case 106: return SysStat<linux32_stat>(memory, state, syscall);
     case 107: return SysLstat<linux32_stat>(memory, state, syscall);
     case 108: return SysFstat<linux32_stat>(memory, state, syscall);
@@ -432,6 +439,7 @@ static Memory *AArch64SystemCall(Memory *memory, State *state,
     case 240: return SysFutex<linux32_timespec>(memory, state, syscall);
     case 243: return SysSetThreadArea<linux_X86_user_desc>(
         memory, state, syscall);
+#endif
     default:
       STRACE_ERROR(unsupported, "nr=%d", syscall_num);
       return syscall.SetReturn(memory, state, 0);

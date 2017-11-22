@@ -16,6 +16,11 @@
 #ifndef VMILL_BC_UTIL_H_
 #define VMILL_BC_UTIL_H_
 
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+
 namespace llvm {
 class Function;
 class Module;

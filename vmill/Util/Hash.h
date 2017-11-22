@@ -21,24 +21,56 @@
 #include <string>
 #include <type_traits>
 
-namespace vmill {
+#include "vmill/Etc/xxHash/xxhash.h"
 
-uint64_t Hash(const void *data, size_t size);
+namespace vmill {
+namespace detail {
+
+class XXH32Hasher {
+ public:
+  XXH32Hasher(uint32_t seed=0);
+  void Update(const void * begin, size_t size);
+  uint32_t Digest(void);
+
+ private:
+  XXH32_state_t state;
+};
+
+class XXH64Hasher {
+ public:
+  XXH64Hasher(uint64_t seed=0);
+  void Update(const void * begin, size_t size);
+  uint64_t Digest(void);
+ private:
+  XXH64_state_t state;
+};
+
+}  // namespace detail
 
 template <typename T>
-inline uint64_t Hash(const T *data, size_t size) {
-  return Hash(reinterpret_cast<const void *>(data), size);
-}
+class Hasher;
+
+template<>
+class Hasher<uint32_t> : public detail::XXH32Hasher {
+ public:
+  using detail::XXH32Hasher::XXH32Hasher;
+};
+
+template<>
+class Hasher<uint64_t> : public detail::XXH64Hasher {
+ public:
+  using detail::XXH64Hasher::XXH64Hasher;
+};
+
+uint64_t Hash(const void *data, size_t size);
 
 inline uint64_t Hash(const std::string &data) {
   return Hash(data.data(), data.size());
 }
 
 template <typename T>
-inline uint64_t Hash(
-    const T &data,
-    typename std::enable_if<std::is_pod<T>::value, int>::type=0) {
-  return Hash(reinterpret_cast<const void *>(&data), sizeof(T));
+inline uint64_t Hash(const T &data) {
+  return Hash(&data, sizeof(data));
 }
 
 }  // namespace vmill

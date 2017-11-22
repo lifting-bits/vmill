@@ -18,6 +18,7 @@
 #include <glog/logging.h>
 
 #include <cstdint>
+#include <ctime>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -43,6 +44,7 @@
 
 #include "remill/Arch/Arch.h"
 #include "remill/Arch/Name.h"
+#include "remill/BC/ABI.h"
 #include "remill/BC/Compat/TargetLibraryInfo.h"
 #include "remill/BC/IntrinsicTable.h"
 #include "remill/BC/Lifter.h"
@@ -52,10 +54,24 @@
 
 #include "vmill/Arch/Decoder.h"
 #include "vmill/BC/Lifter.h"
+#include "vmill/BC/Trace.h"
 #include "vmill/BC/Util.h"
+
+DEFINE_string(instruction_callback, "",
+              "Name of a function to call before each lifted instruction.");
 
 namespace vmill {
 namespace {
+
+// The function's lifted name contains both its position in memory (`pc`) and
+// the contents of memory (instruction bytes). This makes it sensitive to self-
+// modifying code.
+std::string LiftedFunctionName(const TraceId &id) {
+  std::stringstream ns;
+  ns << "_" << std::hex << static_cast<uint32_t>(id.hash1)
+     << "_" << static_cast<uint32_t>(id.hash2);
+  return ns.str();
+}
 
 class LifterImpl : public Lifter {
  public:
@@ -63,8 +79,10 @@ class LifterImpl : public Lifter {
 
   explicit LifterImpl(const std::shared_ptr<llvm::LLVMContext> &);
 
-  llvm::Function *LiftTraceIntoModule(
-      const DecodedTrace &trace, llvm::Module *module) override;
+  std::unique_ptr<llvm::Module> Lift(
+        const DecodedTraceList &traces) override;
+
+  void LiftTraceIntoModule(const DecodedTrace &trace, llvm::Module *module);
 
   // LLVM context that manages all modules.
   const std::shared_ptr<llvm::LLVMContext> context;
@@ -93,8 +111,9 @@ LifterImpl::LifterImpl(const std::shared_ptr<llvm::LLVMContext> &context_)
   auto target_arch = remill::GetTargetArch();
 
   LOG(INFO)
-      << "Preparing module " << semantics->getName().str() << " for lifting "
-      << remill::GetArchName(target_arch->arch_name) << " code";
+      << "Preparing module " << remill::ModuleName(semantics)
+      << " for lifting " << remill::GetArchName(target_arch->arch_name)
+      << " code";
 
   target_arch->PrepareModule(semantics.get());
 
@@ -108,15 +127,6 @@ LifterImpl::LifterImpl(const std::shared_ptr<llvm::LLVMContext> &context_)
 }
 
 LifterImpl::~LifterImpl(void) {}
-
-// The function's lifted name contains both its position in memory (`pc`) and
-// the contents of memory (instruction bytes). This makes it sensitive to self-
-// modifying code.
-static std::string LiftedFunctionName(TraceId id) {
-  std::stringstream ns;
-  ns << "_" << std::hex << id.hash1 << "_" << id.hash2;
-  return ns.str();
-}
 
 // Optimize the lifted function. This ends up being pretty slow because it
 // goes and optimizes everything else in the module (a.k.a. semantics module).
@@ -142,8 +152,8 @@ static void RunO3(llvm::Function *func) {
   builder.RerollLoops = false;
   builder.SLPVectorize = false;
   builder.LoopVectorize = false;
-  builder.VerifyInput = true;
-  builder.VerifyOutput = true;
+  IF_LLVM_GTE_36(builder.VerifyInput = true;)
+  IF_LLVM_GTE_36(builder.VerifyOutput = true;)
 
   builder.populateFunctionPassManager(func_manager);
   builder.populateModulePassManager(module_manager);
@@ -153,7 +163,25 @@ static void RunO3(llvm::Function *func) {
   module_manager.run(*module);
 }
 
-llvm::Function *LifterImpl::LiftTraceIntoModule(
+std::unique_ptr<llvm::Module> LifterImpl::Lift(
+    const DecodedTraceList &traces) {
+
+  std::unique_ptr<llvm::Module> module;
+
+  for (const auto &trace : traces) {
+    if (!module) {
+      std::stringstream ss;
+      ss << std::hex << static_cast<uint64_t>(trace.pc) << "_at_"
+         << time(nullptr);
+      module.reset(new llvm::Module(ss.str(), *context));
+    }
+    LiftTraceIntoModule(trace, module.get());
+  }
+
+  return module;
+}
+
+void LifterImpl::LiftTraceIntoModule(
     const DecodedTrace &trace, llvm::Module *module) {
 
   const auto &insts = trace.instructions;
@@ -164,17 +192,17 @@ llvm::Function *LifterImpl::LiftTraceIntoModule(
 
   // Already lifted; don't re-do things.
   auto dest_func = module->getFunction(func_name);
-  if (dest_func) {
-    return dest_func;
-  }
+  CHECK(nullptr == dest_func)
+      << "Broken invariant: the trace function " << func_name
+      << " has already been lifted.";
 
   auto func = remill::DeclareLiftedFunction(semantics.get(), func_name);
   remill::CloneBlockFunctionInto(func);
 
   // Function that will create basic blocks as needed.
   std::unordered_map<uint64_t, llvm::BasicBlock *> blocks;
-  auto GetOrCreateBlock = [func, context_ptr, &blocks] (uint64_t block_pc) {
-    auto &block = blocks[block_pc];
+  auto GetOrCreateBlock = [func, context_ptr, &blocks] (PC block_pc) {
+    auto &block = blocks[static_cast<uint64_t>(block_pc)];
     if (!block) {
       block = llvm::BasicBlock::Create(*context_ptr, "", func);
     }
@@ -192,11 +220,26 @@ llvm::Function *LifterImpl::LiftTraceIntoModule(
     remill::AddTerminatingTailCall(entry_block, intrinsics.error);
   }
 
+  llvm::Constant *callback = nullptr;
+  llvm::Value *memory_ptr_ref = nullptr;
+  if (!FLAGS_instruction_callback.empty()) {
+    callback = module->getOrInsertFunction(
+        FLAGS_instruction_callback, func->getFunctionType());
+    memory_ptr_ref = remill::LoadMemoryPointerRef(entry_block);
+  }
+
   // Lift each instruction into its own basic block.
   for (const auto &entry : insts) {
     auto block = GetOrCreateBlock(entry.first);
     auto &inst = const_cast<remill::Instruction &>(entry.second);
-    if (!lifter.LiftIntoBlock(inst, block)) {
+
+    if (callback) {
+      llvm::IRBuilder<> ir(block);
+      ir.CreateStore(ir.CreateCall(callback, remill::LiftedFunctionArgs(block)),
+                     memory_ptr_ref);
+    }
+
+    if (remill::kLiftedInstruction != lifter.LiftIntoBlock(inst, block)) {
       remill::AddTerminatingTailCall(block, intrinsics.error);
       continue;
     }
@@ -210,12 +253,15 @@ llvm::Function *LifterImpl::LiftTraceIntoModule(
 
       case remill::Instruction::kCategoryNormal:
       case remill::Instruction::kCategoryNoOp:
-        llvm::BranchInst::Create(GetOrCreateBlock(inst.next_pc), block);
+        llvm::BranchInst::Create(
+            GetOrCreateBlock(static_cast<PC>(inst.next_pc)),
+            block);
         break;
 
       case remill::Instruction::kCategoryDirectJump:
-        llvm::BranchInst::Create(GetOrCreateBlock(inst.branch_taken_pc),
-                                 block);
+        llvm::BranchInst::Create(
+            GetOrCreateBlock(static_cast<PC>(inst.branch_taken_pc)),
+            block);
         break;
       case remill::Instruction::kCategoryIndirectJump:
         remill::AddTerminatingTailCall(block, intrinsics.jump);
@@ -235,9 +281,10 @@ llvm::Function *LifterImpl::LiftTraceIntoModule(
 
       case remill::Instruction::kCategoryConditionalBranch:
       case remill::Instruction::kCategoryConditionalAsyncHyperCall:
-        llvm::BranchInst::Create(GetOrCreateBlock(inst.branch_taken_pc),
-                                 GetOrCreateBlock(inst.branch_not_taken_pc),
-                                 remill::LoadBranchTaken(block), block);
+        llvm::BranchInst::Create(
+            GetOrCreateBlock(static_cast<PC>(inst.branch_taken_pc)),
+            GetOrCreateBlock(static_cast<PC>(inst.branch_not_taken_pc)),
+            remill::LoadBranchTaken(block), block);
         break;
 
       case remill::Instruction::kCategoryAsyncHyperCall:
@@ -259,14 +306,48 @@ llvm::Function *LifterImpl::LiftTraceIntoModule(
 
   MoveFunctionIntoModule(func, module);
 
-  return func;
+  std::vector<llvm::Type *> types(2);
+  std::vector<llvm::Constant *> values(2);
+
+  // TraceId type.
+  types[0] = llvm::Type::getIntNTy(*context_ptr, sizeof(trace.id.hash1) * 8);
+  types[1] = types[0];
+  auto trace_id_type = llvm::StructType::get(*context_ptr, types, true);
+
+  values[0] = llvm::ConstantInt::get(
+      types[0], static_cast<TraceHashBaseType>(trace.id.hash1));
+
+  values[1] = llvm::ConstantInt::get(
+      types[1], static_cast<TraceHashBaseType>(trace.id.hash2));
+
+  auto trace_id_val = llvm::ConstantStruct::get(trace_id_type, values);
+
+  // TraceEntry type.
+  types[0] = trace_id_type;
+  types[1] = func->getType();
+  auto trace_entry_type = llvm::StructType::get(*context_ptr, types, true);
+
+  values[0] = trace_id_val;
+  values[1] = func;
+  auto trace_entry_val = llvm::ConstantStruct::get(trace_entry_type, values);
+
+  func->setName("");  // Kill its name.
+  func->setLinkage(llvm::GlobalValue::PrivateLinkage);
+  func->setVisibility(llvm::GlobalValue::HiddenVisibility);
+
+  // Add an entry into the `.translations` section for this block. These
+  // entries will end up being contiguous in memory.
+  auto var = new llvm::GlobalVariable(
+      *module, trace_entry_type, true, llvm::GlobalValue::ExternalLinkage,
+      trace_entry_val);
+  var->setSection(".translations");
 }
 
 }  // namespace
 
-Lifter *Lifter::Create(
+std::unique_ptr<Lifter> Lifter::Create(
     const std::shared_ptr<llvm::LLVMContext> &context) {
-  return new LifterImpl(context);
+  return std::unique_ptr<Lifter>(new LifterImpl(context));
 }
 
 Lifter::Lifter(void) {}

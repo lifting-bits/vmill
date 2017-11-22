@@ -16,9 +16,34 @@
 
 #include "vmill/Util/Hash.h"
 
-#include "vmill/Etc/xxHash/xxhash.h"
-
 namespace vmill {
+namespace detail {
+
+XXH32Hasher::XXH32Hasher(uint32_t seed) {
+  XXH32_reset(&state, seed);
+}
+
+void XXH32Hasher::Update(const void * begin, size_t size) {
+  XXH32_update(&state, begin, size);
+}
+
+uint32_t XXH32Hasher::Digest(void) {
+  return XXH32_digest(&state);
+}
+
+XXH64Hasher::XXH64Hasher(uint64_t seed) {
+  XXH64_reset(&state, seed);
+}
+
+void XXH64Hasher::Update(const void * begin, size_t size) {
+  XXH64_update(&state, begin, size);
+}
+
+uint64_t XXH64Hasher::Digest(void) {
+  return XXH64_digest(&state);
+}
+
+}  // namespace detail
 
 uint64_t Hash(const void *data, size_t size) {
   return XXH64(data, size, 0);

@@ -16,6 +16,8 @@
 
 namespace {
 
+#ifdef VMILL_RUNTIME_X86
+
 // Emulate the `set_thread_area` system calls.
 template <typename T>
 static Memory *SysSetThreadArea(Memory *memory, State *state,
@@ -102,5 +104,7 @@ static Memory *SysSetThreadArea(Memory *memory, State *state,
                  index, info.base_addr);
   return syscall.SetReturn(memory, state, 0);
 }
+
+#endif  // VMILL_RUNTIME_X86
 
 }  // namespace

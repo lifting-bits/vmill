@@ -22,35 +22,26 @@
 #include <map>
 
 #include "remill/Arch/Instruction.h"
+#include "vmill/BC/Trace.h"
 
 namespace vmill {
 
 class AddressSpace;
 
-using InstructionMap = std::map<uint64_t, remill::Instruction>;
-
-// Hash of the bytes of the machine code in the trace.
-struct TraceId {
- public:
-  uint64_t hash1;
-  uint64_t hash2;
-
-  inline bool operator==(const TraceId &that) const {
-    return hash1 == that.hash1 && hash2 == that.hash2;
-  }
-};
+using InstructionMap = std::map<PC, remill::Instruction>;
 
 struct DecodedTrace {
-  uint64_t pc;  // Entry PC of the trace.
+  PC pc;  // Entry PC of the trace.
   TraceId id;  //
   InstructionMap instructions;
 };
 
+class DecodedTraceList : public std::list<DecodedTrace> {};
+
 // Starting from `start_pc`, read executable bytes out of a memory region
 // using `byte_reader`, and returns a mapping of decoded instruction program
 // counters to the decoded instructions themselves.
-std::list<DecodedTrace> DecodeTraces(AddressSpace &addr_space,
-                                     uint64_t start_pc);
+DecodedTraceList DecodeTraces(AddressSpace &addr_space, PC start_pc);
 
 }  // namespace vmill
 

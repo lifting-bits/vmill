@@ -18,15 +18,16 @@
 #include <glog/logging.h>
 
 #include <limits>
+#include <map>
 #include <memory>
 #include <new>
 #include <utility>
+#include <vector>
 
-#include <sys/mman.h>
-
-#include "vmill/Etc/xxHash/xxhash.h"
-#include "vmill/Memory/MappedRange.h"
+#include "vmill/Program/MappedRange.h"
+#include "vmill/Util/AreaAllocator.h"
 #include "vmill/Util/Compiler.h"
+#include "vmill/Util/Hash.h"
 
 namespace vmill {
 namespace {
@@ -43,6 +44,50 @@ class EmptyMemoryMap;
 class CopyOnWriteMemoryMap;
 class InvalidMemoryMap;
 
+struct Allocation {
+  uint8_t *base;
+  size_t size;
+
+  inline void Reset(void) {
+    base = nullptr;
+    size = 0;
+  }
+};
+
+class ArrayMemoryAllocator {
+ public:
+  ArrayMemoryAllocator(void)
+      : allocator(kAreaRW, kAreaAddressSpace) {}
+
+  Allocation Allocate(size_t size) {
+
+    Allocation alloc = {};
+    auto lb = free_list.lower_bound(size);
+    if (lb != free_list.end() && !lb->second.empty()) {
+      alloc.base = lb->second.back();
+      alloc.size = lb->first;
+      lb->second.pop_back();
+    } else {
+      alloc.base = allocator.Allocate(size, 64  /* Cache line size */);
+      alloc.size = size;
+    }
+
+    memset(alloc.base, 0, size);
+    return alloc;
+  }
+
+  void Free(Allocation &alloc) {
+    if (alloc.base) {
+      free_list[alloc.size].push_back(alloc.base);
+      alloc.Reset();
+    }
+  }
+
+  AreaAllocator allocator;
+  std::map<size_t, std::vector<uint8_t *>> free_list;
+};
+
+
 // Basic information about some region of mapped memory within an address space.
 class MappedRangeBase : public MappedRange {
  public:
@@ -54,7 +99,7 @@ class MappedRangeBase : public MappedRange {
 
   uint64_t code_version;
   bool code_version_is_valid;
-  uint8_t *data;
+  Allocation data;
   MemoryMapPtr parent;
 };
 
@@ -67,7 +112,7 @@ class InvalidMemoryMap : public MappedRangeBase {
   bool Read(uint64_t, uint8_t *out_val) override;
   bool Write(uint64_t, uint8_t) override;
   MemoryMapPtr Clone(void) override;
-  uint64_t CodeVersion(void) override;
+  uint64_t ComputeCodeVersion(void) override;
 };
 
 // Implements an array-backed memory mapping that is filled with actual data
@@ -83,7 +128,9 @@ class ArrayMemoryMap : public MappedRangeBase {
   bool Read(uint64_t address, uint8_t *out_val) override;
   bool Write(uint64_t address, uint8_t val) override;
   MemoryMapPtr Clone(void) override;
-  uint64_t CodeVersion(void) override;
+  uint64_t ComputeCodeVersion(void) override;
+
+  static ArrayMemoryAllocator allocator;
 };
 
 // Implements an empty range of memory that is filled with zeroes.
@@ -95,7 +142,7 @@ class EmptyMemoryMap : public MappedRangeBase {
   bool Read(uint64_t, uint8_t *out_val) override;
   bool Write(uint64_t address, uint8_t val) override;
   MemoryMapPtr Clone(void) override;
-  uint64_t CodeVersion(void) override;
+  uint64_t ComputeCodeVersion(void) override;
 };
 
 // Implements a copy-on-write range of memory.
@@ -107,7 +154,7 @@ class CopyOnWriteMemoryMap : public MappedRangeBase {
   bool Read(uint64_t address, uint8_t *out_val) override;
   bool Write(uint64_t address, uint8_t val) override;
   MemoryMapPtr Clone(void) override;
-  uint64_t CodeVersion(void) override;
+  uint64_t ComputeCodeVersion(void) override;
 
  private:
   using MappedRangeBase::MappedRangeBase;
@@ -130,16 +177,11 @@ MappedRangeBase::MappedRangeBase(
     : MappedRange(base_address_, limit_address_),
       code_version(0),
       code_version_is_valid(false),
-      data(nullptr),
+      data{nullptr, 0},
       parent(nullptr) {}
 
 MappedRangeBase::~MappedRangeBase(void) {
-  if (data) {
-    auto data_addr = reinterpret_cast<uintptr_t>(data);
-    munmap(reinterpret_cast<void *>(data_addr - kPageSize),
-           Size() + 2 * kPageSize);
-    data = nullptr;
-  }
+  CHECK(!data.base);
 }
 
 void MappedRangeBase::InvalidateCodeVersion(void) {
@@ -178,9 +220,11 @@ MemoryMapPtr InvalidMemoryMap::Clone(void) {
   return std::make_shared<InvalidMemoryMap>(base_address, limit_address);
 }
 
-uint64_t InvalidMemoryMap::CodeVersion(void) {
+uint64_t InvalidMemoryMap::ComputeCodeVersion(void) {
   return 0;
 }
+
+ArrayMemoryAllocator ArrayMemoryMap::allocator;
 
 // Allocate memory for some data. This will redzone the allocation with
 // two unreadable/unwritable pages around the allocation.
@@ -190,42 +234,26 @@ ArrayMemoryMap::ArrayMemoryMap(uint64_t base_address_, uint64_t limit_address_)
   CHECK(Size() == (Size() / kPageSize) * kPageSize)
       << "Invalid memory map size.";
 
-  auto all_data = reinterpret_cast<uint8_t *>(
-      mmap(nullptr, Size() + 2 * kPageSize, PROT_NONE,
-           MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0));
-
-  auto err = errno;
-  CHECK(nullptr != all_data)
-      << "Couldn't allocate page tables for `ArrayMemoryMap`: "
-      << strerror(err);
-
-  data = reinterpret_cast<uint8_t *>(
-      mmap(&(all_data[kPageSize]), Size(), PROT_READ | PROT_WRITE,
-           MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0));
-
-  err = errno;
-  CHECK(data == &(all_data[kPageSize]))
-      << "Couldn't fixed-map the backing memory for `ArrayMemoryMap`: "
-      << strerror(errno);
-
-  memset(data, 0, Size());
+  data = allocator.Allocate(Size());
 }
 
 ArrayMemoryMap::ArrayMemoryMap(ArrayMemoryMap *steal)
     : MappedRangeBase(steal->BaseAddress(), steal->LimitAddress()) {
   data = steal->data;
-  steal->data = nullptr;
+  steal->data.Reset();
 }
 
-ArrayMemoryMap::~ArrayMemoryMap(void) {}
+ArrayMemoryMap::~ArrayMemoryMap(void) {
+  allocator.Free(data);
+}
 
 bool ArrayMemoryMap::Read(uint64_t address, uint8_t *out_val) {
-  *out_val = data[address - base_address];
+  *out_val = data.base[address - base_address];
   return true;
 }
 
 bool ArrayMemoryMap::Write(uint64_t address, uint8_t val) {
-  data[address - BaseAddress()] = val;
+  data.base[address - BaseAddress()] = val;
   return true;
 }
 
@@ -238,15 +266,11 @@ MemoryMapPtr ArrayMemoryMap::Clone(void) {
   return self->Clone();
 }
 
-uint64_t ArrayMemoryMap::CodeVersion(void) {
+uint64_t ArrayMemoryMap::ComputeCodeVersion(void) {
   if (code_version_is_valid) {
     return code_version;
   }
-
-  XXH64_state_t state = {};
-  XXH64_reset(&state, 0);
-  XXH64_update(&state, data, Size());
-  code_version = XXH64_digest(&state);
+  code_version = Hash(data.base, Size());
   code_version_is_valid = true;
   return code_version;
 }
@@ -267,7 +291,7 @@ MemoryMapPtr EmptyMemoryMap::Clone(void) {
   return std::make_shared<EmptyMemoryMap>(base_address, limit_address);
 }
 
-uint64_t EmptyMemoryMap::CodeVersion(void) {
+uint64_t EmptyMemoryMap::ComputeCodeVersion(void) {
   return 0;
 }
 
@@ -297,7 +321,7 @@ bool CopyOnWriteMemoryMap::Write(uint64_t address, uint8_t val) {
 
   auto self = new (this) ArrayMemoryMap(base_addr, limit_addr);
   for (uint64_t index = 0; base_addr < limit_addr; ++base_addr, ++index) {
-    (void) parent_ptr->Read(base_addr, &(self->data[index]));
+    (void) parent_ptr->Read(base_addr, &(self->data.base[index]));
   }
 
   return self->Write(address, val);
@@ -307,8 +331,8 @@ MemoryMapPtr CopyOnWriteMemoryMap::Clone(void) {
   return std::make_shared<CopyOnWriteMemoryMap>(parent);
 }
 
-uint64_t CopyOnWriteMemoryMap::CodeVersion(void) {
-  return parent->CodeVersion();
+uint64_t CopyOnWriteMemoryMap::ComputeCodeVersion(void) {
+  return parent->ComputeCodeVersion();
 }
 
 }  // namespace

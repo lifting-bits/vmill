@@ -27,11 +27,8 @@
 #include "remill/Arch/Instruction.h"
 
 #include "vmill/Arch/Decoder.h"
-#include "vmill/Etc/xxHash/xxhash.h"
-#include "vmill/Memory/AddressSpace.h"
+#include "vmill/Program/AddressSpace.h"
 #include "vmill/Util/Hash.h"
-
-DECLARE_bool(enable_code_versioning);
 
 namespace vmill {
 namespace {
@@ -45,7 +42,11 @@ static std::string ReadInstructionBytes(
   instr_bytes.reserve(max_num_bytes);
   for (uint64_t i = 0; i < max_num_bytes; ++i) {
     uint8_t byte = 0;
-    if (!addr_space.TryReadExecutable(pc + i, &byte)) {
+    auto byte_pc = pc + i;
+    if (!addr_space.TryReadExecutable(static_cast<PC>(byte_pc), &byte)) {
+      LOG(WARNING)
+          << "Stopping decode at non-executable byte "
+          << std::hex << byte_pc << std::dec;
       break;
     }
     instr_bytes.push_back(static_cast<char>(byte));
@@ -148,7 +149,7 @@ static void AddSuccessorsToTraceList(const remill::Arch *arch,
       // TODO(pag): Assumes little endian.
       uint64_t addr = reinterpret_cast<uint64_t &>(bytes[0]);
       if (addr_space.CanRead(addr) && addr_space.CanExecute(addr)) {
-        LOG(INFO)
+        DLOG(INFO)
             << "Indirect jump at " << std::hex << inst.pc
             << " looks like a thunk that invokes " << addr << std::dec;
         work_list.insert(addr);
@@ -162,19 +163,18 @@ static void AddSuccessorsToTraceList(const remill::Arch *arch,
 
 // The 'version' of this trace is a hash of the instruction bytes.
 static TraceId HashTraceInstructions(const DecodedTrace &trace) {
-  XXH64_state_t state1;
-  XXH64_state_t state2;
-
   const auto &insts = trace.instructions;
-  XXH64_reset(&state1, 0x414141deadbeef);
-  XXH64_reset(&state2, insts.size());
+
+  Hasher<uint32_t> hash1(static_cast<uint32_t>(0xdeadbeef));
+  Hasher<uint32_t> hash2(static_cast<uint32_t>(insts.size()));
 
   for (const auto &entry : insts) {
-    XXH64_update(&state1, entry.second.bytes.data(), entry.second.bytes.size());
-    XXH64_update(&state2, entry.second.bytes.data(), entry.second.bytes.size());
+    hash1.Update(entry.second.bytes.data(), entry.second.bytes.size());
+    hash2.Update(entry.second.bytes.data(), entry.second.bytes.size());
   }
 
-  return {XXH64_digest(&state1), XXH64_digest(&state2)};
+  return {static_cast<TraceHash>(hash1.Digest()),
+          static_cast<TraceHash>(hash2.Digest())};
 }
 
 }  // namespace
@@ -182,10 +182,9 @@ static TraceId HashTraceInstructions(const DecodedTrace &trace) {
 // Starting from `start_pc`, read executable bytes out of a memory region
 // using `byte_reader`, and returns a mapping of decoded instruction program
 // counters to the decoded instructions themselves.
-std::list<DecodedTrace> DecodeTraces(AddressSpace &addr_space,
-                                     uint64_t start_pc) {
+DecodedTraceList DecodeTraces(AddressSpace &addr_space, PC start_pc) {
 
-  std::list<DecodedTrace> traces;
+  DecodedTraceList traces;
 
   auto arch = remill::GetTargetArch();
 
@@ -194,47 +193,48 @@ std::list<DecodedTrace> DecodeTraces(AddressSpace &addr_space,
 
   DLOG(INFO)
       << "Recursively decoding machine code, beginning at "
-      << std::hex << start_pc;
+      << std::hex << static_cast<uint64_t>(start_pc);
 
-  trace_list.insert(start_pc);
+  trace_list.insert(static_cast<uint64_t>(start_pc));
 
   while (!trace_list.empty()) {
     auto trace_it = trace_list.begin();
     const auto trace_pc = *trace_it;
     trace_list.erase(trace_it);
 
-    if (addr_space.IsMarkedTraceHead(trace_pc)) {
+    if (addr_space.IsMarkedTraceHead(static_cast<PC>(trace_pc))) {
       continue;
     }
 
-    addr_space.MarkAsTraceHead(trace_pc);
+    addr_space.MarkAsTraceHead(static_cast<PC>(trace_pc));
     work_list.insert(trace_pc);
 
     DecodedTrace trace;
-    trace.pc = trace_pc;
+    trace.pc = static_cast<PC>(trace_pc);
 
     while (!work_list.empty()) {
       auto entry_it = work_list.begin();
       const auto pc = *entry_it;
       work_list.erase(entry_it);
 
-      if (trace.instructions.count(pc)) {
+      if (trace.instructions.count(static_cast<PC>(pc))) {
         continue;
       }
 
       remill::Instruction inst;
       auto inst_bytes = ReadInstructionBytes(arch, addr_space, pc);
       auto decode_successful = arch->DecodeInstruction(pc, inst_bytes, inst);
-      trace.instructions[pc] = inst;
+      trace.instructions[static_cast<PC>(pc)] = inst;
 
       if (!decode_successful) {
-        LOG(ERROR)
-            << "Cannot decode instruction at " << std::hex << pc;
+        LOG(WARNING)
+            << "Cannot decode instruction at " << std::hex << pc << std::dec
+            << ": " << inst.Serialize();
         break;
+      } else {
+        AddSuccessorsToWorkList(inst, work_list);
+        AddSuccessorsToTraceList(arch, addr_space, inst, trace_list);
       }
-
-      AddSuccessorsToWorkList(inst, work_list);
-      AddSuccessorsToTraceList(arch, addr_space, inst, trace_list);
     }
 
     trace.id = HashTraceInstructions(trace);
@@ -242,7 +242,7 @@ std::list<DecodedTrace> DecodeTraces(AddressSpace &addr_space,
     DLOG(INFO)
         << "Decoded " << trace.instructions.size()
         << " instructions starting from "
-        << std::hex << trace.pc << std::dec;
+        << std::hex << static_cast<uint64_t>(trace.pc) << std::dec;
 
     traces.push_back(std::move(trace));
   }

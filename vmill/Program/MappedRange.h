@@ -61,7 +61,7 @@ class MappedRange {
 
   // Compute the "code version" of this range. This is only relevant for
   // ranges with executable permissions.
-  virtual uint64_t CodeVersion(void) = 0;
+  virtual uint64_t ComputeCodeVersion(void) = 0;
 
   // Read a byte of memory from this range.
   virtual bool Read(uint64_t address, uint8_t *out_val) = 0;

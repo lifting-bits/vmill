@@ -27,7 +27,7 @@
 
 #include "remill/Arch/Arch.h"
 
-#include "vmill/Context/Snapshot.h"
+#include "../../vmill/Program/Snapshot.h"
 
 #define HAS_FEATURE_AVX 1
 #define HAS_FEATURE_AVX512 1
@@ -125,21 +125,21 @@ void CopyX86TraceeState(pid_t pid, pid_t tid, int64_t memory_id,
   static_assert(sizeof(struct user_fpregs_struct) == sizeof(FPU),
                 "Remill X86 FPU state structure doesn't match the OS.");
 
-  FPU fpregs;  // Our FPU structure is better organized ;-)
-  ptrace(PTRACE_GETFPREGS, tid, NULL, &fpregs);
+  ptrace(PTRACE_GETFPREGS, tid, NULL, &(state.x87));
   auto &st = state.st;
   auto &mmx = state.mmx;
 
   // Opportunistic copying of MMX regs.
   for (size_t i = 0; i < 8; ++i) {
-    if (static_cast<uint16_t>(0xFFFFU) == fpregs.st[i].infinity) {
-      mmx.elems[i].val.qwords.elems[0] = fpregs.st[i].mmx;
+    if (static_cast<uint16_t>(0xFFFFU) == state.x87.fxsave64.st[i].infinity) {
+      mmx.elems[i].val.qwords.elems[0] = state.x87.fxsave64.st[i].mmx;
     }
   }
 
   // Opportunistic copying of ST(i) regs.
   for (size_t i = 0; i < 8; ++i) {
-    auto entry = *reinterpret_cast<long double *>(&(fpregs.st[i].st));
+    auto entry = *reinterpret_cast<long double *>(
+        &(state.x87.fxsave64.st[i].st));
     st.elems[i].val = static_cast<double>(entry);
   }
 

@@ -32,7 +32,7 @@ class Arch;
 }  // namespace remill
 namespace vmill {
 
-struct DecodedTrace;
+class DecodedTraceList;
 
 // A single-entry, multiple-exit trace, starting at `pc`.
 struct LiftedTrace {
@@ -46,16 +46,13 @@ class Lifter {
  public:
   virtual ~Lifter(void);
 
-  static Lifter *Create(
+  static std::unique_ptr<Lifter> Create(
       const std::shared_ptr<llvm::LLVMContext> &context);
 
-  // Lift the code starting at `pc` into the module `module`.
-  //
-  // Note: Lifting is always successful. Even invalid instructions are 'lifted',
-  //       but lifted into bitcode functions that will dispatch to Remill's
-  //       error intrinsics.
-  virtual llvm::Function *LiftTraceIntoModule(
-      const DecodedTrace &trace, llvm::Module *module) = 0;
+  // Lift a list of decoded traces into a new LLVM bitcode module, and
+  // return the resulting module.
+  virtual std::unique_ptr<llvm::Module> Lift(
+      const DecodedTraceList &traces) = 0;
 
  protected:
   Lifter(void);

@@ -31,8 +31,10 @@
 #include "vmill/Arch/Decoder.h"
 #include "vmill/BC/Executor.h"
 #include "vmill/BC/Lifter.h"
-#include "vmill/Context/Context.h"
-#include "vmill/Memory/AddressSpace.h"
+#include "vmill/Executor/CodeCache.h"
+#include "vmill/Executor/Context.h"
+#include "vmill/Program/AddressSpace.h"
+#include "vmill/Util/Compiler.h"
 
 namespace vmill {
 
@@ -43,8 +45,8 @@ uint64_t Context::gFaultAddress = 0;
 
 Context::Context(void)
     : context(new llvm::LLVMContext),
-      lifter(vmill::Lifter::Create(context)),
-      executor(vmill::Executor::GetNativeExecutor(context)) {}
+      lifter(Lifter::Create(context)),
+      code_cache(CodeCache::Create(context)) {}
 
 Context::~Context(void) {}
 
@@ -61,7 +63,6 @@ void Context::ScheduleTask(const Task &task) {
 
 // Load all the lifted functions from an already cached module.
 void Context::LoadLiftedModule(const std::shared_ptr<llvm::Module> &module) {
-  modules.push_back(module);
   auto num_traces = 0;
   for (auto &func : *module) {
     auto name = func.getName().str();
@@ -98,37 +99,13 @@ llvm::Function *Context::GetLiftedFunctionForTask(const Task &task) {
 
   llvm::Function *ret_func = nullptr;
 
-  // Decode the requested trace, and perhaps way more.
-  std::shared_ptr<llvm::Module> module;
-  auto decoded_traces = DecodeTraces(*addr_space, task.pc);
-  auto num_lifted_traces = 0;
 
-  for (const auto &trace : decoded_traces) {
-    auto &lifted_func = trace_cache[trace.id];
-    if (!lifted_func) {
-      if (!module) {
-        std::stringstream ss;
-        ss << std::hex << task.pc << "_at_" << code_version;
-        module = std::make_shared<llvm::Module>(ss.str(), *context);
-      }
-      num_lifted_traces += 1;
-      lifted_func = lifter->LiftTraceIntoModule(trace, module.get());
-    }
-
-    live_id = {trace.pc, code_version};
-    live_trace_cache[live_id] = lifted_func;
-
-    if (trace.pc == task.pc) {
-      ret_func = lifted_func;
-    }
-  }
 
   if (num_lifted_traces) {
     DLOG(INFO)
         << "Lifted " << std::dec << num_lifted_traces << " of "
         << decoded_traces.size() << " decoded traces";
     SaveLiftedModule(module);
-    modules.emplace_back(std::move(module));
   }
 
   CHECK(ret_func != nullptr);
@@ -137,12 +114,17 @@ llvm::Function *Context::GetLiftedFunctionForTask(const Task &task) {
 }
 
 bool Context::TryExecuteNextTask(void) {
-  if (tasks.empty()) {
+  if (unlikely(tasks.empty())) {
     return false;
   }
 
   auto task = tasks.front();
   tasks.pop_front();
+
+  if (unlikely(kTaskStoppedAtError == task.status)) {
+
+    return false;
+  }
 
   gCurrent = this;
   gLRUState = task.state;

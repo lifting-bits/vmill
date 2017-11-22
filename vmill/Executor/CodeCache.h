@@ -14,11 +14,16 @@
  * limitations under the License.
  */
 
-#ifndef VMILL_BC_EXECUTOR_H_
-#define VMILL_BC_EXECUTOR_H_
+#ifndef VMILL_EXECUTOR_CODECACHE_H_
+#define VMILL_EXECUTOR_CODECACHE_H_
 
 #include <memory>
-#include <string>
+#include <unordered_map>
+
+#include "vmill/BC/Trace.h"
+
+struct ArchState;
+struct Memory;
 
 namespace llvm {
 class LLVMContext;
@@ -26,32 +31,29 @@ class Module;
 }  // namespace llvm
 namespace vmill {
 
-struct Task;
-struct LiftedTrace;
+class AddressSpace;
 
-class Executor {
+using LiftedFunction = Memory *(ArchState *, PC, Memory *);
+
+// Manages the native and lifted code caches.
+class CodeCache {
  public:
-  virtual ~Executor(void);
+  virtual ~CodeCache(void);
 
-  static Executor *GetNativeExecutor(
+  static std::unique_ptr<CodeCache> Create(
       const std::shared_ptr<llvm::LLVMContext> &context_);
 
-  // Call into the runtime to allocate a `State` structure, and fill it with
-  // the bytes from `data`.
-  virtual void *AllocateStateInRuntime(const std::string &data) = 0;
+  virtual void AddModuleToCache(
+      const std::unique_ptr<llvm::Module> &module) = 0;
 
-  // Execute some code associated with a task.
-  virtual void Execute(const Task &task, llvm::Function *func) = 0;
+  virtual LiftedFunction *Lookup(TraceId trace_id) const = 0;
+
+  virtual uintptr_t Lookup(const char *symbol) = 0;
 
  protected:
-  explicit Executor(const std::shared_ptr<llvm::LLVMContext> &context_);
-
-  std::shared_ptr<llvm::LLVMContext> context;
-
- private:
-  Executor(void) = delete;
+  CodeCache(void);
 };
 
 }  // namespace vmill
 
-#endif  // VMILL_BC_EXECUTOR_H_
+#endif  // VMILL_EXECUTOR_CODECACHE_H_

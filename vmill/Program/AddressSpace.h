@@ -24,12 +24,17 @@
 #include <unordered_set>
 #include <vector>
 
-#include "vmill/Memory/MappedRange.h"
+#include "vmill/Program/MappedRange.h"
+
+struct Memory {};
 
 namespace vmill {
 
+enum class CodeVersion : uint64_t;
+enum class PC : uint64_t;
+
 // Basic memory implementation.
-class AddressSpace {
+class AddressSpace : public Memory {
  public:
   AddressSpace(void);
 
@@ -79,7 +84,7 @@ class AddressSpace {
   // Read a byte as an executable byte. This is used for instruction decoding.
   // Returns `false` if the read failed. This function operates on the state
   // of a page, and may result in broad-reaching cache invalidations.
-  bool TryReadExecutable(uint64_t addr, uint8_t *val);
+  bool TryReadExecutable(PC addr, uint8_t *val);
 
   // Change the permissions of some range of memory. This can split memory
   // maps.
@@ -113,11 +118,14 @@ class AddressSpace {
   //
   // NOTE(pag): If the code version is invalid, then this will recompute it,
   //            thereby making it valid.
-  uint64_t CodeVersion(void);
+  CodeVersion ComputeCodeVersion(void);
 
-  void MarkAsTraceHead(uint64_t pc);
+  // Mark some PC in this address space as being a known trace head. This is
+  // used for helping the decoder to not repeat past work.
+  void MarkAsTraceHead(PC pc);
 
-  bool IsMarkedTraceHead(uint64_t pc) const;
+  // Check to see if a given program counter is a trace head.
+  bool IsMarkedTraceHead(PC pc) const;
 
  private:
   AddressSpace(AddressSpace &&) = delete;

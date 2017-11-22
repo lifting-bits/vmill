@@ -33,7 +33,7 @@
 
 #include "remill/Arch/Arch.h"
 
-#include "vmill/Context/Snapshot.h"
+#include "../../vmill/Program/Snapshot.h"
 
 #define ADDRESS_SIZE_BITS 64
 #include "remill/Arch/AArch64/Runtime/State.h"
@@ -94,7 +94,7 @@ void CopyAArch64TraceeState(pid_t pid, pid_t tid, int64_t memory_id,
   gpr.x30.qword = regs.regs[30];
 
   gpr.sp.qword = regs.sp;
-  gpr.pc.qword = regs.sp;
+  gpr.pc.qword = regs.pc;
 
   pstate.flat = regs.pstate;
 

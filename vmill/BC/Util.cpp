@@ -23,6 +23,7 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 
+#include "remill/BC/Version.h"
 #include "vmill/BC/Util.h"
 
 namespace vmill {
@@ -94,7 +95,7 @@ static llvm::GlobalVariable *DeclareVarInModule(llvm::GlobalVariable *var,
     return dest_var;
   }
 
-  auto type = var->getValueType();
+  auto type = var->getType()->getElementType();
   dest_var = new llvm::GlobalVariable(
       *dest_module, type, var->isConstant(), var->getLinkage(), nullptr,
       var->getName(), nullptr, var->getThreadLocalMode(),
@@ -104,10 +105,11 @@ static llvm::GlobalVariable *DeclareVarInModule(llvm::GlobalVariable *var,
 
   if (var->hasInitializer()) {
     auto initializer = var->getInitializer();
+#if LLVM_VERSION_NUMBER > LLVM_VERSION(3, 6)
     CHECK(!initializer->needsRelocation())
         << "Initializer of global " << var->getName().str()
         << " cannot be trivially copied to the destination module.";
-
+#endif
     dest_var->setInitializer(initializer);
   }
 
@@ -142,7 +144,7 @@ void MoveFunctionIntoModule(llvm::Function *func,
   func->removeFromParent();
   dest_module->getFunctionList().push_back(func);
 
-  ClearMetaData(func);
+  IF_LLVM_GTE_36( ClearMetaData(func); )
 
   for (auto &block : *func) {
     for (auto &inst : block) {

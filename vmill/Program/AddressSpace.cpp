@@ -25,7 +25,7 @@
 #include "remill/OS/OS.h"
 
 #include "vmill/Etc/xxHash/xxhash.h"
-#include "vmill/Memory/AddressSpace.h"
+#include "vmill/Program/AddressSpace.h"
 #include "vmill/Util/Compiler.h"
 #include "vmill/Util/Hash.h"
 
@@ -84,9 +84,9 @@ bool AddressSpace::CodeVersionIsInvalid(void) const {
 
 // Returns a hash of all executable code. Useful for getting the current
 // version of the code.
-uint64_t AddressSpace::CodeVersion(void) {
-  if (!CodeVersionIsInvalid()) {
-    return code_version;
+CodeVersion AddressSpace::ComputeCodeVersion(void) {
+  if (unlikely(!CodeVersionIsInvalid())) {
+    return static_cast<CodeVersion>(code_version);
   }
 
   trace_heads.clear();
@@ -101,7 +101,7 @@ uint64_t AddressSpace::CodeVersion(void) {
     for (; addr < limit_addr; addr += kPageSize) {
       if (CanExecute(addr)) {
         num_maps += 1;
-        uint64_t map_code_version = map->CodeVersion();
+        uint64_t map_code_version = map->ComputeCodeVersion();
         XXH64_update(&state, &map_code_version, sizeof(map_code_version));
         break;
       }
@@ -115,15 +115,15 @@ uint64_t AddressSpace::CodeVersion(void) {
       << "New code version " << std::hex << code_version << " is a hash of "
       << std::dec << num_maps << " memory maps";
 
-  return code_version;
+  return static_cast<CodeVersion>(code_version);
 }
 
-void AddressSpace::MarkAsTraceHead(uint64_t pc) {
-  trace_heads.insert(pc);
+void AddressSpace::MarkAsTraceHead(PC pc) {
+  trace_heads.insert(static_cast<uint64_t>(pc));
 }
 
-bool AddressSpace::IsMarkedTraceHead(uint64_t pc) const {
-  return 0 != trace_heads.count(pc);
+bool AddressSpace::IsMarkedTraceHead(PC pc) const {
+  return 0 != trace_heads.count(static_cast<uint64_t>(pc));
 }
 
 // Clear out the contents of this address space.
@@ -271,12 +271,13 @@ MAKE_TRY_WRITE(double)
 #undef MAKE_TRY_WRITE
 
 // Read a byte as an executable byte. This is used for instruction decoding.
-bool AddressSpace::TryReadExecutable(uint64_t addr, uint8_t *val) {
+bool AddressSpace::TryReadExecutable(PC pc, uint8_t *val) {
+  auto addr = static_cast<uint64_t>(pc);
   auto &range = FindRange(addr);
   auto was_readable = range->Read(addr, val);
   if (likely(was_readable && CanExecute(addr))) {
     if (unlikely(code_version_is_invalid)) {
-      (void) CodeVersion();
+      (void) ComputeCodeVersion();
     }
     return true;
   } else {

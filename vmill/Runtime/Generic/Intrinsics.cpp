@@ -15,6 +15,8 @@
  */
 
 #include <algorithm>
+#include <cfenv>
+#include <cfloat>
 
 #include "vmill/Runtime/Generic/Intrinsics.h"
 
@@ -162,3 +164,10 @@ Memory *__remill_atomic_begin(Memory * memory) {
 Memory *__remill_atomic_end(Memory * memory) {
   return memory;
 }
+
+int __remill_fpu_exception_test_and_clear(int read_mask, int clear_mask) {
+  auto except = std::fetestexcept(read_mask);
+  std::feclearexcept(clear_mask);
+  return except;
+}
+

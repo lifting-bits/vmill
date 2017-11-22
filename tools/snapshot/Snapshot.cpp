@@ -40,23 +40,23 @@
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 
-#include "vmill/Context/Snapshot.h"
-
 #include "remill/Arch/Arch.h"
 #include "remill/Arch/Name.h"
 
 #include "remill/OS/FileSystem.h"
 #include "remill/OS/OS.h"
 
+#include "vmill/Program/Snapshot.h"
+#include "vmill/Workspace/Workspace.h"
+
 DEFINE_uint64(breakpoint, 0, "Address of where to inject a breakpoint.");
 
-DEFINE_string(workspace, "", "Path to a directory in which the snapshot and "
-                             "core files are placed.");
-
+DECLARE_string(workspace);
 DECLARE_string(arch);
 DECLARE_string(os);
 
 namespace vmill {
+
 // Copy the register state from the tracee with PID `pid` into the file
 // with FD `fd`.
 extern void CopyX86TraceeState(pid_t pid, pid_t tid, int64_t memory_id,
@@ -76,12 +76,6 @@ enum : int {
 static int gTraceeArgc = 0;
 
 static char **gTraceeArgv = nullptr;
-
-static std::string gSnapshotPath;
-
-static std::string gCorePath;
-
-static std::string gMemPath;
 
 static vmill::snapshot::Program gSnapshot;
 
@@ -597,8 +591,13 @@ static void CopyTraceeMemory(
 
   for (const auto &info : memory->page_ranges()) {
 
+    std::stringstream dest_path_ss;
+    dest_path_ss << vmill::Workspace::MemoryDir()
+                 << remill::PathSeparator()
+                 << info.name();
+
     // Make sure the file that will contain the memory has the right size.
-    std::string dest_path = gMemPath + info.name();
+    std::string dest_path = dest_path_ss.str();
     auto dest_fd = open(dest_path.c_str(), O_RDWR | O_TRUNC | O_CREAT, 0666);
     CHECK(-1 != dest_fd)
         << "Can't open " << dest_path << " for writing.";
@@ -663,16 +662,18 @@ static void CopyTraceeMemory(
 }
 
 static void SaveSnapshotFile(void) {
-  std::ofstream snaphot_out(gSnapshotPath);
+  const auto &path = vmill::Workspace::SnapshotPath();
+  std::ofstream snaphot_out(path);
   CHECK(snaphot_out)
-      << "Unable to open " << gSnapshotPath << " for writing";
+      << "Unable to open " << path << " for writing";
 
   CHECK(gSnapshot.SerializePartialToOstream(&snaphot_out))
-      << "Unable to serialize snapshot description to " << gSnapshotPath;
+      << "Unable to serialize snapshot description to " << path;
 }
 
 // Create a snapshot file of the tracee.
 static void SnapshotTracee(pid_t pid) {
+  const auto &path = vmill::Workspace::SnapshotPath();
   int64_t memory_id = 1;
 
   auto memory = gSnapshot.add_address_spaces();
@@ -689,7 +690,7 @@ static void SnapshotTracee(pid_t pid) {
       case remill::kArchX86_AVX512:
         LOG(INFO)
             << "Writing X86 register state for thread " << std::dec
-            << tid << " into " << gSnapshotPath;
+            << tid << " into " << path;
         vmill::CopyX86TraceeState(pid, tid, memory_id, &gSnapshot);
         break;
       case remill::kArchAMD64:
@@ -697,14 +698,14 @@ static void SnapshotTracee(pid_t pid) {
       case remill::kArchAMD64_AVX512:
         LOG(INFO)
             << "Writing AMD64 register state for thread " << std::dec
-            << tid << " into " << gSnapshotPath;
+            << tid << " into " << path;
         vmill::CopyX86TraceeState(pid, tid, memory_id, &gSnapshot);
         break;
 
       case remill::kArchAArch64LittleEndian:
         LOG(INFO)
             << "Writing AArch64 register state for thread " << std::dec
-            << tid << " into " << gSnapshotPath;
+            << tid << " into " << path;
         vmill::CopyAArch64TraceeState(pid, tid, memory_id, &gSnapshot);
         break;
 
@@ -759,244 +760,10 @@ static void CloseFdsOnExec(void) {
   closedir(dp);
 }
 
-// Enable core dumps in the current process (tracee).
-static void EnableCoreDumps(void) {
-  struct rlimit core_limit = {RLIM_INFINITY, RLIM_INFINITY};
-  CHECK(!setrlimit(RLIMIT_CORE, &core_limit))
-      << "Unable to enable core dumps in tracee: " << strerror(errno);
-}
-
-// Change the personality features of the tracee to restrict the address
-// space layout, making it easier to snapshot.
-static void ChangeAddressSpace(void) {
-  CHECK(-1 != personality(ADDR_NO_RANDOMIZE))
-      << "Unable to disable ASLR in tracee: " << strerror(errno);
-
-  CHECK(-1 != personality(ADDR_LIMIT_32BIT))
-      << "Unable to restrict address space size in tracee: " << strerror(errno);
-
-  struct rlimit core_limit = {4294967296, 4294967296};  // 4 GiB.
-  CHECK(!setrlimit(RLIMIT_AS, &core_limit))
-      << "Unable to limit address space size: " << strerror(errno);
-}
-
-struct CoreFileLocation {
-  std::string dir;
-  std::string pattern;
-};
-
-static void ReplaceInString(std::string &str, const char *pattern,
-                            const char *replacement) {
-  auto len = strlen(pattern);
-  auto loc = str.find(pattern);
-  while (std::string::npos != loc) {
-    str.replace(loc, len, replacement);
-    loc = str.find(pattern);
-  }
-}
-
-// Determine the storage location of core files.
-static CoreFileLocation GetCoreFileLocation(void) {
-  std::ifstream core_file_pattern("/proc/sys/kernel/core_pattern");
-  std::string pattern;
-
-  CHECK(!!std::getline(core_file_pattern, pattern))
-      << "Cannot read core pattern from /proc/sys/kernel/core_pattern";
-
-  CHECK(!pattern.empty())
-      << "No core file pattern stored in /proc/sys/kernel/core_pattern";
-
-  CHECK('|' != pattern[0])
-      << "Core files are piped to programs; won't find core file.";
-
-  LOG(INFO)
-      << "System core file pattern is: " << pattern;
-
-  ReplaceInString(pattern, "%p", "%d");  // PID.
-  ReplaceInString(pattern, "%u", "%d");  // User ID.
-  ReplaceInString(pattern, "%g", "%d");  // Group ID.
-  ReplaceInString(pattern, "%s", "%d");  // Signal number.
-  ReplaceInString(pattern, "%t", "%d");  // UNIX timestamp.
-  ReplaceInString(pattern, "%h", "%s");  // Hostname.
-  ReplaceInString(pattern, "%e", "%s");  // Executable file name.
-  pattern += "%s";  // Always need to make sure `sscanf` matches something.
-
-  CoreFileLocation loc = {"", ""};
-  if ('/' == pattern[0]) {
-    auto last_slash_loc = pattern.find_last_of('/');
-    loc.dir = pattern.substr(0, last_slash_loc);
-    loc.pattern = pattern.substr(last_slash_loc + 1,
-                                 pattern.size() - last_slash_loc - 1);
-
-  } else {
-    loc.dir = remill::CurrentWorkingDirectory();
-    loc.pattern = pattern;
-  }
-
-  LOG(INFO)
-      << "Core files are stored in: " << loc.dir;
-
-  LOG(INFO)
-      << "Will search for files using the pattern: " << loc.pattern;
-
-  return loc;
-}
-
-static int64_t GetTimeMs(struct timespec ts) {
-  auto ns = ts.tv_nsec + (1000000LL - 1LL);  // Round up.
-  return (ts.tv_sec * 1000LL) + (ns / 1000000LL);
-}
-
-static int64_t GetTimeMs(int64_t round) {
-  struct timeval tv = {};
-  struct timezone tz = {};
-  CHECK(!gettimeofday(&tv, &tz))
-      << "Can't get current time for bounding core dump file creation time.";
-
-  auto us = tv.tv_usec + round * (1000LL - 1LL);  // Conditionally round up.
-  return (tv.tv_sec * 1000LL) + (us / 1000LL);
-}
-
-// Send an abort signal to the tracee, hoping to produce a core dump. Then
-// go and try to locate the core dump file, respecting the core file pattern
-// of the kernel, then rename the core file to our desired file name.
-//
-// Note:  This whole function is sketchy on so many levels. There are several
-//        failure modes, and if it "succeeds" it may actually do the wrong
-//        thing.
-static void CreateCoreFile(pid_t pid, const CoreFileLocation &where) {
-  const auto created_lower_bound_ms = GetTimeMs(0);
-
-  // Abort the tracee.
-  kill(pid, SIGABRT);
-  ptrace(PTRACE_DETACH, pid, nullptr, nullptr);
-
-  // Wait for the tracee to die, and hopefully this event will be reported
-  // after the core dump is produced!
-  while (true) {
-    auto status = 0;
-    const auto res = waitpid(pid, &status, 0);
-    const auto err = -1 == res ? errno : 0;
-    if (res == pid) {
-      if (WIFSTOPPED(status) || WIFEXITED(status) || WIFSIGNALED(status)) {
-        break;
-      } else {
-        LOG(INFO)
-            << "Unrecognized status " << status
-            << " while waiting for a core dump of the tracee to be produced.";
-      }
-    } else if (ESRCH == err || ECHILD == err) {
-      LOG(INFO)
-          << "Tracee has correctly died from abort signal.";
-      break;
-
-    } else if (EINTR != err) {
-      LOG(FATAL)
-          << "Problem waiting for core dump of tracee: " << strerror(errno);
-    }
-  }
-  const auto created_upper_bound_ms = GetTimeMs(1);
-
-  auto dp = opendir(where.dir.c_str());
-  CHECK(nullptr != dp)
-      << "Unable to open core file directory " << where.dir << strerror(errno);
-
-  uint64_t storage_space[PATH_MAX / sizeof(uint64_t)];
-
-  // Try to find the core file, and opportunistically resolve conflicts with
-  // other possible core files
-  std::string found_core_file;
-  while (true) {
-    errno = 0;
-    auto dirent = readdir(dp);
-    if (!dirent) {
-      CHECK(!errno)
-          << "Unable to list files in " << where.dir << strerror(errno);
-      break;
-    }
-
-    if (DT_REG != dirent->d_type && DT_LNK != dirent->d_type) {
-      continue;
-    }
-
-    std::stringstream ss;
-    ss << where.dir << "/" << dirent->d_name;
-    auto core_file_path = ss.str();
-
-    LOG(INFO)
-        << "Checking to see if " << core_file_path
-        << " looks like a core file.";
-
-    // This is so sketchy. The idea is that the `sscanf` will fill in stuff,
-    // but we don't know a priori what types of things it will fill in, so
-    // we'll just send it a lot of pointers to an array and hope for the best.
-    auto num_matched = sscanf(dirent->d_name, where.pattern.c_str(),
-                              storage_space, storage_space, storage_space,
-                              storage_space, storage_space, storage_space,
-                              storage_space, storage_space, storage_space);
-    if (!num_matched) {
-      continue;
-    }
-
-    LOG(INFO)
-        << "Matched file " << core_file_path << " as a core dump candidate.";
-
-    struct stat core_file_info = {};
-    const auto found_info = stat(core_file_path.c_str(), &core_file_info);
-    if (-1 == found_info) {
-      LOG(WARNING)
-          << "Could not stat core dump candidate " << core_file_path
-          << ": " << strerror(errno);
-      continue;
-    }
-
-    const auto created_time_ms = GetTimeMs(core_file_info.st_ctim);
-
-    if (created_lower_bound_ms > created_time_ms &&
-        100LL < (created_lower_bound_ms - created_time_ms)) {  // Slack.
-      LOG(INFO)
-          << "Core file candidate " << core_file_path
-          << " ignored; it is too old.";
-      continue;
-    }
-
-    if (created_time_ms > created_upper_bound_ms &&
-        100LL < (created_time_ms - created_upper_bound_ms)) {  // Slack.
-      LOG(INFO)
-          << "Core file candidate " << core_file_path
-          << " ignored; it is too new.";
-      continue;
-    }
-
-    // TODO(pag): Check for ELF magic in the beginning of the core dump file?
-
-    // The above checks are totally insufficient if the machine is producing
-    // lots of core files. Our core file pattern matching completely ignores
-    // things like PIDs being embedded in the file name, but we want to keep
-    // the logic to a reasonable level.
-    found_core_file = core_file_path;
-    break;
-  }
-
-  closedir(dp);
-
-  CHECK(!found_core_file.empty())
-      << "Unable to find acceptable core dump file in directory: " << where.dir;
-
-  CHECK(-1 != rename(found_core_file.c_str(), gCorePath.c_str()))
-      << "Unable to rename core file " << found_core_file << " to "
-      << gCorePath << ": " << strerror(errno);
-}
-
 // Spawn a sub-process, execute the program up until a breakpoint is hit, and
 // snapshot the program at that breakpoint.
 static void SnapshotProgram(remill::ArchName arch, remill::OSName os) {
   signal(SIGCHLD, SIG_IGN);
-
-  // Try to figure out how to find the produced core file. Do this ahead of
-  // time so that we don't produce a snapshot without first being able to
-  // find the eventual core dump.
-  const auto core_loc = GetCoreFileLocation();
 
   LogPrepareExec();
 
@@ -1028,21 +795,13 @@ static void SnapshotProgram(remill::ArchName arch, remill::OSName os) {
 
     SnapshotTracee(pid);
 
-    LOG(INFO)
-        << "Aborting " << gTraceeArgv[0] << " to produce core dump.";
-    CreateCoreFile(pid, core_loc);
-
-    LOG(INFO)
-        << "Snapshot file saved to " << gSnapshotPath
-        << " and core file saved to " << gCorePath;
+    kill(pid, SIGKILL);
 
   } else {
     signal(SIGCHLD, SIG_DFL);  // Restore  signal handler state.
 
     EnableTracing();
-    EnableCoreDumps();
     CloseFdsOnExec();
-    ChangeAddressSpace();
 
     // Tell the tracee to load in all shared libraries as soon as possible.
     CHECK(!setenv("LD_BIND_NOW", "1", true))
@@ -1083,29 +842,6 @@ int main(int argc, char **argv) {
       << "Unable to extract arguments to tracee. Make sure to provide "
       << "the program and command-line arguments to that program after "
       << "a '--'.";
-
-  if (FLAGS_workspace.empty()) {
-    FLAGS_workspace = remill::CurrentWorkingDirectory();
-  }
-
-  CHECK(!FLAGS_workspace.empty())
-      << "Unable to locate workspace. Please specify it with --workspace.";
-
-  if ('/' == FLAGS_workspace[FLAGS_workspace.size() - 1]) {
-    FLAGS_workspace = FLAGS_workspace.substr(0, FLAGS_workspace.size() - 1);
-  }
-
-  CHECK(remill::TryCreateDirectory(FLAGS_workspace))
-      << "Directory " << FLAGS_workspace << " specified by --workspace "
-      << "does not exist or can't be created.";
-
-  gSnapshotPath = FLAGS_workspace + "/snapshot";
-  gCorePath = FLAGS_workspace + "/core";
-  gMemPath = FLAGS_workspace + "/memory/";
-
-  CHECK(remill::TryCreateDirectory(gMemPath))
-      << "Directory " << gMemPath << " cannot be created to store "
-      << "snapshotted memory.";
 
   auto arch_name = remill::GetArchName(FLAGS_arch);
   CHECK(remill::kArchInvalid != arch_name)

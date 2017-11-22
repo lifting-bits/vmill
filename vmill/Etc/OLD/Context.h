@@ -25,9 +25,13 @@
 #include <vector>
 
 #include "vmill/Arch/Decoder.h"
+#include "vmill/BC/Compiler.h"
 #include "vmill/BC/Lifter.h"
+#include "vmill/Executor/CodeCache.h"
 #include "vmill/Runtime/TaskStatus.h"
 #include "vmill/Util/Hash.h"
+
+struct ArchState;
 
 namespace llvm {
 class LLVMContext;
@@ -40,27 +44,6 @@ class Executor;
 
 using ContextPtr = std::unique_ptr<Context>;
 
-// A task is like a thread, but really, it's the runtime that gives a bit more
-// meaning to threads. The runtime has `resume`, `pause`, `stop`, and `schedule`
-// intrinsics. When
-struct Task {
- public:
-  void *state;
-  uint64_t pc;
-  AddressSpace *memory;
-  TaskStatus status;
-};
-
-struct LiveTraceId {
- public:
-  uint64_t pc;  // Entry PC of the trace.
-  uint64_t hash;  // Hash of all executable memory.
-
-  inline bool operator==(const LiveTraceId &that) const {
-    return pc == that.pc && hash == that.hash;
-  }
-};
-
 }  // namespace vmill
 
 VMILL_MAKE_STD_HASH_OVERRIDE(vmill::TraceId)
@@ -69,6 +52,7 @@ VMILL_MAKE_STD_HASH_OVERRIDE(vmill::LiveTraceId)
 namespace vmill {
 
 class AddressSpace;
+class CodeCache;
 
 // An execution context. An execution context can contain the state of one or
 // more emulated tasks.
@@ -115,14 +99,10 @@ class Context {
 
   // Shared instruction executor, so that compiled code is shared across
   // contexts.
-  std::unique_ptr<Executor> executor;
+  std::unique_ptr<CodeCache> code_cache;
 
   // List of tasks available for scheduling.
   std::list<Task> tasks;
-
-  // List of all lifted modules. Each module may have one or more lifted
-  // traces.
-  std::list<std::shared_ptr<llvm::Module>> modules;
 
   // Cache mapping active traces to their LLVM functions. This cache is
   // invalidated any time executable code is modified, removed, or created.

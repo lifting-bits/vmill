@@ -20,4 +20,5 @@
 #define VMILL_RUNTIME_X86 64
 
 #include "vmill/Runtime/Linux/X86.cpp"
-#include "Generic/Run.cpp"
+#include "vmill/Runtime/Generic/X86.cpp"
+#include "vmill/Runtime/Generic/Run.cpp"

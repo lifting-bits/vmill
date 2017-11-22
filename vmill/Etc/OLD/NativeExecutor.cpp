@@ -45,192 +45,26 @@
 #include <llvm/Transforms/IPO.h>
 #include <llvm/Transforms/IPO/PassManagerBuilder.h>
 
+#include "../../../../remill/BC/Compat/RuntimeDyld.h"
+#include "../Program/Context.h"
 #include "remill/Arch/Arch.h"
 #include "remill/BC/Compat/FileSystem.h"
-#include "remill/BC/Compat/JITSymbol.h"
 #include "remill/BC/Util.h"
 #include "remill/OS/OS.h"
 
 #include "vmill/BC/Executor.h"
 #include "vmill/BC/Lifter.h"
 #include "vmill/BC/Runtime.h"
-#include "vmill/Context/Context.h"
 #include "vmill/Memory/AddressSpace.h"
 #include "vmill/Util/Compiler.h"
 #include "vmill/Util/Timer.h"
 
-DEFINE_bool(disable_optimizer, false,
-            "Should the optimized machine code be produced?");
 
 namespace vmill {
 namespace {
 
-extern "C" AddressSpace *__vmill_allocate_address_space(void) {
-  return new AddressSpace;
-}
-
-extern "C" void __vmill_free_address_space(AddressSpace *memory) {
-  delete memory;
-}
-
-extern "C" bool __vmill_can_read_byte(AddressSpace *memory, uint64_t addr) {
-  return memory->CanRead(addr);
-}
-
-extern "C" bool __vmill_can_write_byte(AddressSpace *memory, uint64_t addr) {
-  return memory->CanWrite(addr);
-}
-
-extern "C" AddressSpace *__vmill_allocate_memory(
-    AddressSpace *memory, uint64_t where, uint64_t size) {
-  memory->AddMap(where, size);
-  return memory;
-}
-
-extern "C" AddressSpace *__vmill_free_memory(
-    AddressSpace *memory, uint64_t where, uint64_t size) {
-  memory->RemoveMap(where, size);
-  return memory;
-}
-
-extern "C" AddressSpace *__vmill_protect_memory(
-    AddressSpace *memory, uint64_t where, uint64_t size, bool can_read,
-    bool can_write, bool can_exec) {
-  memory->SetPermissions(where, size, can_read, can_write, can_exec);
-  return memory;
-}
-
-extern "C" uint64_t __vmill_next_memory_end(
-    AddressSpace *memory, uint64_t where) {
-
-  uint64_t nearest_end = 0;
-  if (memory->NearestLimitAddress(where, &nearest_end)) {
-    return nearest_end;
-  } else {
-    return 0;
-  }
-}
-
-extern "C" uint64_t __vmill_prev_memory_begin(
-    AddressSpace *memory, uint64_t where) {
-  uint64_t nearest_begin = 0;
-  if (memory->NearestBaseAddress(where, &nearest_begin)) {
-    return nearest_begin;
-  } else {
-    return 0;
-  }
-}
-
-extern "C" void *__vmill_schedule(void *state, uint64_t pc,
-                                  AddressSpace *memory,
-                                  TaskStatus status) {
-  Task task = {state, pc, memory, status};
-  Context::gCurrent->ScheduleTask(task);
-  return nullptr;
-}
-
-#define MAKE_MEM_READ(ret_type, read_type, suffix, read_size) \
-    extern "C" ret_type __remill_read_memory_ ## suffix( \
-        AddressSpace *memory, uint64_t addr) { \
-      read_type ret_val = 0; \
-      if (likely(memory->TryRead(addr, &ret_val))) { \
-        return ret_val; \
-      } else { \
-        Context::gFaulted = true; \
-        return 0; \
-      } \
-    }
-
-MAKE_MEM_READ(uint8_t, uint8_t, 8, 1)
-MAKE_MEM_READ(uint16_t, uint16_t, 16, 2)
-MAKE_MEM_READ(uint32_t, uint32_t, 32, 4)
-MAKE_MEM_READ(uint64_t, uint64_t, 64, 8)
-MAKE_MEM_READ(float, float, f32, 4)
-MAKE_MEM_READ(double, double, f64, 8)
-
-#undef MAKE_MEM_READ
-
-extern "C" double __remill_read_memory_f80(
-    AddressSpace *memory, uint64_t addr) {
-  uint8_t data[sizeof(long double)] = {};
-  if (memory->TryRead(addr, data, 10)) {
-    return static_cast<double>(*reinterpret_cast<long double *>(data));
-  } else {
-    Context::gFaulted = true;
-    return 0.0;
-  }
-}
-
-#define MAKE_MEM_WRITE(input_type, write_type, suffix, write_size) \
-    extern "C" AddressSpace *__remill_write_memory_ ## suffix( \
-        AddressSpace *memory, uint64_t addr, input_type val) { \
-      if (unlikely(!memory->TryWrite(addr, val))) { \
-        Context::gFaulted = true; \
-      } \
-      return memory; \
-    }
-
-MAKE_MEM_WRITE(uint8_t, uint8_t, 8, 1)
-MAKE_MEM_WRITE(uint16_t, uint16_t, 16, 2)
-MAKE_MEM_WRITE(uint32_t, uint32_t, 32, 4)
-MAKE_MEM_WRITE(uint64_t, uint64_t, 64, 8)
-MAKE_MEM_WRITE(float, float, f32, 4)
-MAKE_MEM_WRITE(double, double, f64, 8)
-
-#undef MAKE_MEM_WRITE
-
-extern "C" AddressSpace *__remill_write_memory_f80(
-    AddressSpace *memory, uint64_t addr, double val) {
-  auto long_val = static_cast<long double>(val);
-  if (!memory->TryWrite(addr, &long_val, 10)) {
-    Context::gFaulted = true;
-  }
-  return memory;
-}
 
 
-static void InitializeCodeGenOnce(void) {
-  static bool is_initialized = false;
-  if (!is_initialized) {
-    llvm::InitializeAllTargets();
-    llvm::InitializeAllTargetMCs();
-    llvm::InitializeAllAsmPrinters();
-    llvm::InitializeAllAsmParsers();
-    llvm::sys::DynamicLibrary::LoadLibraryPermanently(nullptr);
-    is_initialized = true;
-  }
-}
-
-// Emulates `-mtune=native`. We want the compiled code to run as well as it
-// can on the current machine.
-static std::string GetNativeFeatureString(void) {
-  llvm::SubtargetFeatures target_features;
-  llvm::StringMap<bool> host_features;
-  if (llvm::sys::getHostCPUFeatures(host_features)) {
-    for (auto &feature : host_features) {
-      target_features.AddFeature(feature.first(), feature.second);
-    }
-  }
-  return target_features.getString();
-}
-
-// Figure out what file type should be be created by the JIT.
-static llvm::file_magic::Impl ObjectFileType(void) {
-  switch (remill::GetHostArch()->os_name) {
-    case remill::kOSInvalid:
-      return llvm::file_magic::unknown;
-
-    case remill::kOSmacOS:
-      return llvm::file_magic::macho_dynamically_linked_shared_lib;
-
-    case remill::kOSLinux:
-      return llvm::file_magic::elf_shared_object;
-
-    // TODO(pag): Is this right?
-    case remill::kOSWindows:
-      return llvm::file_magic::coff_object;
-  }
-}
 
 // Packages up all things related to dynamically generated shared libraries.
 class CompiledModule {
@@ -301,8 +135,7 @@ class NativeExecutor : public Executor, llvm::JITSymbolResolver {
 
   CompiledModule *Compile(llvm::Module *module);
 
-  llvm::TargetOptions options;
-  std::unique_ptr<llvm::TargetMachine> machine;
+
 
   CompiledModule *runtime_lib;
 
@@ -340,14 +173,6 @@ class NativeExecutor : public Executor, llvm::JITSymbolResolver {
   }
 };
 
-static llvm::CodeGenOpt::Level CodeGenOptLevel(void) {
-  // TODO(pag): Using anything above `None` produces bugs :-(
-  if (FLAGS_disable_optimizer) {
-    return llvm::CodeGenOpt::None;
-  } else {
-    return llvm::CodeGenOpt::Aggressive;
-  }
-}
 
 // Compile the code in `module` into a compiled object.
 CompiledModule *NativeExecutor::Compile(llvm::Module *module) {
@@ -382,6 +207,7 @@ CompiledModule *NativeExecutor::Compile(llvm::Module *module) {
 #endif
   }
 
+
   auto lib = new CompiledModule(*this);
   lib->file = std::move(*obj_file_exp);
   lib->buff = std::move(obj_buff);
@@ -405,30 +231,17 @@ NativeExecutor::NativeExecutor(
   LOG(INFO)
       << "Initializing native executor.";
 
-  InitializeCodeGenOnce();
 
-  auto cpu = llvm::sys::getHostCPUName();
-  auto host_arch = remill::GetHostArch();
+
   auto runtime = vmill::LoadTargetRuntime(context);
-  auto host_triple = host_arch->Triple().str();
+
 
   runtime->setTargetTriple(host_triple);
   runtime->setDataLayout(host_arch->DataLayout());
 
-  std::string error;
-  auto target = llvm::TargetRegistry::lookupTarget(host_triple, error);
 
-  CHECK(target != nullptr)
-      << "Unable to identify the target triple: " << error;
 
-  machine = std::unique_ptr<llvm::TargetMachine>(target->createTargetMachine(
-      host_triple, cpu, GetNativeFeatureString(), options,
-      llvm::Reloc::PIC_, llvm::CodeModel::JITDefault,
-      CodeGenOptLevel()));
 
-  CHECK(machine)
-      << "Cannot create target machine for triple "
-      << host_triple << " and CPU " << cpu.str();
 
   LOG(INFO) << "Compiling target runtime";
   runtime_lib = Compile(runtime.get());
@@ -532,9 +345,7 @@ void NativeExecutor::Execute(const Task &task, llvm::Function *func) {
     compiled_func = CompileLiftedFunction(func);
   }
 
-  compiled_func(task.state, task.pc, task.memory);
-
-//  resume(task.state, task.pc, task.memory, task.status, compiled_func);
+  resume(task.state, task.pc, task.memory, task.status, compiled_func);
 }
 
 }  // namespace vmill

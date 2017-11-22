@@ -16,7 +16,6 @@
 
 #define ADDRESS_SIZE_BITS 64
 #define VMILL_RUNTIME_AARCH64 64
-#if 0
 #include "vmill/Runtime/Linux/AArch64.cpp"
-#include "Generic/Run.cpp"
-#endif
+#include "vmill/Runtime/Generic/AArch64.cpp"
+#include "vmill/Runtime/Generic/Run.cpp"

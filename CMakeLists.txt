@@ -15,6 +15,8 @@
 project(vmill)
 cmake_minimum_required (VERSION 3.2)
 
+find_package(ZLIB REQUIRED)
+
 set(VMILL_SOURCE_DIR "${PROJECT_SOURCE_DIR}")
 set(VMILL_TOOLS_DIR "${PROJECT_SOURCE_DIR}/tools")
 
@@ -37,7 +39,7 @@ list(APPEND PROJECT_DEFINITIONS "GOOGLE_PROTOBUF_NO_RTTI")
 # this function can't be told where to store the output files! we have to add the whole binary directory
 # to the include directories (or change it and lose compatibility with the system libraries)
 protobuf_generate_cpp(PROJECT_PROTOBUFSOURCEFILES PROJECT_PROTOBUFHEADERFILES
-                      "${CMAKE_CURRENT_SOURCE_DIR}/vmill/Context/Snapshot.proto")
+                      "${CMAKE_CURRENT_SOURCE_DIR}/vmill/Program/Snapshot.proto")
 list(APPEND PROJECT_INCLUDEDIRECTORIES ${CMAKE_CURRENT_BINARY_DIR})
 list(APPEND PROJECT_INCLUDEDIRECTORIES ${PROJECT_PROTOBUFHEADERFILES})
 
@@ -48,23 +50,25 @@ set_source_files_properties(${PROJECT_PROTOBUFHEADERFILES} PROPERTIES COMPILE_FL
 add_library(${PROJECT_NAME} STATIC
     ${PROJECT_PROTOBUFSOURCEFILES}
     vmill/Arch/Decoder.cpp
-    vmill/BC/Executor.cpp
-    vmill/BC/NativeExecutor.cpp
+    vmill/BC/Compiler.cpp
     vmill/BC/Lifter.cpp
-    vmill/BC/Runtime.cpp
     vmill/BC/Util.cpp
-    vmill/Context/Context.cpp
-    vmill/Memory/AddressSpace.cpp
-    vmill/Memory/MappedRange.cpp
+    vmill/Executor/CodeCache.cpp
+    vmill/Executor/Executor.cpp
+    vmill/Program/AddressSpace.cpp
+    vmill/Program/MappedRange.cpp
+    vmill/Program/Snapshot.cpp
+    vmill/Util/AreaAllocator.cpp
     vmill/Util/Hash.cpp
     vmill/Util/Timer.cpp
+    vmill/Workspace/Workspace.cpp
     vmill/Etc/xxHash/xxhash.c
 )
 
 set_property(TARGET ${PROJECT_NAME} PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 # add everything as public.
-target_link_libraries(${PROJECT_NAME} PUBLIC remill LLVMCodeGen LLVMAsmPrinter LLVMRuntimeDyld LLVMExecutionEngine LLVMTarget LLVMX86AsmParser LLVMX86AsmPrinter LLVMX86CodeGen LLVMAArch64AsmParser LLVMAArch64AsmPrinter LLVMAArch64CodeGen)
+target_link_libraries(${PROJECT_NAME} PUBLIC remill ${ZLIB_LIBRARIES} LLVMCodeGen LLVMAsmPrinter LLVMRuntimeDyld LLVMExecutionEngine LLVMTarget LLVMX86AsmParser LLVMX86AsmPrinter LLVMX86CodeGen LLVMAArch64AsmParser LLVMAArch64AsmPrinter LLVMAArch64CodeGen)
 target_include_directories(${PROJECT_NAME} PUBLIC SYSTEM ${PROJECT_INCLUDEDIRECTORIES})
 target_compile_definitions(${PROJECT_NAME} PUBLIC ${PROJECT_DEFINITIONS})
 set_target_properties(${PROJECT_NAME} PROPERTIES COMPILE_FLAGS ${PROJECT_CXXFLAGS})
@@ -75,4 +79,4 @@ add_subdirectory(vmill/Runtime)
 
 add_subdirectory(tools/snapshot)
 add_subdirectory(tools/execute)
-add_subdirectory(tools/microx)
+#add_subdirectory(tools/microx)

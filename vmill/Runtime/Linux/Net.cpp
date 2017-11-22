@@ -898,6 +898,8 @@ static Memory *SysRecvMmsg(Memory *memory, State *state,
 
 #endif
 
+#ifdef VMILL_RUNTIME_X86
+
 // ABI for argument pack passed to the `socketcall` system call. This is
 // parameterized by `AddrT` because if this is a 32-bit compatibility
 // `socketcall` then all addresses and arguments must be treated as 32-bit
@@ -906,7 +908,8 @@ template <typename AddrT>
 class SocketCallABI : public SystemCallABI {
  public:
   explicit SocketCallABI(addr_t arg_addr_)
-      : arg_addr(arg_addr_) {}
+      : arg_addr(arg_addr_),
+        padding(0) {}
 
   virtual ~SocketCallABI(void) = default;
 
@@ -936,6 +939,7 @@ class SocketCallABI : public SystemCallABI {
   }
 
   addr_t arg_addr;
+  uint32_t padding;
 };
 
 template <typename AddrT>
@@ -998,5 +1002,7 @@ static Memory *SysSocketCall(Memory *memory, State *state,
           static_cast<addr_t>(static_cast<addr_diff_t>(-ENOSYS)));
   }
 }
+
+#endif  // VMILL_RUNTIME_X86
 
 }  // namespace

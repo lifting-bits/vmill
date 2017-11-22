@@ -13,12 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#ifndef VMILL_WORKSPACE_TOOL_H_
+#define VMILL_WORKSPACE_TOOL_H_
 
-#define ADDRESS_SIZE_BITS 32
-#define HAS_FEATURE_AVX 0
-#define HAS_FEATE_AVX512 0
-#define VMILL_RUNTIME_X86 32
+namespace vmill {
 
-#include "vmill/Runtime/Linux/X86.cpp"
-#include "vmill/Runtime/Generic/X86.cpp"
-#include "vmill/Runtime/Generic/Run.cpp"
+
+
+}  // namespace
+
+#endif  // VMILL_WORKSPACE_TOOL_H_

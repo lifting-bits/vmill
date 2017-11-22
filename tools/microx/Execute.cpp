@@ -64,6 +64,9 @@ static void Run(void) {
   auto module = new llvm::Module("", *context);
   auto decoded_traces = vmill::DecodeTraces(space, FLAGS_pc);
   for (const auto &decoded_trace : decoded_traces) {
+    for (const auto &inst_entry : decoded_trace.instructions) {
+      LOG(ERROR) << inst_entry.second.Serialize();
+    }
     auto lifted_func = lifter->LiftTraceIntoModule(decoded_trace, module);
     IF_LLVM_LT_50(lifted_func->dump();)
   }

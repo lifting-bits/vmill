@@ -14,7 +14,24 @@
  * limitations under the License.
  */
 
+#ifndef AT_FDCWD
+# define AT_FDCWD (-100)
+#endif
+
+#ifndef AT_SYMLINK_NOFOLLOW
+# define AT_SYMLINK_NOFOLLOW 0x100
+#endif
+
+#ifndef AT_SYMLINK_FOLLOW
+# define AT_SYMLINK_FOLLOW 0x400
+#endif
+
 namespace {
+
+// Impossible flags to simultaneously handle for `*at` related syscalls
+// (e.g. `openat`, `fstatat`, etc.).
+static constexpr int gAtFollowNoFollow = AT_SYMLINK_FOLLOW |
+                                         AT_SYMLINK_NOFOLLOW;
 
 // Emulate an `access` system call.
 static Memory *SysAccess(Memory *memory, State *state,
@@ -150,17 +167,21 @@ void CopyStat(const struct stat &info, T *info32) {
   info32->st_gid = info.st_gid;
   info32->st_rdev = info.st_rdev;
   info32->st_size = info.st_size;
-  info32->st_blksize = static_cast<int32_t>(info.st_blksize);
+  info32->st_blksize = static_cast<decltype(info32->st_blksize)>(
+      info.st_blksize);
   info32->st_blocks = info.st_blocks;
 
-  info32->st_atim.tv_sec = static_cast<uint32_t>(info.st_atim.tv_sec);
-  info32->st_atim.tv_nsec = static_cast<uint32_t>(info.st_atim.tv_nsec);
+  using sec_t = decltype(info32->st_ctim.tv_sec);
+  using nsec_t = decltype(info32->st_ctim.tv_nsec);
 
-  info32->st_mtim.tv_sec = static_cast<uint32_t>(info.st_mtim.tv_sec);
-  info32->st_mtim.tv_nsec = static_cast<uint32_t>(info.st_mtim.tv_nsec);
+  info32->st_atim.tv_sec = static_cast<sec_t>(info.st_atim.tv_sec);
+  info32->st_atim.tv_nsec = static_cast<nsec_t>(info.st_atim.tv_nsec);
 
-  info32->st_ctim.tv_sec = static_cast<uint32_t>(info.st_ctim.tv_sec);
-  info32->st_ctim.tv_nsec = static_cast<uint32_t>(info.st_ctim.tv_nsec);
+  info32->st_mtim.tv_sec = static_cast<sec_t>(info.st_mtim.tv_sec);
+  info32->st_mtim.tv_nsec = static_cast<nsec_t>(info.st_mtim.tv_nsec);
+
+  info32->st_ctim.tv_sec = static_cast<sec_t>(info.st_ctim.tv_sec);
+  info32->st_ctim.tv_nsec = static_cast<nsec_t>(info.st_ctim.tv_nsec);
 }
 
 // Emulate a `stat` system call.
@@ -208,6 +229,134 @@ static Memory *SysStat(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, 0);
   } else {
     STRACE_ERROR(stat, "Can't write stat buff back to memory");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+}
+
+// Get the base path associated with a `*at` systemcall (e.g. `openat`,
+// `fstatat`, etc.).
+static char *GetBasePathAt(int fd) {
+  if (AT_FDCWD == fd) {
+    auto ret = getcwd(gPathAt, PATH_MAX);
+    gPathAt[PATH_MAX] = '\0';
+    if (!ret) {
+      return nullptr;
+    }
+
+  } else if (0 > fd) {
+    return nullptr;
+  }
+
+#ifndef __linux__
+# error "Cannot access `/proc/` file system on non-Linux machines."
+#endif
+
+  // TODO(pag): This is linux specific.
+  char fd_path[64] = {};
+  sprintf(&(fd_path[0]), "/proc/self/fd/%d", fd);
+
+  auto ret = readlink(fd_path, gPathAt, PATH_MAX);
+  gPathAt[PATH_MAX] = '\0';
+  if (-1 == ret) {
+    return nullptr;
+  }
+  gPathAt[ret] = '\0';
+  return gPathAt;
+}
+
+static char *GetPathAt(int fd, char *path, int flags) {
+  if (path[0] == '/') {
+    return path;
+  }
+
+  auto base_path = GetBasePathAt(fd);
+  if (!base_path) {
+    return nullptr;
+  }
+
+  auto iobuf = reinterpret_cast<char *>(&(gIOBuffer[0]));
+
+  if (!(flags & AT_SYMLINK_NOFOLLOW) | (flags | AT_SYMLINK_FOLLOW)) {
+    auto ret = readlink(base_path, iobuf, PATH_MAX);
+    iobuf[PATH_MAX] = '\0';
+    if (-1 == ret) {
+      return nullptr;
+    }
+    iobuf[ret] = '\0';
+    base_path = iobuf;
+  }
+
+  auto base_path_len = strlen(base_path);
+  if (base_path != iobuf) {
+    memcpy(iobuf, base_path, base_path_len);
+  }
+  iobuf[base_path_len] = '/';
+
+  auto path_len = strlen(path);
+  memcpy(&(iobuf[base_path_len + 1]), path, path_len);
+
+  return iobuf;
+}
+
+// Emulate a `fstatat` system call.
+template <typename T>
+static Memory *SysFStatAt(Memory *memory, State *state,
+                          const SystemCallABI &syscall) {
+  int fd = 0;
+  addr_t path = 0;
+  addr_t buf = 0;
+  int flag = 0;
+
+  if (!syscall.TryGetArgs(memory, state, &fd, &path, &buf, &flag)) {
+    STRACE_ERROR(fstatat, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+
+  } else if (!path || !buf) {
+    STRACE_ERROR(fstatat, "NULL path or buf");
+    return syscall.SetReturn(memory, state, -EINVAL);
+
+  } else if (gAtFollowNoFollow == (flag & gAtFollowNoFollow)) {
+    STRACE_ERROR(fstatat, "AT_SYMLINK_FOLLOW|AT_SYMLINK_NOFOLLOW in flags");
+    return syscall.SetReturn(memory, state, -EINVAL);
+  }
+
+  auto path_len = CopyStringFromMemory(memory, path, gPath, PATH_MAX);
+  gPath[PATH_MAX] = '\0';
+
+  if (path_len >= PATH_MAX) {
+    STRACE_ERROR(fstatat, "Path name too long: %s", gPath);
+    return syscall.SetReturn(memory, state, -ENAMETOOLONG);
+
+  // The string read does not end in a NUL-terminator; i.e. we read less
+  // than `PATH_MAX`, but as much as we could without faulting, and we didn't
+  // read the NUL char.
+  } else if ('\0' != gPath[path_len]) {
+    STRACE_ERROR(fstatat, "Non-NUL-terminated path");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  auto final_path = GetPathAt(fd, gPath, flag);
+  if (!final_path) {
+    STRACE_ERROR(fstatat, "Cannot find base path for fd %d and ", fd);
+    return syscall.SetReturn(memory, state, -EBADFD);
+  }
+
+  struct stat info = {};
+  if (::stat(final_path, &info)) {
+    auto err = errno;
+    STRACE_ERROR(fstatat, "Can't stat path %s (final=%s): %s",
+                 gPath, final_path, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  }
+
+  T info_compat = {};
+  CopyStat(info, &info_compat);
+
+  if (TryWriteMemory(memory, buf, info_compat)) {
+    STRACE_SUCCESS(fstatat, "fd=%d, path=%s, flag=%x", fd, gPath, flag);
+    return syscall.SetReturn(memory, state, 0);
+  } else {
+    STRACE_ERROR(fstatat, "Can't write stat buff back to memory");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 }
@@ -353,7 +502,6 @@ static Memory *SysGetCurrentWorkingDirectory(Memory *memory, State *state,
   return syscall.SetReturn(memory, state, len_or_err);
 }
 
-
 static Memory *SysReadLink(Memory *memory, State *state,
                            const SystemCallABI &syscall) {
   addr_t path = 0;
@@ -404,6 +552,63 @@ static Memory *SysReadLink(Memory *memory, State *state,
   CopyToMemory(memory, buf, link_path, max_size);
 
   STRACE_SUCCESS(readlink, "path=%s, link=%s, len=%d", gPath, link_path, ret);
+  delete [] link_path;
+
+  return syscall.SetReturn(memory, state, ret);
+}
+
+static Memory *SysReadLinkAt(Memory *memory, State *state,
+                             const SystemCallABI &syscall) {
+  int fd = 0;
+  addr_t path = 0;
+  addr_t buf = 0;
+  addr_t size = 0;
+  if (!syscall.TryGetArgs(memory, state, &fd, &path, &buf, &size)) {
+    STRACE_ERROR(readlinkat, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  if (0 > static_cast<addr_diff_t>(size)) {
+    STRACE_ERROR(readlinkat, "Negative buffsize");
+    return syscall.SetReturn(memory, state, -EINVAL);
+  }
+
+  if (!buf) {
+    STRACE_ERROR(readlinkat, "NULL buffer");
+    return syscall.SetReturn(memory, state, -EINVAL);
+  }
+
+  auto path_len = CopyStringFromMemory(memory, path, gPath, PATH_MAX);
+  gPath[PATH_MAX] = '\0';
+  if (!path_len) {
+    STRACE_ERROR(readlinkat, "Could not read path");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  auto max_size = NumWritableBytes(memory, buf, size);
+  if (!max_size) {
+    STRACE_ERROR(readlinkat, "Could not write to buf");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  auto link_path = new char[max_size + 1];
+  CopyFromMemory(memory, link_path, buf, max_size);
+
+  auto ret = readlinkat(fd, gPath, link_path, max_size);
+  if (-1 == ret) {
+    auto err = errno;
+    delete [] link_path;
+    STRACE_ERROR(
+        readlinkat, "Could not read link of %s into buffer of size %u: %s",
+        gPath, max_size, strerror(errno));
+    return syscall.SetReturn(memory, state, -err);
+  }
+
+  link_path[max_size] = '\0';
+  CopyToMemory(memory, buf, link_path, max_size);
+
+  STRACE_SUCCESS(readlinkat, "fd=%d, path=%s, link=%s, len=%d",
+                 fd, gPath, link_path, ret);
   delete [] link_path;
 
   return syscall.SetReturn(memory, state, ret);

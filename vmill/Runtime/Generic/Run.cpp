@@ -98,9 +98,35 @@ Memory *__remill_sync_hyper_call(
   return mem;
 }
 
-// Called by the executor when it wants to run a thread.
-extern "C" void __vmill_resume(State &state, addr_t pc, Memory *memory,
+// Called by the executor when it wants to run a task.
+extern "C" void __vmill_resume(State *state, addr_t pc, Memory *memory,
                                vmill::TaskStatus status,
-                               void (*code)(State &, addr_t, Memory *)) {
-  code(state, pc, memory);
+                               void (*code)(State *, addr_t, Memory *)) {
+
+  // TODO(pag): Re-init FPU rounding modes and such.
+  fenv_t old_env = {};
+
+  switch (status) {
+    case vmill::kTaskStoppedAtError:
+    case vmill::kTaskStoppedBeforeUnhandledHyperCall:
+      __vmill_free_state(state);
+      __vmill_free_address_space(memory);
+      break;
+
+    default:
+      feclearexcept(FE_ALL_EXCEPT);
+      fegetenv(&old_env);
+      fesetenv(FE_DFL_ENV);
+      __vmill_init_fpu_environ(*state);
+      code(state, pc, memory);
+      fesetenv(&old_env);
+      break;
+  }
+}
+
+// Called by the executor when a task errors out.
+extern "C" void __vmill_done(State *state, addr_t pc, Memory *memory,
+                             vmill::TaskStatus status) {
+  __vmill_free_state(state);
+  __vmill_free_address_space(memory);
 }
