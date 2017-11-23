@@ -187,6 +187,7 @@ DecodedTraceList DecodeTraces(AddressSpace &addr_space, PC start_pc) {
   DecodedTraceList traces;
 
   auto arch = remill::GetTargetArch();
+  auto code_version = addr_space.ComputeCodeVersion();
 
   DecoderWorkList trace_list;
   DecoderWorkList work_list;
@@ -211,6 +212,7 @@ DecodedTraceList DecodeTraces(AddressSpace &addr_space, PC start_pc) {
 
     DecodedTrace trace;
     trace.pc = static_cast<PC>(trace_pc);
+    trace.code_version = code_version;
 
     while (!work_list.empty()) {
       auto entry_it = work_list.begin();

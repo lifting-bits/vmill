@@ -129,6 +129,7 @@ class ArrayMemoryMap : public MappedRangeBase {
   bool Write(uint64_t address, uint8_t val) override;
   MemoryMapPtr Clone(void) override;
   uint64_t ComputeCodeVersion(void) override;
+  void *ToVirtualAddress(uint64_t addr) override;
 
   static ArrayMemoryAllocator allocator;
 };
@@ -155,6 +156,7 @@ class CopyOnWriteMemoryMap : public MappedRangeBase {
   bool Write(uint64_t address, uint8_t val) override;
   MemoryMapPtr Clone(void) override;
   uint64_t ComputeCodeVersion(void) override;
+  void *ToVirtualAddress(uint64_t addr) override;
 
  private:
   using MappedRangeBase::MappedRangeBase;
@@ -275,6 +277,10 @@ uint64_t ArrayMemoryMap::ComputeCodeVersion(void) {
   return code_version;
 }
 
+void *ArrayMemoryMap::ToVirtualAddress(uint64_t address) {
+  return &(data.base[address - base_address]);
+}
+
 EmptyMemoryMap::~EmptyMemoryMap(void) {}
 
 bool EmptyMemoryMap::Read(uint64_t, uint8_t *out_val) {
@@ -335,6 +341,10 @@ uint64_t CopyOnWriteMemoryMap::ComputeCodeVersion(void) {
   return parent->ComputeCodeVersion();
 }
 
+void *CopyOnWriteMemoryMap::ToVirtualAddress(uint64_t address) {
+  return parent->ToVirtualAddress(address);
+}
+
 }  // namespace
 
 MemoryMapPtr MappedRange::Create(uint64_t base_address_,
@@ -353,5 +363,10 @@ MappedRange::MappedRange(uint64_t base_address_, uint64_t limit_address_)
       limit_address(limit_address_) {}
 
 MappedRange::~MappedRange(void) {}
+
+// Return the virtual address of the memory backing `addr`.
+void *MappedRange::ToVirtualAddress(uint64_t) {
+  return nullptr;
+}
 
 }  // namespace vmill

@@ -27,10 +27,10 @@ enum AreaAllocationPerms {
 };
 
 enum AreaPreferences : uint64_t {
-  kAreaCodeCacheCode = 0x100000000000ULL,
-  kAreaCodeCacheData = 0x200000000000ULL,
-  kAreaCodeCacheIndex = 0x300000000000ULL,
-  kAreaAddressSpace = 0x400000000000ULL
+  kAreaCodeCacheCode = 0x80000000ULL,  // 2 GiB.
+  kAreaCodeCacheData = 0xC0000000ULL,  // 3 GiB.
+  kAreaCodeCacheIndex = 0x100000000000ULL,
+  kAreaAddressSpace = 0x200000000000ULL
 };
 
 // Bump-pointer allocator for a contiguous region of memory.
@@ -52,10 +52,12 @@ class AreaAllocator {
   AreaAllocator(const AreaAllocator &) = delete;
 
   void *preferred_base;
-  bool executable;
+  bool is_executable;
   uint8_t *base;
   uint8_t *limit;
   uint8_t *bump;
+  int prot;
+  int flags;
 };
 
 }  // namespace vmill

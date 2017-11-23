@@ -83,7 +83,7 @@ int main(int argc, char **argv) {
 
   vmill::Executor executor;
   vmill::Workspace::LoadSnapshotIntoExecutor(snapshot, executor);
-  executor.Execute();
+  executor.RunOnce();
 
   llvm::llvm_shutdown();
   google::ShutDownCommandLineFlags();

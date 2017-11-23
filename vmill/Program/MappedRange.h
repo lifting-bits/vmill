@@ -75,6 +75,9 @@ class MappedRange {
   // Create a copy of a portion of this range.
   virtual MemoryMapPtr Copy(uint64_t clone_base, uint64_t clone_limit) = 0;
 
+  // Return the virtual address of the memory backing `addr`.
+  virtual void *ToVirtualAddress(uint64_t addr);
+
  protected:
   MappedRange(uint64_t base_address_, uint64_t limit_address_);
 

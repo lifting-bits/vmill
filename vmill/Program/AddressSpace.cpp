@@ -270,6 +270,12 @@ MAKE_TRY_WRITE(float)
 MAKE_TRY_WRITE(double)
 #undef MAKE_TRY_WRITE
 
+// Return the virtual address of the memory backing `addr`.
+void *AddressSpace::ToVirtualAddress(uint64_t addr) {
+  auto &range = FindRange(addr);
+  return range->ToVirtualAddress(addr);
+}
+
 // Read a byte as an executable byte. This is used for instruction decoding.
 bool AddressSpace::TryReadExecutable(PC pc, uint8_t *val) {
   auto addr = static_cast<uint64_t>(pc);

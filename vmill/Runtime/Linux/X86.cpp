@@ -142,8 +142,7 @@ Memory *__remill_async_hyper_call(
       if (memory) {
         ret_addr = abi.GetReturnAddress(memory, ret_addr);
         state.gpr.rip.aword = ret_addr;
-        __vmill_schedule(state, ret_addr, memory,
-                         vmill::kTaskStoppedAfterHyperCall);
+        __vmill_set_location(ret_addr, vmill::kTaskStoppedAfterHyperCall);
       }
       break;
     }
@@ -155,15 +154,14 @@ Memory *__remill_async_hyper_call(
         if (memory) {
           ret_addr = abi.GetReturnAddress(memory, ret_addr);
           state.gpr.rip.aword = ret_addr;
-          __vmill_schedule(state, ret_addr, memory,
-                           vmill::kTaskStoppedAfterHyperCall);
+          __vmill_set_location(ret_addr, vmill::kTaskStoppedAfterHyperCall);
         }
       }
       break;
 
     default:
-      __vmill_schedule(
-          state, ret_addr, memory, vmill::kTaskStoppedBeforeUnhandledHyperCall);
+      __vmill_set_location(
+          ret_addr, vmill::kTaskStoppedBeforeUnhandledHyperCall);
       break;
   }
 

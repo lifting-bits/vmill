@@ -18,7 +18,6 @@
 #include <glog/logging.h>
 
 #include <cstdint>
-#include <ctime>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -172,7 +171,7 @@ std::unique_ptr<llvm::Module> LifterImpl::Lift(
     if (!module) {
       std::stringstream ss;
       ss << std::hex << static_cast<uint64_t>(trace.pc) << "_at_"
-         << time(nullptr);
+         << static_cast<uint64_t>(trace.code_version);
       module.reset(new llvm::Module(ss.str(), *context));
     }
     LiftTraceIntoModule(trace, module.get());

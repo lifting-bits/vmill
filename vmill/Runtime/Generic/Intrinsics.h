@@ -18,21 +18,14 @@
 #define VMILL_RUNTIME_INTRINSICS_H_
 
 #include "remill/Arch/Runtime/Intrinsics.h"
-#include "vmill/Runtime/TaskStatus.h"
+
+#include "../Task.h"
 
 extern "C" {
 
-[[gnu::used]]
-State *__vmill_allocate_state(void);
-
-[[gnu::used]]
-void __vmill_free_state(State *state);
-
 // Schedule a state for running.
 [[gnu::used]]
-extern void __vmill_schedule(State &state, addr_t pc, Memory *memory,
-                             vmill::TaskStatus status);
-
+extern void __vmill_set_location(addr_t pc, vmill::TaskStopLocation loc);
 
 [[gnu::used, gnu::const]]
 extern Memory *__vmill_allocate_address_space(void);

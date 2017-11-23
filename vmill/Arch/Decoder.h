@@ -32,7 +32,8 @@ using InstructionMap = std::map<PC, remill::Instruction>;
 
 struct DecodedTrace {
   PC pc;  // Entry PC of the trace.
-  TraceId id;  //
+  CodeVersion code_version; // Version of address space at decode time.
+  TraceId id;  // Unique ID for a given trace.
   InstructionMap instructions;
 };
 

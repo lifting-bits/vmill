@@ -87,20 +87,25 @@ static Memory *SysSetThreadArea(Memory *memory, State *state,
     }
   }
 
+#if 0
 #if 32 == VMILL_RUNTIME_X86
   auto &seg_sel = state->seg.gs;
   auto &seg_base = state->addr.gs_base;
+  const char *seg_name = "GS";
 #else
   auto &seg_sel = state->seg.fs;
   auto &seg_base = state->addr.fs_base;
+  const char *seg_name = "FS";
 #endif
 
   seg_sel.index = static_cast<uint16_t>(index);
   seg_sel.rpi = kRingThree;
   seg_sel.ti = kGlobalDescriptorTable;
   seg_base.aword = static_cast<addr_t>(info.base_addr);
+#endif
 
-  STRACE_SUCCESS(set_thread_area, "Set LDT index %u to base address %lx",
+  STRACE_SUCCESS(set_thread_area,
+                 "Set LDT index %u to base address %lx",
                  index, info.base_addr);
   return syscall.SetReturn(memory, state, 0);
 }

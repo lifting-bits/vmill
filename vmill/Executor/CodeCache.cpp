@@ -78,8 +78,12 @@ class CodeCacheImpl : public CodeCache,
   // Load a JIT-compiled module from a file `path`.
   void LoadLibrary(const std::string &path);
 
-  // Load all JIT-compiled modules from the libraries directory.
-  void LoadLibraries(void);
+  // Load all JIT-compiled modules from the libraries directory. Returns the
+  // number of loaded libraries.
+  int LoadLibraries(void);
+
+  // JIT compile any already lifted bitcode.
+  void ReloadLibraries(void);
 
   // Implementing the `CodeCache` interface. This takes ownership of the
   // module.
@@ -139,7 +143,9 @@ CodeCacheImpl::CodeCacheImpl(const std::shared_ptr<llvm::LLVMContext> &context_)
       data_allocator(kAreaRW, kAreaCodeCacheData),
       index_allocator(kAreaRW, kAreaCodeCacheIndex) {
   LoadRuntimeLibrary();
-  LoadLibraries();
+  if (!LoadLibraries()) {
+    ReloadLibraries();
+  }
 }
 
 CodeCacheImpl::~CodeCacheImpl(void) {}
@@ -160,6 +166,9 @@ uint8_t *CodeCacheImpl::allocateDataSection(
     llvm::StringRef name, bool is_read_only) {
   uint8_t *base = nullptr;
   bool is_index = false;
+
+  // If we're allocating translations then we want all entries across all
+  // translation segments to be contiguous.
   if (name == ".translations") {
     base = index_allocator.Allocate(size, 0);
     is_index = true;
@@ -194,7 +203,17 @@ bool CodeCacheImpl::finalizeMemory(std::string *error_message) {
         return false;
       }
 
-      lifted_functions[base->trace_id] = base->lifted_function;
+      auto &lifted_func = lifted_functions[base->trace_id];
+      if (lifted_func != nullptr) {
+        LOG(ERROR)
+            << "Code at " << reinterpret_cast<void *>(base->lifted_function)
+            << " implementing trace with hash ("
+            << static_cast<TraceHashBaseType>(base->trace_id.hash1) << ", "
+            << static_cast<TraceHashBaseType>(base->trace_id.hash2)
+            << ") already implemented at " << lifted_func << std::dec;
+      } else {
+        lifted_func = base->lifted_function;
+      }
     }
   }
   pending_jit_ranges.clear();
@@ -217,6 +236,10 @@ llvm::JITSymbol CodeCacheImpl::findSymbolInLogicalDylib(
 // Resolve external/exported symbols during linking.
 llvm::JITSymbol CodeCacheImpl::findSymbol(const std::string &name) {
   uint64_t addr = llvm::RTDyldMemoryManager::getSymbolAddressInProcess(name);
+  if (!addr) {
+    LOG(ERROR)
+        << "Could not locate symbol " << name;
+  }
   return llvm::JITSymbol(addr, llvm::JITSymbolFlags::None);
 }
 
@@ -281,17 +304,53 @@ void CodeCacheImpl::LoadLibrary(const std::string &path) {
   std::string error;
   CHECK(finalizeMemory(&error))
       << "Unable to finalize JITed code memory: " << error;
+
+  // TODO(pag): Is the library's `_start` function called?
 }
 
 // Load all JIT-compiled modules from the libraries directory.
-void CodeCacheImpl::LoadLibraries(void) {
+int CodeCacheImpl::LoadLibraries(void) {
+  int num_loaded = 0;
   remill::ForEachFileInDirectory(Workspace::LibraryDir(),
-      [this] (const std::string &path) {
+      [&num_loaded, this] (const std::string &path) {
         DLOG(INFO)
             << "Loading cached library " << path;
         LoadLibrary(path);
+        num_loaded++;
         return true;
       });
+  return num_loaded;
+}
+
+// JIT compile any already lifted bitcode.
+void CodeCacheImpl::ReloadLibraries(void) {
+  remill::ForEachFileInDirectory(Workspace::BitcodeDir(),
+      [this] (const std::string &path) {
+        std::unique_ptr<llvm::Module> module(
+            remill::LoadModuleFromFile(context.get(), path, true));
+
+        if (module) {
+          LOG(INFO)
+              << "JIT compiling already lifted code from " << path;
+          AddModuleToCache(module);
+        } else {
+          LOG(ERROR)
+              << "Could not load already lifted bitcode module from " << path;
+          remill::RemoveFile(path);
+        }
+        return true;
+      });
+}
+
+static std::string ModuleTailName(const std::unique_ptr<llvm::Module> &module) {
+  auto name = remill::ModuleName(module);
+  std::reverse(name.begin(), name.end());
+  auto pos = name.find(remill::PathSeparator()[0]);
+  if (std::string::npos != pos) {
+    name = name.substr(0, pos);
+  }
+  std::reverse(name.begin(), name.end());
+  return name;
 }
 
 // Load a JIT-compiled library.
@@ -299,7 +358,7 @@ void CodeCacheImpl::AddModuleToCache(
     const std::unique_ptr<llvm::Module> &module) {
   std::stringstream lib_ss;
   lib_ss << Workspace::LibraryDir() << remill::PathSeparator()
-         << module->getName().str() << ".obj";
+         << ModuleTailName(module) << ".obj";
 
   auto lib_path = lib_ss.str();
   compiler.CompileModuleToFile(*module, lib_path);

@@ -81,6 +81,9 @@ class AddressSpace : public Memory {
   bool TryRead(uint64_t addr, double *val);
   bool TryWrite(uint64_t addr, double val);
 
+  // Return the virtual address of the memory backing `addr`.
+  void *ToVirtualAddress(uint64_t addr);
+
   // Read a byte as an executable byte. This is used for instruction decoding.
   // Returns `false` if the read failed. This function operates on the state
   // of a page, and may result in broad-reaching cache invalidations.

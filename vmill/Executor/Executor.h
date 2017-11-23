@@ -17,12 +17,11 @@
 #ifndef VMILL_EXECUTOR_EXECUTOR_H_
 #define VMILL_EXECUTOR_EXECUTOR_H_
 
-#include <list>
 #include <memory>
 #include <unordered_map>
 
 #include "vmill/BC/Trace.h"
-#include "vmill/Runtime/TaskStatus.h"
+#include "vmill/Runtime/Task.h"
 
 struct ArchState;
 struct Memory;
@@ -37,33 +36,14 @@ class CodeCache;
 class DecodedTraceList;
 class Lifter;
 
-// A task is like a thread, but really, it's the runtime that gives a bit more
-// meaning to threads. The runtime has `resume`, `pause`, `stop`, and `schedule`
-// intrinsics. When
-struct Task {
- public:
-  ArchState *state;
-  PC pc;
-  AddressSpace *memory;
-  TaskStatus status;
-};
-
-// A queue of tasks. In many cases we only have a single task so we like to
-// keep it in `next_task`.
-class TaskQueue {
- public:
-  TaskQueue(void);
-  void Enqueue(const Task &task);
-  bool TryDequeue(Task *task_out);
-
- private:
-  bool has_next_task;
-  Task next_task;
-  std::list<Task> queue;
-};
-
 // A compiled lifted trace.
 using LiftedFunction = Memory *(ArchState *, PC, Memory *);
+
+struct InitialTaskInfo {
+  std::string state;
+  PC pc;
+  AddressSpace *memory;
+};
 
 // Task executor. This manages things like the code cache, and can lift and
 // compile code on request.
@@ -71,16 +51,16 @@ class Executor {
  public:
   Executor(void);
 
-  void Execute(void);
+  void RunOnce(void);
+  void RunMany(void);
 
   void AddInitialTask(const std::string &state, PC pc, AddressSpace *memory);
-  void EnqueueTask(const Task &task);
+
+  LiftedFunction *FindLiftedFunctionForTask(Task *task);
 
  private:
-  void Execute(const Task &task);
-
   __attribute__((noinline))
-  void DecodeTracesFromTask(const Task &task);
+  void DecodeTracesFromTask(Task *task);
 
   __attribute__((noinline))
   void LiftDecodedTraces(const DecodedTraceList &traces);
@@ -88,26 +68,36 @@ class Executor {
   std::shared_ptr<llvm::LLVMContext> context;
   std::unique_ptr<Lifter> lifter;
   std::unique_ptr<CodeCache> code_cache;
-  TaskQueue task_queue;
+
+  // Have we previously executed `Executor::Run`?
+  bool has_run;
+
+  // List of initial tasks.
+  std::vector<InitialTaskInfo> initial_tasks;
 
   // Map of "live traces". Instead of mapping PCs to lifted function, we map
   // tuples of (PC, CodeVersion) to lifted functions. These code versions
   // permit multiple address spaces to be simultaneously live.
   std::unordered_map<LiveTraceId, LiftedFunction *> live_traces;
 
-  // Pointer to the compiled `__vmill_resume`.
-  void (*resume_intrinsic)(ArchState *, PC, Memory *, TaskStatus,
-                           LiftedFunction *);
-
-  // Pointer to the compiled `__vmill_done`.
-  void (*done_intrinsic)(ArchState *, PC, Memory *);
-
-  // Pointer to the compiled `__remill_missing_block`.
-  LiftedFunction *missing_block_intrinsic;
+  // Pointer to the compiled `__vmill_init` function. This initializes
+  // the OS that is emulated by the runtime.
+  void (*init_intrinsic)(void);
 
   // Pointer to the compiled `__vmill_allocate_state`. This is a runtime
   // function that allocates arch-specific `State` structures.
-  ArchState *(*allocate_state_intrinsic)(void);
+  void (*create_task_intrinsic)(const void *, PC, AddressSpace *);
+
+  // Pointer to the compiled `__vmill_resume`. This "resumes" execution from
+  // where the snapshot left off.
+  void (*resume_intrinsic)(void);
+
+  // Pointer to the compiled `__vmill_fini`. This is used to tear down the
+  // any remaining things in the OS.
+  void (*fini_intrinsic)(void);
+
+  // Pointer to the compiled `__remill_missing_block`.
+  LiftedFunction *missing_block_intrinsic;
 };
 
 }  // namespace vmill

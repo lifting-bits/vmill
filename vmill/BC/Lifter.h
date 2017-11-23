@@ -21,8 +21,6 @@
 #include <memory>
 #include <vector>
 
-#include "vmill/Util/Callback.h"
-
 namespace llvm {
 class LLVMContext;
 class Module;
