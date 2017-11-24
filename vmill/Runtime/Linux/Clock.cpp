@@ -17,7 +17,8 @@
 namespace {
 
 // Emulate a 32-bit `gettimeofday` system call.
-static Memory *SysGetTimeOfDay32(Memory *memory, State *state,
+template <typename TimeVal, typename TimeZone>
+static Memory *SysGetTimeOfDay(Memory *memory, State *state,
                                  const SystemCallABI &syscall) {
   addr_t tv_addr = 0;
   addr_t tz_addr = 0;
@@ -33,10 +34,10 @@ static Memory *SysGetTimeOfDay32(Memory *memory, State *state,
   auto ret = errno;
 
   if (tv_addr) {
-    linux32_timeval tv_compat = {
-        .tv_sec = static_cast<uint32_t>(tv.tv_sec),
-        .tv_usec = static_cast<uint32_t>(tv.tv_usec),
-    };
+    TimeVal tv_compat = {};
+    tv_compat.tv_sec = static_cast<decltype(tv_compat.tv_sec)>(tv.tv_sec);
+    tv_compat.tv_usec = static_cast<decltype(tv_compat.tv_usec)>(tv.tv_usec);
+
     if (!TryWriteMemory(memory, tv_addr, &tv_compat)) {
       STRACE_ERROR(gettimeofday, "Couldn't write timeval to memory");
       return syscall.SetReturn(memory, state, -EFAULT);
@@ -44,10 +45,12 @@ static Memory *SysGetTimeOfDay32(Memory *memory, State *state,
   }
 
   if (tz_addr) {
-    linux32_timezone tz_compat = {
-        .tz_minuteswest = tz.tz_minuteswest,
-        .tz_dsttime = tz.tz_dsttime
-    };
+    TimeZone tz_compat = {};
+    tz_compat.tz_minuteswest = static_cast<decltype(tz_compat.tz_minuteswest)>(
+        tz.tz_minuteswest);
+    tz_compat.tz_dsttime = static_cast<decltype(tz_compat.tz_dsttime)>(
+        tz.tz_dsttime);
+
     if (!TryWriteMemory(memory, tz_addr, &tz_compat)) {
       STRACE_ERROR(gettimeofday, "Couldn't write timezone to memory");
       return syscall.SetReturn(memory, state, -EFAULT);
@@ -62,8 +65,9 @@ static Memory *SysGetTimeOfDay32(Memory *memory, State *state,
 }
 
 // Emulate a 32-bit `settimeofday` system call.
-static Memory *SysSetTimeOfDay32(Memory *memory, State *state,
-                                 const SystemCallABI &syscall) {
+template <typename TimeVal, typename TimeZone>
+static Memory *SysSetTimeOfDay(Memory *memory, State *state,
+                               const SystemCallABI &syscall) {
   addr_t tv_addr = 0;
   addr_t tz_addr = 0;
 
@@ -77,27 +81,32 @@ static Memory *SysSetTimeOfDay32(Memory *memory, State *state,
   gettimeofday(&tv, &tz);
 
   if (tv_addr) {
-    linux32_timeval tv_compat = {};
+    TimeVal tv_compat = {};
     if (!TryReadMemory(memory, tv_addr, &tv_compat)) {
       STRACE_ERROR(settimeofday, "Couldn't read timeval data.");
       return syscall.SetReturn(memory, state, -EFAULT);
     }
-    tv.tv_sec = static_cast<time_t>(tv_compat.tv_sec);
-    tv.tv_usec = static_cast<suseconds_t>(tv_compat.tv_usec);
+    tv.tv_sec = static_cast<decltype(tv.tv_sec)>(tv_compat.tv_sec);
+    tv.tv_usec = static_cast<decltype(tv.tv_usec)>(tv_compat.tv_usec);
   }
 
   if (tz_addr) {
-    linux32_timezone tz_compat = {};
+    TimeZone tz_compat = {};
     if (!TryReadMemory(memory, tz_addr, &tz_compat)) {
       STRACE_ERROR(settimeofday, "Couldn't read timezone data.");
       return syscall.SetReturn(memory, state, -EFAULT);
     }
-    tz.tz_minuteswest = tz_compat.tz_minuteswest;
-    tz.tz_dsttime = tz_compat.tz_dsttime;
+    tz.tz_minuteswest = static_cast<decltype(tz.tz_minuteswest)>(
+        tz_compat.tz_minuteswest);
+    tz.tz_dsttime = static_cast<decltype(tz.tz_dsttime)>(
+        tz_compat.tz_dsttime);
   }
 
-  if (!settimeofday(&tv, &tz)) {
-    STRACE_SUCCESS(settimeofday, "Set");
+  if (!settimeofday(tv_addr ? &tv : nullptr, tz_addr ? &tz : nullptr)) {
+    STRACE_SUCCESS(
+        settimeofday,
+        "set tv_sec=%ld, tv_usec=%ld, tz_minuteswest=%d, tz_dsttime=%d",
+        tv.tv_sec, tv.tv_usec, tz.tz_minuteswest, tz.tz_dsttime);
     return syscall.SetReturn(memory, state, 0);
   } else {
     auto err = errno;
@@ -106,42 +115,75 @@ static Memory *SysSetTimeOfDay32(Memory *memory, State *state,
   }
 }
 
-// Emulate a 32-bit `gettimeofday` system call.
-static Memory *SysGetTimeOfDay(Memory *memory, State *state,
+template <typename TimeSpec>
+static Memory *SysClockGetTime(Memory *memory, State *state,
                                const SystemCallABI &syscall) {
-  addr_t tv_addr = 0;
-  addr_t tz_addr = 0;
+  clockid_t clock_id = 0;
+  addr_t tp = 0;
 
-  if (!syscall.TryGetArgs(memory, state, &tv_addr, &tz_addr)) {
-    STRACE_ERROR(gettimeofday, "Couldn't get args");
+  if (!syscall.TryGetArgs(memory, state, &clock_id, &tp)) {
+    STRACE_ERROR(clock_gettime, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  struct timeval tv = {};
-  struct timezone tz = {};
-  gettimeofday(&tv, &tz);
-  auto ret = errno;
-
-  if (tv_addr) {
-    if (!TryWriteMemory(memory, tv_addr, &tv)) {
-      STRACE_ERROR(gettimeofday, "Couldn't write timeval to memory");
-      return syscall.SetReturn(memory, state, -EFAULT);
-    }
+  struct timespec cur_time = {};
+  auto ret = clock_gettime(clock_id, &cur_time);
+  if (-1 == ret) {
+    auto err = errno;
+    STRACE_ERROR(clock_gettime, "Couldn't get time: %s", strerror(err));
+    return syscall.SetReturn(memory, state, -err);
   }
 
-  if (tz_addr) {
-    if (!TryWriteMemory(memory, tz_addr, &tz)) {
-      STRACE_ERROR(gettimeofday, "Couldn't write timezone to memory");
-      return syscall.SetReturn(memory, state, -EFAULT);
-    }
+  TimeSpec compat_time = {};
+  compat_time.tv_sec = static_cast<decltype(compat_time.tv_sec)>(
+      cur_time.tv_sec);
+  compat_time.tv_nsec = static_cast<decltype(compat_time.tv_nsec)>(
+      cur_time.tv_nsec);
+
+  if (!TryWriteMemory(memory, tp, compat_time)) {
+    STRACE_ERROR(clock_gettime, "Couldn't write tp=%" PRIxADDR, tp);
+    return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  STRACE_SUCCESS(
-      gettimeofday, "tv_sec=%ld, tv_usec=%ld, tz_minuteswest=%d, tz_dsttime=%d",
-      tv.tv_sec, tv.tv_usec, tz.tz_minuteswest, tz.tz_dsttime);
-
-  return syscall.SetReturn(memory, state, -ret);
+  STRACE_SUCCESS(clock_gettime, "tv_sec=%ld, tv_nsec=%ld",
+                 compat_time.tv_sec, compat_time.tv_nsec);
+  return syscall.SetReturn(memory, state, 0);
 }
 
+
+template <typename TimeSpec>
+static Memory *SysClockGetResolution(Memory *memory, State *state,
+                                     const SystemCallABI &syscall) {
+  clockid_t clock_id = 0;
+  addr_t res = 0;
+
+  if (!syscall.TryGetArgs(memory, state, &clock_id, &res)) {
+    STRACE_ERROR(clock_getres, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  struct timespec cur_res = {};
+  auto ret = clock_getres(clock_id, &cur_res);
+  if (-1 == ret) {
+    auto err = errno;
+    STRACE_ERROR(clock_getres, "Couldn't get resolution: %s", strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  }
+
+  TimeSpec compat_res = {};
+  compat_res.tv_sec = static_cast<decltype(compat_res.tv_sec)>(
+      cur_res.tv_sec);
+  compat_res.tv_nsec = static_cast<decltype(compat_res.tv_nsec)>(
+      cur_res.tv_nsec);
+
+  if (!TryWriteMemory(memory, res, compat_res)) {
+    STRACE_ERROR(clock_getres, "Couldn't write to res=%" PRIxADDR, res);
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  STRACE_SUCCESS(clock_getres, "tv_sec=%ld, tv_nsec=%ld",
+                 compat_res.tv_sec, compat_res.tv_nsec);
+  return syscall.SetReturn(memory, state, 0);
+}
 
 }  // namespace

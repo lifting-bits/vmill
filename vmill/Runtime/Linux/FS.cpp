@@ -706,4 +706,47 @@ static Memory *SysGetDirEntries64(Memory *memory, State *state,
   return syscall.SetReturn(memory, state, ret);
 }
 
+static Memory *SysFcntl64(Memory *memory, State *state,
+                          const SystemCallABI &syscall) {
+  int fd = -1;
+  int cmd = 0;
+  addr_t arg = 0;
+
+  if (!syscall.TryGetArgs(memory, state, &fd, &cmd, &arg)) {
+    STRACE_ERROR(fcntl64, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  switch (cmd) {
+    case F_DUPFD:
+    case F_GETFD:
+    case F_SETFD:
+    case F_GETFL:
+    case F_SETFL: {
+      errno = 0;
+      auto ret = fcntl(fd, cmd, arg);
+      auto err = errno;
+      if (err) {
+        STRACE_ERROR(fcntl64, "cmd=%d fd=%d arg=%" PRIdADDR ": %s",
+                     cmd, fd, arg, strerror(err));
+        return syscall.SetReturn(memory, state, -err);
+      } else {
+        STRACE_SUCCESS(fcntl64, "cmd=%d fd=%d arg=%" PRIdADDR " ret=%d",
+                       cmd, fd, arg, ret);
+        return syscall.SetReturn(memory, state, ret);
+      }
+    }
+
+    case F_SETLK:
+    case F_SETLKW:
+    case F_GETLK:
+
+    // TODO(pag): We don't support the command, but lets pretend that it
+    //            went through.
+    default:
+      STRACE_ERROR(fcntl64, "Unuspported cmd=%d", cmd);
+      return syscall.SetReturn(memory, state, 0);
+  }
+}
+
 }  // namespace

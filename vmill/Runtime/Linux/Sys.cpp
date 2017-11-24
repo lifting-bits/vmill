@@ -123,11 +123,22 @@ static Memory *SysUname(Memory *memory, State *state,
   }
 
   linux_new_utsname compat = {};
-  memcpy(&(compat.sysname[0]), &(info.sysname[0]), sizeof(compat.sysname));
+  memcpy(&(compat.sysname[0]), "Linux", 6);
   memcpy(&(compat.nodename[0]), &(info.nodename[0]), sizeof(compat.nodename));
   memcpy(&(compat.release[0]), &(info.release[0]), sizeof(compat.release));
   memcpy(&(compat.version[0]), &(info.version[0]), sizeof(compat.version));
-  memcpy(&(compat.machine[0]), &(info.machine[0]), sizeof(compat.machine));
+#if defined(VMILL_RUNTIME_AARCH64)
+  memcpy(&(compat.machine[0]), "aarch64", 8);
+#elif defined(VMILL_RUNTIME_X86)
+# if 32 == VMILL_RUNTIME_X86
+  memcpy(&(compat.machine[0]), "i686", 6);
+# else
+  memcpy(&(compat.machine[0]), "x86_64", 7);
+# endif
+#else
+# error "Add architecture name here!"
+#endif
+
   SetDomainName(info, &compat);
 
   if (TryWriteMemory(memory, buf, info)) {

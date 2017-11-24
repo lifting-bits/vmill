@@ -51,6 +51,7 @@ class AreaAllocator {
   AreaAllocator(void) = delete;
   AreaAllocator(const AreaAllocator &) = delete;
 
+  size_t page_size;
   void *preferred_base;
   bool is_executable;
   uint8_t *base;

@@ -18,6 +18,7 @@
 
 #include <cerrno>
 #include <sys/mman.h>
+#include <unistd.h>
 
 #include "remill/Arch/Name.h"
 
@@ -61,11 +62,17 @@ static void FillWithBreakPoints(uint8_t *base, uint8_t *limit) {
   }
 }
 
+// TODO(pag): Eventually support querying for the system huge page size.
+static size_t GetPageSize(void) {
+  return k2MiB;
+}
+
 }  // namespace
 
 AreaAllocator::AreaAllocator(AreaAllocationPerms perms,
                              uintptr_t preferred_base_)
-    : preferred_base(reinterpret_cast<void *>(preferred_base_)),
+    : page_size(GetPageSize()),
+      preferred_base(reinterpret_cast<void *>(preferred_base_)),
       is_executable(kAreaRWX == perms),
       base(nullptr),
       limit(nullptr),
@@ -93,9 +100,9 @@ uint8_t *AreaAllocator::Allocate(size_t size, size_t align) {
 
   // Initial allocation.
   if (unlikely(!base)) {
-    uint64_t alloc_size = k2MiB;
-    if (size > k2MiB) {
-      alloc_size = (size + (k2MiB - 1)) & ~(k2MiB - 1);
+    uint64_t alloc_size = page_size;
+    if (size > page_size) {
+      alloc_size = (size + (page_size - 1UL)) & ~(page_size - 1UL);
     }
 
     auto ret = mmap(preferred_base, alloc_size, prot, flags, -1, 0);
@@ -109,7 +116,7 @@ uint8_t *AreaAllocator::Allocate(size_t size, size_t align) {
 
     base = reinterpret_cast<uint8_t *>(ret);
     bump = base;
-    limit = base + k2MiB;
+    limit = base + alloc_size;
 
     if (is_executable) {
       FillWithBreakPoints(base, limit);
@@ -125,9 +132,9 @@ uint8_t *AreaAllocator::Allocate(size_t size, size_t align) {
 
   if ((bump + size) >= limit) {
     auto missing = (bump + size - limit);
-    auto alloc_size = (missing + (k2MiB - 1)) & ~(k2MiB - 1);
+    auto alloc_size = (missing + (page_size - 1UL)) & ~(page_size - 1UL);
     if (!alloc_size) {
-      alloc_size = k2MiB;
+      alloc_size = page_size;
     }
     auto ret = mmap(limit, alloc_size, prot, flags | MAP_FIXED, -1, 0);
     auto err = errno;

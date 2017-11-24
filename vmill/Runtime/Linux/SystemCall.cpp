@@ -68,8 +68,12 @@ static Memory *X86SystemCall(Memory *memory, State *state,
     case 65: return SysGetProcessGroupId(memory, state, syscall);
     case 74: return SysSetHostName(memory, state, syscall);
     case 76: return SysGetRlimit<linux_rlimit>(memory, state, syscall);
-    case 78: return SysGetTimeOfDay32(memory, state, syscall);
-    case 79: return SysSetTimeOfDay32(memory, state, syscall);
+    case 78:
+      return SysGetTimeOfDay<linux32_timeval, linux32_timezone>(
+          memory, state, syscall);
+    case 79:
+      return SysSetTimeOfDay<linux32_timeval, linux32_timezone>(
+          memory, state, syscall);
     case 85: return SysReadLink(memory, state, syscall);
     case 90: return SysMmap(memory, state, syscall);
     case 91: return SysMunmap(memory, state, syscall);
@@ -100,16 +104,21 @@ static Memory *X86SystemCall(Memory *memory, State *state,
     case 201: return SysGetEffectiveUserId(memory, state, syscall);
     case 202: return SysGetEffectiveGroupId(memory, state, syscall);
     case 220: return SysGetDirEntries64(memory, state, syscall);
+    case 221: return SysFcntl64(memory, state, syscall);
     case 224: return SysGetThreadId(memory, state, syscall);
     case 240: return SysFutex<linux32_timespec>(memory, state, syscall);
-    case 243: return SysSetThreadArea<linux_x86_user_desc>(
-        memory, state, syscall);
+    case 243:
+      return SysSetThreadArea<linux_x86_user_desc>(memory, state, syscall);
+    case 265: return SysClockGetTime<linux32_timespec>(memory, state, syscall);
+    case 266:
+      return SysClockGetResolution<linux32_timespec>(memory, state, syscall);
+
     case 295: return SysOpenAt(memory, state, syscall);
     case 300: return SysFStatAt<linux32_stat64>(memory, state, syscall);
     case 305: return SysReadLinkAt(memory, state, syscall);
     case 307: return SysFAccessAt(memory, state, syscall);
     default:
-      STRACE_ERROR(unsupported, "nr=%d", syscall_num);
+      STRACE_ERROR(unsupported, ANSI_COLOR_MAGENTA "nr=%d", syscall_num);
       return syscall.SetReturn(memory, state, 0);
   }
 }
@@ -142,8 +151,12 @@ static Memory *AArch64SystemCall(Memory *memory, State *state,
     case 155: return SysGetProcessGroupId(memory, state, syscall);
     case 161: return SysSetHostName(memory, state, syscall);
     case 163: return SysGetRlimit<linux_rlimit>(memory, state, syscall);
-    case 169: return SysGetTimeOfDay(memory, state, syscall);
-    case 170: return SysSetTimeOfDay32(memory, state, syscall);
+    case 169:
+      return SysGetTimeOfDay<struct timeval, struct timezone>(
+          memory, state, syscall);
+    case 170:
+      return SysSetTimeOfDay<struct timeval, struct timezone>(
+          memory, state, syscall);
     case 78: return SysReadLinkAt(memory, state, syscall);
     case 222: return SysMmap(memory, state, syscall);
     case 215: return SysMunmap(memory, state, syscall);

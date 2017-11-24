@@ -33,6 +33,7 @@
 #include <linux/limits.h>
 #include <linux/net.h>
 #include <dirent.h>
+#include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
