@@ -99,6 +99,7 @@ static Memory *X86SystemCall(Memory *memory, State *state,
     case 200: return SysGetGroupId(memory, state, syscall);
     case 201: return SysGetEffectiveUserId(memory, state, syscall);
     case 202: return SysGetEffectiveGroupId(memory, state, syscall);
+    case 220: return SysGetDirEntries64(memory, state, syscall);
     case 224: return SysGetThreadId(memory, state, syscall);
     case 240: return SysFutex<linux32_timespec>(memory, state, syscall);
     case 243: return SysSetThreadArea<linux_x86_user_desc>(

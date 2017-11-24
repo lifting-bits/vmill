@@ -614,4 +614,96 @@ static Memory *SysReadLinkAt(Memory *memory, State *state,
   return syscall.SetReturn(memory, state, ret);
 }
 
+static Memory *SysGetDirEntries64(Memory *memory, State *state,
+                                  const SystemCallABI &syscall) {
+  int fd = -1;
+  addr_t dirent = 0;
+  unsigned count = 0;
+
+  if (!syscall.TryGetArgs(memory, state, &fd, &dirent, &count)) {
+    STRACE_ERROR(getdents64, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  if (!CanWriteMemory(memory, dirent, count)) {
+    STRACE_ERROR(getdents64, "Can't write count=%u bytes to dirent=%" PRIxADDR,
+                 count, dirent);
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  auto pos = lseek(fd, 0, SEEK_CUR);
+  auto our_fd = dup(fd);
+  if (-1 == our_fd) {
+    auto err = errno;
+    STRACE_ERROR(getdents64, "Can't read directory fd=%d entries (1): %s",
+                 fd, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  }
+
+  auto dir = fdopendir(our_fd);
+  if (!dir) {
+    auto err = errno;
+    STRACE_ERROR(getdents64, "Can't read directory fd=%d entries (2): %s",
+                 fd, strerror(err));
+
+    close(our_fd);
+    return syscall.SetReturn(memory, state, -err);
+  }
+
+  seekdir(dir, pos);
+
+  long int ret = 0;
+  int num_entries = 0;
+  for (auto written = 0U; ; ) {
+    if (written) {
+      pos = telldir(dir);
+    }
+
+    auto our_entry = readdir(dir);
+    if (!our_entry) {
+      break;
+    }
+
+    struct linux_dirent64 entry = {};
+
+
+    auto name_len = strlen(our_entry->d_name);
+    auto entry_addr = dirent + written;
+    auto to_write = __builtin_offsetof(struct linux_dirent64, d_name);
+    to_write += name_len + sizeof(char); // For NUL-byte.
+
+    // Align it.
+    if (0 != (to_write % alignof(entry.d_ino))) {
+      to_write += alignof(entry.d_ino) - (to_write % alignof(entry.d_ino));
+    }
+
+    // Don't write beyond the end of the provided buffer.
+    if ((written + to_write) > count) {
+      break;
+    }
+
+    entry.d_ino = static_cast<decltype(entry.d_ino)>(our_entry->d_ino);
+    entry.d_off = static_cast<decltype(entry.d_off)>(our_entry->d_off);
+    entry.d_reclen = static_cast<uint16_t>(to_write);
+    entry.d_type = static_cast<decltype(entry.d_type)>(our_entry->d_type);
+    entry.d_name[0] = '\0';
+
+    TryWriteMemory(memory, entry_addr, entry);
+    CopyStringToMemory(memory, entry_addr + sizeof(struct linux_dirent64),
+                       our_entry->d_name, name_len);
+
+    written += to_write;
+    ret = static_cast<long int>(written);
+    num_entries += 1;
+  }
+
+  lseek(fd, pos, SEEK_SET);
+  closedir(dir);
+
+  STRACE_SUCCESS(
+      getdents64, "Read %ld of count=%u bytes (%d entries) from dir fd=%d",
+      ret, count, num_entries, fd);
+  return syscall.SetReturn(memory, state, ret);
+}
+
 }  // namespace

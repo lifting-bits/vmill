@@ -32,6 +32,7 @@
 #include <ctime>
 #include <linux/limits.h>
 #include <linux/net.h>
+#include <dirent.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
@@ -262,6 +263,21 @@ struct linux_x86_user_desc {
 struct linux_iovec {
   addr_t iov_base;
   addr_t iov_len;
+};
+
+struct linux_dirent {
+  addr_t d_ino;
+  addr_t d_off;
+  uint16_t d_reclen;
+  char d_name[1];  // Always at least one char because it's NUL-terminated.
+};
+
+struct linux_dirent64 {
+  uint64_t d_ino;
+  uint64_t d_off;
+  uint16_t d_reclen;
+  uint8_t d_type;
+  char d_name[1];  // Always at least one char because it's NUL-terminated.
 };
 
 struct linux_task : public vmill::Task {
