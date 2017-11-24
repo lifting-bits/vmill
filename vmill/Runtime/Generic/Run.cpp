@@ -14,9 +14,30 @@
  * limitations under the License.
  */
 
-#include <cstdio>
+#define ANSI_COLOR_RED     "\x1b[31m"
+#define ANSI_COLOR_GREEN   "\x1b[32m"
+#define ANSI_COLOR_YELLOW  "\x1b[33m"
+#define ANSI_COLOR_BLUE    "\x1b[34m"
+#define ANSI_COLOR_MAGENTA "\x1b[35m"
+#define ANSI_COLOR_CYAN    "\x1b[36m"
+#define ANSI_COLOR_RESET   "\x1b[0m"
 
-#include "vmill/Runtime/Task.h"
+#if 1
+# define STRACE_SYSCALL_NUM(nr) \
+    fprintf(stderr, ANSI_COLOR_YELLOW "%u:" ANSI_COLOR_RESET, nr)
+
+# define STRACE_ERROR(syscall, fmt, ...) \
+    fprintf(stderr, ANSI_COLOR_RED #syscall ":" fmt ANSI_COLOR_RESET "\n", \
+            ##__VA_ARGS__)
+
+# define STRACE_SUCCESS(syscall, fmt, ...) \
+    fprintf(stderr, ANSI_COLOR_GREEN #syscall ":" fmt ANSI_COLOR_RESET "\n", \
+          ##__VA_ARGS__)
+#else
+# define STRACE_SYSCALL_NUM(...)
+# define STRACE_ERROR(...)
+# define STRACE_SUCCESS(...)
+#endif
 
 // Initialize a task.
 static void __vmill_init_task(
@@ -37,99 +58,8 @@ static void __vmill_init_task(
   fegetenv(&old_env);
   feclearexcept(FE_ALL_EXCEPT);
   fesetenv(FE_DFL_ENV);
-  __vmill_init_fpu_environ(*reinterpret_cast<State *>(task->state));
+  __vmill_init_fpu_environ(reinterpret_cast<State *>(task->state));
   fegetenv(&(task->floating_point_env));
   fesetenv(&old_env);
 }
 
-Memory *__remill_sync_hyper_call(
-    State &state, Memory *mem, SyncHyperCall::Name call) {
-
-#ifdef VMILL_RUNTIME_X86
-  auto eax = state.gpr.rax.dword;
-  auto ebx = state.gpr.rbx.dword;
-  auto ecx = state.gpr.rcx.dword;
-  auto edx = state.gpr.rdx.dword;
-#endif  // VMILL_RUNTIME_X86
-
-  switch (call) {
-#ifdef VMILL_RUNTIME_X86
-    case SyncHyperCall::kX86SetSegmentES:
-      STRACE_ERROR(sync_hyper_call, "kX86SetSegmentES index=%u rpi=%u ti=%u",
-                   state.seg.es.index, state.seg.es.rpi, state.seg.es.ti);
-      break;
-    case SyncHyperCall::kX86SetSegmentSS:
-      STRACE_ERROR(sync_hyper_call, "kX86SetSegmentSS index=%u rpi=%u ti=%u",
-                   state.seg.ss.index, state.seg.ss.rpi, state.seg.ss.ti);
-      break;
-    case SyncHyperCall::kX86SetSegmentDS:
-      STRACE_ERROR(sync_hyper_call, "kX86SetSegmentDS index=%u rpi=%u ti=%u",
-                   state.seg.ds.index, state.seg.ds.rpi, state.seg.ds.ti);
-      break;
-    case SyncHyperCall::kX86SetSegmentGS:
-      STRACE_ERROR(sync_hyper_call, "kX86SetSegmentGS index=%u rpi=%u ti=%u",
-                   state.seg.gs.index, state.seg.gs.rpi, state.seg.gs.ti);
-      break;
-    case SyncHyperCall::kX86SetSegmentFS:
-      STRACE_ERROR(sync_hyper_call, "kX86SetSegmentFS index=%u rpi=%u ti=%u",
-                   state.seg.fs.index, state.seg.fs.rpi, state.seg.fs.ti);
-      break;
-
-# if defined(__x86_64__) || defined(__i386__) || defined(_M_X86)
-    case SyncHyperCall::kX86CPUID:
-      STRACE_SUCCESS(sync_hyper_call, "kX86CPUID eax=%x ebx=%x ecx=%x edx=%x",
-                     eax, ebx, ecx, edx);
-      state.gpr.rax.aword = 0;
-      state.gpr.rbx.aword = 0;
-      state.gpr.rcx.aword = 0;
-      state.gpr.rdx.aword = 0;
-
-      asm volatile(
-          "cpuid"
-          : "=a"(state.gpr.rax.dword),
-            "=b"(state.gpr.rbx.dword),
-            "=c"(state.gpr.rcx.dword),
-            "=d"(state.gpr.rdx.dword)
-          : "a"(eax),
-            "b"(ebx),
-            "c"(ecx),
-            "d"(edx)
-      );
-      break;
-
-    case SyncHyperCall::kX86ReadTSC:
-      state.gpr.rax.aword = 0;
-      state.gpr.rdx.aword = 0;
-      asm volatile(
-          "rdtsc"
-          : "=a"(state.gpr.rax.dword),
-            "=d"(state.gpr.rdx.dword)
-      );
-      STRACE_SUCCESS(sync_hyper_call, "kX86ReadTSC eax=%x edx=%x",
-                     state.gpr.rax.dword, state.gpr.rdx.dword);
-      break;
-
-    case SyncHyperCall::kX86ReadTSCP:
-      state.gpr.rax.aword = 0;
-      state.gpr.rcx.aword = 0;
-      state.gpr.rdx.aword = 0;
-      asm volatile(
-          "rdtscp"
-          : "=a"(state.gpr.rax.dword),
-            "=c"(state.gpr.rcx.dword),
-            "=d"(state.gpr.rdx.dword)
-      );
-      STRACE_SUCCESS(sync_hyper_call, "kX86ReadTSCP eax=%x ecx=%x edx=%x",
-                     state.gpr.rax.dword, state.gpr.rcx.dword,
-                     state.gpr.rdx.dword);
-      break;
-# endif  // defined(__x86_64__) || defined(__i386__) || defined(_M_X86)
-#endif  // VMILL_RUNTIME_X86
-
-    default:
-      STRACE_ERROR(sync_hyper_call, "%u", call);
-      break;
-  }
-
-  return mem;
-}

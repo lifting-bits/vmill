@@ -71,6 +71,7 @@ class Executor {
 
   // Have we previously executed `Executor::Run`?
   bool has_run;
+  bool will_run_many;
 
   // List of initial tasks.
   std::vector<InitialTaskInfo> initial_tasks;

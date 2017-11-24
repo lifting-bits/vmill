@@ -53,14 +53,14 @@ enum TaskStopLocation {
   kTaskExited
 };
 
-enum MemoryAccessFaultKind {
+enum MemoryAccessFaultKind : uint16_t {
   kMemoryAccessNoFault,
   kMemoryAccessFaultOnRead,
   kMemoryAccessFaultOnWrite,
   kMemoryAccessFaultOnExecute
 };
 
-enum MemoryValueType {
+enum MemoryValueType : uint16_t {
   kMemoryValueTypeInvalid,
   kMemoryValueTypeInteger,
   kMemoryValueTypeFloatingPoint,
@@ -85,16 +85,16 @@ struct Task {
   TaskStatus status;
   TaskStopLocation location;
 
-  // Floating point environment of this task; this is to let us resume in this
-  // task with the correct rounding modes and such.
-  fenv_t floating_point_env;
-
   struct {
     MemoryAccessFaultKind kind;
     MemoryValueType value_type;
     unsigned access_size;  // In bytes.
     uint64_t address;
   } mem_access_fault;
+
+  // Floating point environment of this task; this is to let us resume in this
+  // task with the correct rounding modes and such.
+  fenv_t floating_point_env;
 };
 
 }  // namespace vmill

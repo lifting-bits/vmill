@@ -23,7 +23,7 @@
 
 extern "C" {
 
-// Schedule a state for running.
+// Set the location of a task.
 [[gnu::used]]
 extern void __vmill_set_location(addr_t pc, vmill::TaskStopLocation loc);
 

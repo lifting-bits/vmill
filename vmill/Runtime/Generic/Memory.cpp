@@ -14,12 +14,6 @@
  * limitations under the License.
  */
 
-#include <algorithm>
-#include <cfenv>
-#include <cfloat>
-
-#include "vmill/Runtime/Generic/Intrinsics.h"
-
 size_t NumReadableBytes(Memory *memory, addr_t addr, size_t size) {
   addr_t i = 0;
   for (; i < size; i += 4096) {

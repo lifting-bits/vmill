@@ -14,9 +14,6 @@
  * limitations under the License.
  */
 
-#pragma STDC FENV_ACCESS ON
-#include <fenv.h>
-
 extern "C" {
 
 Memory *__vmill_reg_tracer(State &state, addr_t, Memory *memory) {
@@ -50,9 +47,9 @@ Memory *__vmill_reg_tracer(State &state, addr_t, Memory *memory) {
 
 namespace {
 
-static void __vmill_init_fpu_environ(State &state) {
+static void __vmill_init_fpu_environ(State *state) {
   int new_round = 0;
-  switch (state.fpcr.rmode) {
+  switch (state->fpcr.rmode) {
     case kFPURoundToNearestEven:  // RN (round nearest).
       new_round = FE_TONEAREST;
       break;

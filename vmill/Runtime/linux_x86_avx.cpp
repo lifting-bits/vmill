@@ -20,7 +20,27 @@
 #define VMILL_RUNTIME_X86 32
 #define VMILL_RUNTIME
 
-#include "vmill/Runtime/Linux/X86.cpp"
+#include <algorithm>
+#include <cassert>
+#include <cerrno>
+#include <cfenv>
+#include <cfloat>
+#include <cinttypes>
+#include <climits>
+#include <cstdlib>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+
+#include "remill/Arch/Runtime/Intrinsics.h"
+#include "remill/Arch/X86/Runtime/State.h"
+
+#include "vmill/Runtime/Generic/Intrinsics.h"
+#include "vmill/Runtime/Generic/Memory.cpp"
+#include "vmill/Runtime/Generic/SystemCallABI.h"
 #include "vmill/Runtime/Generic/X86.cpp"
 #include "vmill/Runtime/Generic/Run.cpp"
+
+#include "vmill/Runtime/Linux/Run.h"
+#include "vmill/Runtime/Linux/X86.cpp"
 #include "vmill/Runtime/Linux/Run.cpp"

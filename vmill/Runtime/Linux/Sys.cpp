@@ -25,7 +25,7 @@ static Memory *SysExit(Memory *memory, State *state,
   } else {
     STRACE_SUCCESS(exit, "status=%d", exit_code);
     __vmill_set_location(0, vmill::kTaskExited);
-    return nullptr;
+    return memory;
   }
 }
 

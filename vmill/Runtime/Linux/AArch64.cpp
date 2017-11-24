@@ -14,11 +14,6 @@
  * limitations under the License.
  */
 
-#include "remill/Arch/AArch64/Runtime/State.h"
-#include "remill/Arch/Runtime/Intrinsics.h"
-#include "vmill/Runtime/Generic/Intrinsics.cpp"
-#include "vmill/Runtime/Generic/SystemCallABI.h"
-
 // 64-bit `svc` system call ABI.
 class AArch64SupervisorCall : public SystemCallABI {
  public:
@@ -28,17 +23,16 @@ class AArch64SupervisorCall : public SystemCallABI {
     return ret_addr;
   }
 
-  Memory *SetReturn(Memory *memory, State *state,
-                    addr_t ret_val) const override {
-    state->gpr.x0.qword = ret_val;
-    return memory;
-  }
-
   addr_t GetSystemCallNum(Memory *, State *state) const override {
     return state->gpr.x8.qword;
   }
 
  protected:
+  Memory *DoSetReturn(Memory *memory, State *state,
+                    addr_t ret_val) const override {
+    state->gpr.x0.qword = ret_val;
+    return memory;
+  }
 
   bool CanReadArgs(Memory *, State *, int num_args) const override {
     return num_args <= 6;
@@ -73,10 +67,10 @@ Memory *__remill_async_hyper_call(
 
   switch (state.hyper_call) {
     case AsyncHyperCall::kAArch64SupervisorCall: {
-      AArch64SupervisorCall abi;
-      memory = AArch64SystemCall(memory, &state, abi);
-      if (memory) {
-        ret_addr = abi.GetReturnAddress(memory, ret_addr);
+      AArch64SupervisorCall syscall;
+      memory = AArch64SystemCall(memory, &state, syscall);
+      if (syscall.Completed()) {
+        ret_addr = syscall.GetReturnAddress(memory, ret_addr);
         state.gpr.pc.aword = ret_addr;
         __vmill_set_location(ret_addr, vmill::kTaskStoppedAfterHyperCall);
       }
@@ -89,7 +83,19 @@ Memory *__remill_async_hyper_call(
       break;
   }
 
-  return nullptr;
+  return memory;
+}
+
+Memory *__remill_sync_hyper_call(
+    State &state, Memory *memory, SyncHyperCall::Name call) {
+
+  switch (call) {
+    default:
+      STRACE_ERROR(sync_hyper_call, "%u", call);
+      break;
+  }
+
+  return memory;
 }
 
 }  // extern C

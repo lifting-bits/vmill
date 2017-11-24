@@ -921,7 +921,7 @@ class SocketCallABI : public SystemCallABI {
     return state->gpr.rax.aword;
   }
 
-  Memory *SetReturn(Memory *memory, State *state,
+  Memory *DoSetReturn(Memory *memory, State *state,
                     addr_t ret_val) const override {
     state->gpr.rax.aword = static_cast<AddrT>(ret_val);
     return memory;

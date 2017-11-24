@@ -40,6 +40,11 @@ static thread_local Task *gTask = nullptr;
 static thread_local Executor *gExecutor = nullptr;
 static thread_local bool gFaulted = false;
 
+// Returns a pointer to the currently executing task.
+extern "C" Task *__vmill_current(void) {
+  return gTask;
+}
+
 extern "C" AddressSpace *__vmill_allocate_address_space(void) {
   return new AddressSpace;
 }
@@ -357,6 +362,7 @@ Executor::Executor(void)
       lifter(Lifter::Create(context)),
       code_cache(CodeCache::Create(context)),
       has_run(false),
+      will_run_many(false),
       init_intrinsic(reinterpret_cast<decltype(init_intrinsic)>(
           code_cache->Lookup("__vmill_init"))),
       create_task_intrinsic(
@@ -467,7 +473,7 @@ void Executor::RunOnce(void) {
       << "To emulate process more than once, use `Executor::RunMany`.";
 
   gExecutor = this;
-  has_run = true;
+  will_run_many = false;
   LOG(INFO)
       << "Initializing the runtime.";
   init_intrinsic();
@@ -481,6 +487,7 @@ void Executor::RunOnce(void) {
   resume_intrinsic();
   fini_intrinsic();
   gExecutor = nullptr;
+  has_run = true;
 }
 
 void Executor::RunMany(void) {
@@ -489,11 +496,20 @@ void Executor::RunMany(void) {
   LOG(FATAL)
       << "Executor::RunMany is not yet implemented.";
   gExecutor = this;
+  will_run_many = true;
+
   gExecutor = nullptr;
 }
 
 LiftedFunction *Executor::FindLiftedFunctionForTask(Task *task) {
   const auto memory = task->memory;
+
+  // If we're going to repeatedly execut the snapshotted program, then
+  // don't clear old versions of the hash table.
+  if (unlikely(!will_run_many && memory->CodeVersionIsInvalid())) {
+    live_traces.clear();
+  }
+
   const PC task_pc = task->pc;
   const auto task_pc_uint = static_cast<uint64_t>(task_pc);
   const CodeVersion code_version = memory->ComputeCodeVersion();

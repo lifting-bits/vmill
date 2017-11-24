@@ -20,12 +20,8 @@
 namespace vmill {
 namespace {
 
-struct LinuxTask : public Task {
-  LinuxTask *next;
-  LinuxTask **link;
-};
-
-static LinuxTask *gTaskList = nullptr;
+static linux_task *gTaskList = nullptr;
+static linux_task *gLastTask = nullptr;
 
 }  // namespace
 
@@ -42,21 +38,25 @@ extern "C" void __vmill_fini(void) {
 // Add a task to the operating system.
 extern "C" void __vmill_create_task(
     const void *state, vmill::PC pc, vmill::AddressSpace *memory) {
-  auto task = new LinuxTask;
-  memset(task, 0, sizeof(LinuxTask));
+  auto task = new linux_task;
+  memset(task, 0, sizeof(linux_task));
   __vmill_init_task(task, state, pc, memory);
 
   if (gTaskList) {
-    gTaskList->link = &(task->next);
+    gLastTask->next_circular = task;
+    task->next_circular = gTaskList;
+
+  } else {
+    gLastTask = task;
+    task->next_circular = task;
   }
 
   task->next = gTaskList;
-  task->link = &gTaskList;
   gTaskList = task;
 }
 
 // Call into vmill to execute the actual task.
-extern "C" void __vmill_run(vmill::Task *task);
+extern "C" void __vmill_run(linux_task *task);
 
 // Called by the executor when all initial tasks are loaded.
 extern "C" void __vmill_resume(void) {
@@ -66,7 +66,11 @@ extern "C" void __vmill_resume(void) {
       switch (task->status) {
         case vmill::kTaskStatusRunnable:
           progressed = true;
-          __vmill_run(task);
+          if (!task->blocked_count) {
+            __vmill_run(task);
+          } else {
+            task->blocked_count--;
+          }
           break;
 
         default:

@@ -28,17 +28,17 @@ static constexpr uint64_t k4GiB = k1GiB * 4ULL;
 
 // Minimum allowed address for an `mmap`. On 64-bit, this is any address
 // above the 4 GiB. In 32-bit, this is anything above 1 GiB.
-static constexpr addr_t kAllocMin = IF_64BIT_ELSE(k4GiB, k1GiB);
+static constexpr uint64_t kAllocMin = IF_64BIT_ELSE(k4GiB, k1GiB);
 
 // Maximum allowed address for an `mmap`.
-static constexpr addr_t kAllocMax = IF_64BIT_ELSE((1ULL << 47ULL), k3GiB);
+static constexpr uint64_t kAllocMax = IF_64BIT_ELSE((1ULL << 47ULL), k3GiB);
 
 #if 32 == ADDRESS_SIZE_BITS
-static std::subtract_with_carry_engine<addr_t, 24, 10, 24> gRandGen;
+static std::subtract_with_carry_engine<uint64_t, 24, 10, 24> gRandGen;
 static constexpr addr_t kRandGenShift = 7;  // Keep high bit is always `0`.
 #else
-static std::subtract_with_carry_engine<addr_t, 48, 5, 12> gRandGen;
-static constexpr addr_t kRandGenShift = 0;  // keep high 16 bites `0`.
+static std::subtract_with_carry_engine<uint64_t, 48, 5, 12> gRandGen;
+static constexpr uint64_t kRandGenShift = 0;  // keep high 16 bites `0`.
 #endif
 
 static bool gRandGenInitialized = false;
@@ -48,7 +48,7 @@ static bool gRandGenInitialized = false;
 // that we don't want to completely shadow the structure maintained in VMill
 // for the address space, so instead we'll just make queries to it.
 static addr_t FindRegionToMap(Memory *memory, addr_t size,
-                              addr_t alloc_max=kAllocMax) {
+                              uint64_t alloc_max=kAllocMax) {
 
   // TODO(pag): Actually handle global constructors somewhere, this is super
   //            ugly.
@@ -62,10 +62,17 @@ static addr_t FindRegionToMap(Memory *memory, addr_t size,
     // the zero page, then we will constrain it to be smaller than the maximum
     // allocatable address.
     auto gen = gRandGen();
-    auto guess = (static_cast<addr_t>(gen) << kRandGenShift) &
+    auto guess = (static_cast<uint64_t>(gen) << kRandGenShift) &
                  ~(kPageSize - 1UL);
-    auto where = std::max<addr_t>(
-        std::min<addr_t>(guess, alloc_max - size), kAllocMin);
+
+    auto where = std::max<uint64_t>(
+        std::min<uint64_t>(guess, alloc_max - size), kAllocMin);
+
+
+    auto where_addr = static_cast<addr_t>(where);
+    if (where != static_cast<uint64_t>(where_addr)) {
+      continue;  // Integer overflow.
+    }
 
     // The number is interpreted as a negative number. `mmap`s return value
     // must be positive, otherwise it will be treated as encoding `errno`.
@@ -81,25 +88,28 @@ static addr_t FindRegionToMap(Memory *memory, addr_t size,
     // There is no next mapping. This implies that `where` is not part of
     // any mapping. That being the case, `where` must be beyond any other
     // mapping, and so we have trivially discovered a hole.
-    auto next_end = __vmill_next_memory_end(memory, where);
+    auto next_end = __vmill_next_memory_end(memory, where_addr);
     if (!next_end) {
-      return where;
+      return where_addr;
     }
 
     auto next_begin = __vmill_prev_memory_begin(memory, next_end - 1);
-    if (next_begin <= where) {
-      continue;  // `where` is inside of an existing range.
+
+    // `where_addr` is inside of an existing range.
+    if (next_begin <= where_addr) {
+      continue;
     }
 
-    if ((where + size) <= next_begin) {
-      return where;  // Found a hole big enough in front of the next mapping.
+    // Found a hole big enough in front of the next mapping.
+    if ((where_addr + size) <= next_begin) {
+      return where_addr;
     }
   }
 
   // Linearly search for a hole, starting from high memory and going down
   // from there.
   addr_t candidate = 0;
-  for (auto max = alloc_max; max >= kAllocMin; ) {
+  for (auto max = static_cast<addr_t>(alloc_max); max >= kAllocMin; ) {
     auto prev_begin = __vmill_prev_memory_begin(memory, max - 1);
     if (!prev_begin) {
       candidate = max - size;
@@ -111,8 +121,10 @@ static addr_t FindRegionToMap(Memory *memory, addr_t size,
     // There is at least enough space between the end of one mapped
     // region and the beginning of another.
     if ((prev_end + size) <= max) {
+
+      // At least one page of redzone.
       if ((max - prev_end - size) > kPageSize) {
-        return max - size - kPageSize;  // At least one page of redzone.
+        return max - size - static_cast<addr_t>(kPageSize);
       } else {
         candidate = max - size;
       }

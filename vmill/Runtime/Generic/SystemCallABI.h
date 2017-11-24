@@ -26,9 +26,14 @@ struct State;
 // setting the return value from the system call.
 class SystemCallABI {
  public:
-  SystemCallABI(void) = default;
+  inline SystemCallABI(void)
+      : completed(false) {}
 
   virtual ~SystemCallABI(void) = default;
+
+  inline bool Completed(void) {
+    return completed;
+  }
 
   // Find the return address of this system call.
   virtual addr_t GetReturnAddress(Memory *memory, addr_t ret_addr) const = 0;
@@ -111,11 +116,10 @@ class SystemCallABI {
     return true;
   }
 
-  virtual Memory *SetReturn(Memory *, State *, addr_t) const = 0;
-
   template <typename T>
   inline Memory *SetReturn(Memory *memory, State *state, T val) const {
-    return this->SetReturn(
+    completed = true;
+    return DoSetReturn(
         memory, state, static_cast<addr_t>(static_cast<long>(val)));
   }
 
@@ -127,10 +131,14 @@ class SystemCallABI {
     return static_cast<T>(GetArg(memory, state, i));
   }
 
+  virtual Memory *DoSetReturn(Memory *, State *, addr_t) const = 0;
+
   virtual bool CanReadArgs(Memory *memory, State *state,
                            int num_args) const = 0;
 
   virtual addr_t GetArg(Memory *&memory, State *state, int i) const = 0;
+
+  mutable bool completed;
 };
 
 #endif  // VMILL_RUNTIME_SYSTEMCALLABI_H_
