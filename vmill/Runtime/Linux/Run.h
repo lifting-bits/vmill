@@ -271,7 +271,7 @@ struct linux_dirent {
   addr_t d_ino;
   addr_t d_off;
   uint16_t d_reclen;
-  char d_name[1];  // Always at least one char because it's NUL-terminated.
+  // char d_name[];
 };
 
 struct linux_dirent64 {
@@ -279,7 +279,7 @@ struct linux_dirent64 {
   uint64_t d_off;
   uint16_t d_reclen;
   uint8_t d_type;
-  char d_name[1];  // Always at least one char because it's NUL-terminated.
+  // char d_name[];
 };
 
 struct linux32_statfs64 {

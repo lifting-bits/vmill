@@ -523,7 +523,7 @@ LiftedFunction *Executor::FindLiftedFunctionForTask(Task *task) {
   // We do a preliminary check here to make sure the code is executable. We
   if (!memory->CanExecute(task_pc_uint)) {
     LOG(ERROR)
-        << "Cannot execute non-executable code at"
+        << "Cannot execute non-executable code at "
         << std::hex << task_pc_uint << std::dec;
 
     task->status = kTaskStatusMemoryAccessFault;

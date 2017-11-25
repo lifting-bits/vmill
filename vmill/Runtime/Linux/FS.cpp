@@ -482,7 +482,7 @@ static Memory *SysGetCurrentWorkingDirectory(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -ERANGE);
   }
 
-  auto copied_len = CopyStringToMemory(memory, buf, ret, cwd_len);
+  auto copied_len = CopyStringToMemory(memory, buf, ret, cwd_len + 1);
 
   // Kernel returns the length of the buffer filled, including the NUL-
   // terminator.
@@ -669,8 +669,8 @@ static Memory *SysGetDirEntries64(Memory *memory, State *state,
 
     auto name_len = strlen(our_entry->d_name);
     auto entry_addr = dirent + written;
-    auto to_write = __builtin_offsetof(struct linux_dirent64, d_name);
-    to_write += name_len + sizeof(char); // For NUL-byte.
+    auto dirent_size = __builtin_offsetof(struct linux_dirent64, d_type) + 1;
+    auto to_write = dirent_size + name_len + sizeof(char); // For NUL-byte.
 
     // Align it.
     if (0 != (to_write % alignof(entry.d_ino))) {
@@ -686,11 +686,10 @@ static Memory *SysGetDirEntries64(Memory *memory, State *state,
     entry.d_off = static_cast<decltype(entry.d_off)>(our_entry->d_off);
     entry.d_reclen = static_cast<uint16_t>(to_write);
     entry.d_type = static_cast<decltype(entry.d_type)>(our_entry->d_type);
-    entry.d_name[0] = '\0';
 
     TryWriteMemory(memory, entry_addr, entry);
-    CopyStringToMemory(memory, entry_addr + sizeof(struct linux_dirent64),
-                       our_entry->d_name, name_len);
+    CopyStringToMemory(memory, entry_addr + dirent_size,
+                       our_entry->d_name, name_len + 1);
 
     written += to_write;
     ret = static_cast<long int>(written);
