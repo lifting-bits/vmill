@@ -95,14 +95,14 @@ class AddressSpace : public Memory {
                       bool can_write, bool can_exec);
 
   // Adds a new memory mapping with default read/write permissions.
-  void AddMap(uint64_t base, size_t size, bool can_read=true,
-              bool can_write=true, bool can_exec=false);
+  void AddMap(uint64_t base, size_t size, const char *name=nullptr,
+              uint64_t offset=0);
 
   // Removes a memory mapping.
   void RemoveMap(uint64_t base, size_t size);
 
   // Log out the current state of the memory maps.
-  void LogMaps(void);
+  void LogMaps(std::ostream &stream);
 
   // Find the smallest mapped memory range limit address that is greater
   // than `find`.

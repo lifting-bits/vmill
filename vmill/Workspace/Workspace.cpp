@@ -284,7 +284,10 @@ static void LoadAddressSpaceFromSnapshot(
     auto base = static_cast<uint64_t>(page.base());
     auto limit = static_cast<uint64_t>(page.limit());
     auto size = limit - base;
-    emu_addr_space->AddMap(base, size);
+    auto path = page.has_file_path() ? page.file_path().c_str() : nullptr;
+    auto offset = static_cast<uint64_t>(
+        page.has_file_offset() ? page.file_offset() : 0L);
+    emu_addr_space->AddMap(base, size, path, offset);
     LoadPageRangeFromFile(emu_addr_space, page);
     emu_addr_space->SetPermissions(base, size, page.can_read(),
                                    page.can_write(), page.can_exec());

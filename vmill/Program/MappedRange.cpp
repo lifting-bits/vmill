@@ -91,7 +91,8 @@ class ArrayMemoryAllocator {
 // Basic information about some region of mapped memory within an address space.
 class MappedRangeBase : public MappedRange {
  public:
-  MappedRangeBase(uint64_t base_address_, uint64_t limit_address_);
+  MappedRangeBase(uint64_t base_address_, uint64_t limit_address_,
+                  const char *name_, uint64_t offset_);
   virtual ~MappedRangeBase(void);
   virtual bool IsValid(void) const;
   void InvalidateCodeVersion(void) final;
@@ -119,11 +120,13 @@ class InvalidMemoryMap : public MappedRangeBase {
 // bytes.
 class ArrayMemoryMap : public MappedRangeBase {
  public:
-  ArrayMemoryMap(uint64_t base_address_, uint64_t limit_address_);
+  ArrayMemoryMap(uint64_t base_address_, uint64_t limit_address_,
+                 const char *name_, uint64_t offset_);
 
-  virtual ~ArrayMemoryMap(void);
 
   explicit ArrayMemoryMap(ArrayMemoryMap *steal);
+
+  virtual ~ArrayMemoryMap(void);
 
   bool Read(uint64_t address, uint8_t *out_val) override;
   bool Write(uint64_t address, uint8_t val) override;
@@ -175,8 +178,9 @@ static_assert(sizeof(CopyOnWriteMemoryMap) == sizeof(MappedRangeBase),
               "Vtable overwriting won't work!");
 
 MappedRangeBase::MappedRangeBase(
-    uint64_t base_address_, uint64_t limit_address_)
-    : MappedRange(base_address_, limit_address_),
+    uint64_t base_address_, uint64_t limit_address_,
+    const char *name_, uint64_t offset_)
+    : MappedRange(base_address_, limit_address_, name_, offset_),
       code_version(0),
       code_version_is_valid(false),
       data{nullptr, 0},
@@ -195,7 +199,10 @@ bool MappedRangeBase::IsValid(void) const {
 }
 
 MemoryMapPtr MappedRangeBase::Copy(uint64_t clone_base, uint64_t clone_limit) {
-  auto array_backed = std::make_shared<ArrayMemoryMap>(clone_base, clone_limit);
+  auto array_backed = std::make_shared<ArrayMemoryMap>(
+      clone_base, clone_limit,
+      Name(), Offset() + (clone_base - BaseAddress()));
+
   for (; clone_base < clone_limit; ++clone_base) {
     if (Contains(clone_base)) {
       uint8_t val = 0;
@@ -219,7 +226,8 @@ bool InvalidMemoryMap::Write(uint64_t, uint8_t) {
 }
 
 MemoryMapPtr InvalidMemoryMap::Clone(void) {
-  return std::make_shared<InvalidMemoryMap>(base_address, limit_address);
+  return std::make_shared<InvalidMemoryMap>(BaseAddress(), LimitAddress(),
+                                            Name(), Offset());
 }
 
 uint64_t InvalidMemoryMap::ComputeCodeVersion(void) {
@@ -230,8 +238,9 @@ ArrayMemoryAllocator ArrayMemoryMap::allocator;
 
 // Allocate memory for some data. This will redzone the allocation with
 // two unreadable/unwritable pages around the allocation.
-ArrayMemoryMap::ArrayMemoryMap(uint64_t base_address_, uint64_t limit_address_)
-    : MappedRangeBase(base_address_, limit_address_) {
+ArrayMemoryMap::ArrayMemoryMap(uint64_t base_address_, uint64_t limit_address_,
+                               const char *name_, uint64_t offset_)
+    : MappedRangeBase(base_address_, limit_address_, name_, offset_) {
 
   CHECK(Size() == (Size() / kPageSize) * kPageSize)
       << "Invalid memory map size.";
@@ -240,7 +249,8 @@ ArrayMemoryMap::ArrayMemoryMap(uint64_t base_address_, uint64_t limit_address_)
 }
 
 ArrayMemoryMap::ArrayMemoryMap(ArrayMemoryMap *steal)
-    : MappedRangeBase(steal->BaseAddress(), steal->LimitAddress()) {
+    : MappedRangeBase(steal->BaseAddress(), steal->LimitAddress(),
+                      steal->Name(), steal->Offset()) {
   data = steal->data;
   steal->data.Reset();
 }
@@ -289,12 +299,14 @@ bool EmptyMemoryMap::Read(uint64_t, uint8_t *out_val) {
 }
 
 bool EmptyMemoryMap::Write(uint64_t address, uint8_t val) {
-  auto self = new (this) ArrayMemoryMap(base_address, limit_address);
+  auto self = new (this) ArrayMemoryMap(BaseAddress(), LimitAddress(),
+                                        Name(), Offset());
   return self->Write(address, val);
 }
 
 MemoryMapPtr EmptyMemoryMap::Clone(void) {
-  return std::make_shared<EmptyMemoryMap>(base_address, limit_address);
+  return std::make_shared<EmptyMemoryMap>(BaseAddress(), LimitAddress(),
+                                          Name(), Offset());
 }
 
 uint64_t EmptyMemoryMap::ComputeCodeVersion(void) {
@@ -302,7 +314,8 @@ uint64_t EmptyMemoryMap::ComputeCodeVersion(void) {
 }
 
 CopyOnWriteMemoryMap::CopyOnWriteMemoryMap(MemoryMapPtr parent_)
-    : MappedRangeBase(parent_->BaseAddress(), parent_->LimitAddress()) {
+    : MappedRangeBase(parent_->BaseAddress(), parent_->LimitAddress(),
+                      parent_->Name(), parent_->Offset()) {
   while (parent_) {
     parent = parent_;
     parent_ = reinterpret_cast<MappedRangeBase &>(*parent).parent;
@@ -323,9 +336,11 @@ bool CopyOnWriteMemoryMap::Write(uint64_t address, uint8_t val) {
   auto parent_ptr = parent;
   auto base_addr = BaseAddress();
   auto limit_addr = LimitAddress();
+
   parent.reset();
 
-  auto self = new (this) ArrayMemoryMap(base_addr, limit_addr);
+  auto self = new (this) ArrayMemoryMap(base_addr, limit_addr,
+                                        parent_ptr->Name(), Offset());
   for (uint64_t index = 0; base_addr < limit_addr; ++base_addr, ++index) {
     (void) parent_ptr->Read(base_addr, &(self->data.base[index]));
   }
@@ -348,19 +363,31 @@ void *CopyOnWriteMemoryMap::ToVirtualAddress(uint64_t address) {
 }  // namespace
 
 MemoryMapPtr MappedRange::Create(uint64_t base_address_,
-                                 uint64_t limit_address_) {
-  MemoryMapPtr ptr(new EmptyMemoryMap(base_address_, limit_address_));
+                                 uint64_t limit_address_,
+                                 const char *name_,
+                                 uint64_t offset_) {
+  MemoryMapPtr ptr(new EmptyMemoryMap(base_address_, limit_address_,
+                                      name_, offset_));
   return ptr;
 }
 
 MemoryMapPtr MappedRange::CreateInvalid(void) {
-  MemoryMapPtr ptr(new InvalidMemoryMap(0, 0));
+  MemoryMapPtr ptr(new InvalidMemoryMap(0, 0, "invalid", 0));
   return ptr;
 }
 
-MappedRange::MappedRange(uint64_t base_address_, uint64_t limit_address_)
+MappedRange::MappedRange(uint64_t base_address_, uint64_t limit_address_,
+                         const char *name_, uint64_t offset_)
     : base_address(base_address_),
-      limit_address(limit_address_) {}
+      limit_address(limit_address_),
+      offset(offset_) {
+  if (!name_) {
+    name[0] = '\0';
+  } else if (name_ != &(name[0])) {
+    strncpy(&(name[0]), name_, sizeof(name));
+    name[sizeof(name) - 1] = '\0';
+  }
+}
 
 MappedRange::~MappedRange(void) {}
 

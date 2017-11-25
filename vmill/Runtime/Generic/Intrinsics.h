@@ -53,7 +53,8 @@ extern bool __vmill_can_write_byte(Memory *memory, addr_t addr);
 // to emulate things like ASLR. This also means that passing in `0` is a valid
 // thing and that it can/will be allocated.
 extern Memory *__vmill_allocate_memory(Memory *memory, addr_t where,
-                                       addr_t size);
+                                       addr_t size, const char *name,
+                                       uint64_t offset);
 
 // Tells the VMM to free some memory.
 extern Memory *__vmill_free_memory(Memory *memory, addr_t where, addr_t size);

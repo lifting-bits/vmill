@@ -29,7 +29,8 @@ using MemoryMapPtr = std::shared_ptr<MappedRange>;
 // Basic information about some region of mapped memory within an address space.
 class MappedRange {
  public:
-  static MemoryMapPtr Create(uint64_t base_address_, uint64_t limit_address_);
+  static MemoryMapPtr Create(uint64_t base_address_, uint64_t limit_address_,
+                             const char *name_, uint64_t offset_);
   static MemoryMapPtr CreateInvalid(void);
 
   virtual ~MappedRange(void);
@@ -42,6 +43,14 @@ class MappedRange {
 
   inline uint64_t LimitAddress(void) const {
     return limit_address;
+  }
+
+  inline const char *Name(void) const {
+    return name;
+  }
+
+  inline uint64_t Offset(void) const {
+    return offset;
   }
 
   inline uint64_t Size(void) const {
@@ -79,10 +88,15 @@ class MappedRange {
   virtual void *ToVirtualAddress(uint64_t addr);
 
  protected:
-  MappedRange(uint64_t base_address_, uint64_t limit_address_);
+  MappedRange(uint64_t base_address_, uint64_t limit_address_,
+              const char *name_, uint64_t offset_);
 
   const uint64_t base_address;
   const uint64_t limit_address;
+
+  // Mostly for debugging purposes.
+  char name[256];
+  const uint64_t offset;
 
  private:
   MappedRange(const MappedRange &) = delete;

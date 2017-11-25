@@ -665,8 +665,6 @@ static Memory *SysGetDirEntries64(Memory *memory, State *state,
     }
 
     struct linux_dirent64 entry = {};
-
-
     auto name_len = strlen(our_entry->d_name);
     auto entry_addr = dirent + written;
     auto dirent_size = __builtin_offsetof(struct linux_dirent64, d_type) + 1;

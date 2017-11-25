@@ -50,6 +50,9 @@ set_source_files_properties(${PROJECT_PROTOBUFHEADERFILES} PROPERTIES COMPILE_FL
 add_library(${PROJECT_NAME} STATIC
     ${PROJECT_PROTOBUFSOURCEFILES}
     vmill/Arch/Decoder.cpp
+    vmill/Arch/Arch.cpp
+    vmill/Arch/X86.cpp
+    vmill/Arch/AArch64.cpp
     vmill/BC/Compiler.cpp
     vmill/BC/Lifter.cpp
     vmill/BC/Util.cpp

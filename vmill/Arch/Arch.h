@@ -14,25 +14,17 @@
  * limitations under the License.
  */
 
-namespace {
+#ifndef VMILL_ARCH_ARCH_H_
+#define VMILL_ARCH_ARCH_H_
 
-static void __vmill_init_fpu_environ(State *state) {
-  int new_round = 0;
-  switch (state->fpcr.rmode) {
-    case kFPURoundToNearestEven:  // RN (round nearest).
-      new_round = FE_TONEAREST;
-      break;
-    case kFPURoundUpInf:  // RP (round toward plus infinity).
-      new_round = FE_UPWARD;
-      break;
-    case kFPURoundDownNegInf:  // RM (round toward minus infinity).
-      new_round = FE_DOWNWARD;
-      break;
-    case kFPURoundToZero:  // RZ (round toward zero).
-      new_round = FE_TOWARDZERO;
-      break;
-  }
-  fesetround(new_round);
-}
+#include <ostream>
 
-}  // namespace
+struct ArchState;
+
+namespace vmill {
+
+void LogRegisterState(std::ostream &os, const ArchState *state);
+
+}  // namespace vmill
+
+#endif  // VMILL_ARCH_ARCH_H_

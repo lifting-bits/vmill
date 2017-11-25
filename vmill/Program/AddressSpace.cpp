@@ -18,6 +18,7 @@
 #include <glog/logging.h>
 
 #include <algorithm>
+#include <iomanip>
 #include <limits>
 #include <new>
 
@@ -409,8 +410,8 @@ void AddressSpace::SetPermissions(uint64_t base_, size_t size, bool can_read,
   }
 }
 
-void AddressSpace::AddMap(uint64_t base_, size_t size,
-                          bool can_read, bool can_write, bool can_exec) {
+void AddressSpace::AddMap(uint64_t base_, size_t size, const char *name,
+                          uint64_t offset) {
   auto base = AlignDownToPage(base_);
   auto limit = base + RoundUpToPage(size);
 
@@ -435,8 +436,8 @@ void AddressSpace::AddMap(uint64_t base_, size_t size,
         << " existing maps";
   }
 
-  auto new_map = MappedRange::Create(base, limit);
-  SetPermissions(base, (limit - base), can_read, can_write, can_exec);
+  auto new_map = MappedRange::Create(base, limit, name, offset);
+  SetPermissions(base, (limit - base), true, true, false);
 
   maps.swap(old_ranges);
   maps.push_back(new_map);
@@ -632,13 +633,31 @@ const MemoryMapPtr &AddressSpace::FindWNXRange(uint64_t addr) {
 }
 
 // Log out the current state of the memory maps.
-void AddressSpace::LogMaps(void) {
-  LOG(INFO)
-      << "Memory maps:";
+void AddressSpace::LogMaps(std::ostream &os) {
+  os << "Memory maps:" << std::endl;
   for (const auto &range : maps) {
-    LOG(INFO)
-        << "  [" << std::hex << range->BaseAddress() << ", "
-        << std::hex << range->LimitAddress() << ")";
+    std::stringstream ss;
+    auto flags = ss.flags();
+    ss << "  [" << std::hex << std::setw(16) << std::setfill('0')
+       << range->BaseAddress() << ", " << std::hex << std::setw(16)
+       << std::setfill('0') << range->LimitAddress() << ")";
+    ss.setf(flags);
+
+    auto virt = range->ToVirtualAddress(range->BaseAddress());
+    if (virt) {
+      ss << " at " << virt;
+    }
+
+    auto name = range->Name();
+    auto offset = range->Offset();
+    if (name && name[0]) {
+      ss << " from " << name;
+      if (offset) {
+        ss << " (offset " << std::hex << offset << ")";
+      }
+    }
+
+    os << ss.str() << std::endl;
   }
 }
 

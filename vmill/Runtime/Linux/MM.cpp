@@ -267,6 +267,9 @@ static Memory *SysMmap(Memory *memory, State *state,
   //            stealing a new fd (with `dup`), and recording some meta-data
   //            to note when to flush the mapped data.
   off_t old_offset = 0;
+  const char *fd_name = nullptr;
+  uint64_t fd_offset = 0;
+
   if (0 <= fd) {
     old_offset = lseek(fd, 0, SEEK_CUR);
     if (-1 == old_offset) {
@@ -294,10 +297,13 @@ static Memory *SysMmap(Memory *memory, State *state,
       lseek(fd, old_offset, SEEK_SET);  // Maintain transparency.
       return memory;
     }
+
+    fd_name = GetBasePathAt(fd);
+    fd_offset = offset;
   }
 
   // Allocate the RW memory.
-  memory = __vmill_allocate_memory(memory, addr, size);
+  memory = __vmill_allocate_memory(memory, addr, size, fd_name, fd_offset);
 
   // Copy data from the file into the memory mapping.
   if (0 <= fd) {

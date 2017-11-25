@@ -78,6 +78,10 @@ struct Task {
   // Current program counter of this task.
   PC pc;
 
+  // Last trace entry program counter executed from this task. This can be
+  // a useful debugging aid.
+  PC last_pc;
+
   // Memory that this task can access.
   AddressSpace *memory;
 

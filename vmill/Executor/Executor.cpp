@@ -23,7 +23,7 @@
 
 #include "remill/BC/Util.h"
 #include "remill/OS/FileSystem.h"
-
+#include "vmill/Arch/Arch.h"
 #include "vmill/Arch/Decoder.h"
 #include "vmill/BC/Lifter.h"
 #include "vmill/BC/Util.h"
@@ -62,8 +62,9 @@ extern "C" bool __vmill_can_write_byte(AddressSpace *memory, uint64_t addr) {
 }
 
 extern "C" AddressSpace *__vmill_allocate_memory(
-    AddressSpace *memory, uint64_t where, uint64_t size) {
-  memory->AddMap(where, size);
+    AddressSpace *memory, uint64_t where, uint64_t size,
+    const char *name, uint64_t offset) {
+  memory->AddMap(where, size, name, offset);
   return memory;
 }
 
@@ -316,8 +317,9 @@ extern "C" int __remill_fpu_exception_test_and_clear(
 extern "C" void __vmill_run(Task *task) {
   gTask = task;
 
-  auto lifted_func = gExecutor->FindLiftedFunctionForTask(task);
-  auto pc_uint = static_cast<uint64_t>(task->pc);
+  const auto lifted_func = gExecutor->FindLiftedFunctionForTask(task);
+  const auto pc = task->pc;
+  const auto pc_uint = static_cast<uint64_t>(pc);
 
   DLOG(INFO)
       << "Executing trace " << std::hex << pc_uint << std::dec;
@@ -329,6 +331,8 @@ extern "C" void __vmill_run(Task *task) {
   fegetenv(&(task->floating_point_env));
   fesetenv(&old_env);
 
+  task->last_pc = pc;
+
   gTask = nullptr;
 
   if (gFaulted) {
@@ -338,6 +342,9 @@ extern "C" void __vmill_run(Task *task) {
         << pc_uint << " (" << memory->ToVirtualAddress(pc_uint)
         << " lifted to " << reinterpret_cast<void *>(lifted_func)
         << ")" << std::dec;
+
+    LogRegisterState(LOG(ERROR), task->state);
+    memory->LogMaps(LOG(ERROR));
 
     gFaulted = false;
     task->status = kTaskStatusMemoryAccessFault;
@@ -522,9 +529,15 @@ LiftedFunction *Executor::FindLiftedFunctionForTask(Task *task) {
 
   // We do a preliminary check here to make sure the code is executable. We
   if (!memory->CanExecute(task_pc_uint)) {
+    auto last_pc = static_cast<uint64_t>(task->last_pc);
     LOG(ERROR)
         << "Cannot execute non-executable code at "
-        << std::hex << task_pc_uint << std::dec;
+        << std::hex << task_pc_uint << ". Last trace entry PC was "
+        << last_pc << " (" << memory->ToVirtualAddress(last_pc)
+        << ")."<< std::dec;
+
+    LogRegisterState(LOG(ERROR), task->state);
+    memory->LogMaps(LOG(ERROR));
 
     task->status = kTaskStatusMemoryAccessFault;
     task->mem_access_fault.kind = kMemoryAccessFaultOnExecute;
@@ -541,6 +554,9 @@ LiftedFunction *Executor::FindLiftedFunctionForTask(Task *task) {
     LOG(ERROR)
         << "Could not locate lifted function for " << std::hex
         << task_pc_uint << std::dec;
+
+    LogRegisterState(LOG(ERROR), task->state);
+    memory->LogMaps(LOG(ERROR));
     return missing_block_intrinsic;
   }
 
