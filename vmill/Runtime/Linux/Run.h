@@ -44,6 +44,7 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <sys/utsname.h>
+#include <sys/vfs.h>  // Maybe `sys/statfs.h` on other systems.
 #include <unistd.h>
 
 #ifndef ERESTARTSYS
@@ -281,7 +282,23 @@ struct linux_dirent64 {
   char d_name[1];  // Always at least one char because it's NUL-terminated.
 };
 
+struct linux32_statfs64 {
+  uint32_t f_type;
+  uint32_t f_bsize;
+  uint64_t f_blocks;
+  uint64_t f_bfree;
+  uint64_t f_bavail;
+  uint64_t f_files;
+  uint64_t f_ffree;
+  uint64_t f_fsid;
+  uint32_t f_namelen;
+  uint32_t f_frsize;
+  uint32_t f_flags;
+  uint32_t f_spare[4];
+} __attribute__((packed));
+
 struct linux_task : public vmill::Task {
+ public:
   linux_task *next;
   linux_task *next_circular;
   linux_x86_user_desc tls_slots[kNumTLSSlots];

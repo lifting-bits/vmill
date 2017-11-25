@@ -112,7 +112,7 @@ static Memory *X86SystemCall(Memory *memory, State *state,
     case 265: return SysClockGetTime<linux32_timespec>(memory, state, syscall);
     case 266:
       return SysClockGetResolution<linux32_timespec>(memory, state, syscall);
-
+    case 268: return SysStatFs64<linux32_statfs64>(memory, state, syscall);
     case 295: return SysOpenAt(memory, state, syscall);
     case 300: return SysFStatAt<linux32_stat64>(memory, state, syscall);
     case 305: return SysReadLinkAt(memory, state, syscall);

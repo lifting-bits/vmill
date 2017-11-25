@@ -749,4 +749,69 @@ static Memory *SysFcntl64(Memory *memory, State *state,
   }
 }
 
+template <typename StatType>
+static Memory *SysStatFs64(Memory *memory, State *state,
+                           const SystemCallABI &syscall) {
+  addr_t file = 0;
+  addr_t buf_size = 0;
+  addr_t buf = 0;
+
+  if (!syscall.TryGetArgs(memory, state, &file, &buf_size, &buf)) {
+    STRACE_ERROR(statfs64, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  if (buf_size != sizeof(StatType)) {
+    STRACE_ERROR(statfs64, "buf_size=%" PRIdADDR " must be %ld",
+                 buf_size, sizeof(StatType));
+    return syscall.SetReturn(memory, state, -EINVAL);
+  }
+
+  auto path_len = CopyStringFromMemory(memory, file, gPath, PATH_MAX);
+  gPath[PATH_MAX] = '\0';
+
+  if (path_len >= PATH_MAX) {
+    STRACE_ERROR(statfs64, "Path name too long: %s", gPath);
+    return syscall.SetReturn(memory, state, -ENAMETOOLONG);
+
+  // The string read does not end in a NUL-terminator; i.e. we read less
+  // than `PATH_MAX`, but as much as we could without faulting, and we didn't
+  // read the NUL char.
+  } else if ('\0' != gPath[path_len]) {
+    STRACE_ERROR(statfs64, "Non-NUL-terminated path");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  struct statfs64 info = {};
+  auto ret = statfs64(gPath, &info);
+  if (-1 == ret) {
+    auto err = errno;
+    STRACE_ERROR(statfs64, "Can't stat file=%s: %s", gPath, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  }
+
+  StatType cinfo = {};
+  cinfo.f_type = static_cast<decltype(cinfo.f_type)>(info.f_type);
+  cinfo.f_bsize = static_cast<decltype(cinfo.f_bsize)>(info.f_bsize);
+  cinfo.f_blocks = static_cast<decltype(cinfo.f_blocks)>(info.f_blocks);
+  cinfo.f_bfree = static_cast<decltype(cinfo.f_bfree)>(info.f_bfree);
+  cinfo.f_bavail = static_cast<decltype(cinfo.f_bavail)>(info.f_bavail);
+  cinfo.f_files = static_cast<decltype(cinfo.f_files)>(info.f_files);
+  cinfo.f_ffree = static_cast<decltype(cinfo.f_ffree)>(info.f_ffree);
+  cinfo.f_fsid = 0;
+  cinfo.f_namelen = static_cast<decltype(cinfo.f_namelen)>(info.f_namelen);
+  cinfo.f_frsize = static_cast<decltype(cinfo.f_frsize)>(info.f_frsize);
+  cinfo.f_flags = static_cast<decltype(cinfo.f_flags)>(info.f_flags);
+
+  if (!TryWriteMemory(memory, buf, cinfo)) {
+    STRACE_ERROR(statfs64, "Can't write info on file=%s to buf=%" PRIxADDR,
+                 gPath, buf);
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  STRACE_SUCCESS(statfs64, "file=%s f_type=%x f_bsize=%u",
+                 gPath, info.f_type, info.f_bsize);
+  return syscall.SetReturn(memory, state, 0);
+}
+
 }  // namespace
