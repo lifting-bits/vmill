@@ -106,6 +106,13 @@ inline static bool TryReadMemory(Memory *memory, addr_t addr, T *val) {
   }
 }
 
+// You don't want to be using this function, it doesn't make sense to copy a
+// pointer into an emulated address space.
+template <typename T>
+inline static bool TryWriteMemory(Memory *&, addr_t, const T *) {
+  abort();
+}
+
 template <typename T>
 inline static bool TryWriteMemory(Memory *&memory, addr_t addr, const T &val) {
   if (CanWriteMemory(memory, addr, sizeof(T))) {

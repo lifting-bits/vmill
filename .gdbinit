@@ -41,13 +41,13 @@ end
 define print-x86-trace-instructions
   import-capstone
 
-  set $__a = ('vmill::AddressSpace' *) $arg0
+  set $memory = ('vmill::AddressSpace' *) $arg0
   set $__k = $arg1
 
   while $__k >= 0
     get-x86-trace-entry $__k
     set $__ea = *$trace_entry
-    set $__va = $__a->ToVirtualAddress($__ea)
+    set $__va = $memory->ToVirtualAddress($__ea)
 
     set $__reg_eip = $trace_entry[0]
     set $__reg_eax = $trace_entry[1]

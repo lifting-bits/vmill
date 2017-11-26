@@ -155,8 +155,8 @@ static Memory *DoSysAccept(Memory *memory, State *state,
     CopyFromMemory(memory, &info, addr, addrlen);
   }
 
-  auto ret_fd = accept4(fd, addr ? &info : nullptr,
-      (addrlen_addr ? &addrlen : nullptr), flags);
+  auto orig_addrlen = addrlen;
+  auto ret_fd = accept4(fd, &info, &addrlen, flags);
 
   if (-1 == ret_fd) {
     auto err = errno;
@@ -165,9 +165,10 @@ static Memory *DoSysAccept(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -err);
   }
 
-  if (addr && addrlen_addr) {
-    memory = CopyToMemory(memory, addr, &info, addrlen);
-
+  if (addr) {
+    memory = CopyToMemory(memory, addr, &info, orig_addrlen);
+  }
+  if (addrlen_addr) {
     if (!TryWriteMemory(memory, addrlen_addr, addrlen)) {
       STRACE_ERROR(accept_generic, "Can't write address length.");
       return syscall.SetReturn(memory, state, -EFAULT);
@@ -237,9 +238,13 @@ static Memory *SysGetSockName(Memory *memory, State *state,
 
   CopyFromMemory(memory, &info, addr, addrlen);
 
+  const auto orig_addrlen = addrlen;
   if (!getsockname(fd, &info, &addrlen)) {
-    CopyToMemory(memory, addr, &info, addrlen);
-    if (!TryWriteMemory(memory, addrlen_addr, &addrlen)) {
+    if (addr) {
+      CopyToMemory(memory, addr, &info, orig_addrlen);
+    }
+
+    if (!TryWriteMemory(memory, addrlen_addr, addrlen)) {
       STRACE_ERROR(getsockname, "Couldn't copy sock address to memory.");
       return syscall.SetReturn(memory, state, -EFAULT);
     } else {
@@ -284,9 +289,10 @@ static Memory *SysGetPeerName(Memory *memory, State *state,
   linux_sockaddr info = {};
   CopyFromMemory(memory, &info, addr, addrlen);
 
+  const auto orig_addrlen = addrlen;
   if (!getpeername(fd, &info, &addrlen)) {
-    CopyToMemory(memory, addr, &info, addrlen);
-    if (!TryWriteMemory(memory, addrlen_addr, &addrlen)) {
+    CopyToMemory(memory, addr, &info, orig_addrlen);
+    if (!TryWriteMemory(memory, addrlen_addr, addrlen)) {
       STRACE_ERROR(getpeername, "Couldn't copy sock address to memory.");
       return syscall.SetReturn(memory, state, -EFAULT);
     } else {
@@ -458,10 +464,8 @@ static Memory *DoSysRecvFrom(Memory *memory, State *state,
 
   CopyFromMemory(memory, buf_val, buf, n);
 
-  auto ret = recvfrom(
-      fd, buf_val, n, static_cast<int>(flags),
-      (addrlen ? &info : nullptr),
-      (addrlen_addr ? &addrlen : nullptr));
+  const auto orig_addrlen = addrlen;
+  auto ret = recvfrom(fd, buf_val, n, static_cast<int>(flags), &info, &addrlen);
   auto err = errno;
 
   if (!CanWriteMemory(memory, buf, n)) {
@@ -474,15 +478,15 @@ static Memory *DoSysRecvFrom(Memory *memory, State *state,
     delete[] buf_val;
   }
 
-  if (addrlen) {
-    if (!CanWriteMemory(memory, addr, addrlen)) {
+  if (orig_addrlen) {
+    if (!CanWriteMemory(memory, addr, orig_addrlen)) {
       STRACE_ERROR(
           recvfrom, "Can't write addrlen=%u bytes to addr=%" PRIxADDR,
           addrlen, addr);
       return syscall.SetReturn(memory, state, -EFAULT);
     }
 
-    CopyToMemory(memory, addr, &info, addrlen);
+    CopyToMemory(memory, addr, &info, orig_addrlen);
 
     if (!TryWriteMemory(memory, addrlen_addr, addrlen)) {
       STRACE_ERROR(
