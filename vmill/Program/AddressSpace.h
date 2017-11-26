@@ -102,15 +102,15 @@ class AddressSpace : public Memory {
   void RemoveMap(uint64_t base, size_t size);
 
   // Log out the current state of the memory maps.
-  void LogMaps(std::ostream &stream);
+  void LogMaps(std::ostream &stream) const;
 
-  // Find the smallest mapped memory range limit address that is greater
-  // than `find`.
-  bool NearestLimitAddress(uint64_t find, uint64_t *next_end) const;
+  // Returns `true` if `find` is a mapped address (with any permission).
+  bool IsMapped(uint64_t find) const;
 
-  // Find the largest mapped memory range base address that is less-than
-  // or equal to `find`.
-  bool NearestBaseAddress(uint64_t find, uint64_t *next_end) const;
+  // Find a hole big enough to hold `size` bytes in the address space,
+  // such that the hole falls within the bounds `[min, max)`.
+  bool FindHole(uint64_t min, uint64_t max, uint64_t size,
+                uint64_t *hole) const;
 
   // Have we observed a write to executable memory since our last attempt
   // to read from executable memory?
@@ -135,9 +135,6 @@ class AddressSpace : public Memory {
   AddressSpace &operator=(const AddressSpace &) = delete;
   AddressSpace &operator=(const AddressSpace &&) = delete;
 
-  // Check that the ranges are sane.
-  void CheckRanges(std::vector<MemoryMapPtr> &);
-
   // Recreate the `range_base_to_index` and `range_limit_to_index` indices.
   void CreatePageToRangeMap(void);
 
@@ -147,7 +144,8 @@ class AddressSpace : public Memory {
   const MemoryMapPtr &FindWNXRange(uint64_t addr);
 
   // Used to represent an invalid memory map.
-  MemoryMapPtr invalid_map;
+  MemoryMapPtr invalid_min_map;
+  MemoryMapPtr invalid_max_map;
 
   // Sorted list of mapped memory page ranges.
   std::vector<MemoryMapPtr> maps;

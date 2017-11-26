@@ -17,12 +17,14 @@
 #include <glog/logging.h>
 
 #include <cerrno>
+#include <map>
 #include <vector>
 #include <sstream>
 #include <string>
 #include <sys/mman.h>
 #include <unordered_map>
 
+#include <llvm/ExecutionEngine/JITEventListener.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Object/ObjectFile.h>
 #include <llvm/Support/MemoryBuffer.h>
@@ -39,6 +41,11 @@
 #include "vmill/Util/Compiler.h"
 #include "vmill/Workspace/Workspace.h"
 
+extern "C" {
+// Used to register exception handling frames with the JIT.
+__attribute__((weak))
+extern void __register_frame(void *);
+}  // extern C
 namespace vmill {
 namespace {
 
@@ -57,6 +64,11 @@ struct MemoryMap {
   bool can_write;
   bool can_exec;
   bool is_index;
+  std::string source_file;
+
+  inline bool operator<(const MemoryMap &that) const {
+    return base < that.base;
+  }
 };
 
 class CodeCacheImpl : public CodeCache,
@@ -76,7 +88,7 @@ class CodeCacheImpl : public CodeCache,
   void LoadRuntimeLibrary(void);
 
   // Load a JIT-compiled module from a file `path`.
-  void LoadLibrary(const std::string &path);
+  void LoadLibrary(const std::string &path, bool is_runtime=false);
 
   // Load all JIT-compiled modules from the libraries directory. Returns the
   // number of loaded libraries.
@@ -100,8 +112,11 @@ class CodeCacheImpl : public CodeCache,
                                unsigned section_id, llvm::StringRef,
                                bool is_read_only) override;
 
-  // Ignore exception handling in JITed code. It shouldn't happen
-  void registerEHFrames(uint8_t *, uint64_t, size_t) override {}
+  // Register exception handling frames.
+  void registerEHFrames(uint8_t *addr, uint64_t load_addr,
+                        size_t size) override;
+
+  // We never unload JITed code.
   void deregisterEHFrames(
       IF_LLVM_LT(5, 0, uint8_t *, uint64_t, size_t)) override {}
 
@@ -127,11 +142,12 @@ class CodeCacheImpl : public CodeCache,
   AreaAllocator data_allocator;
   AreaAllocator index_allocator;
 
-  std::vector<MemoryMap> jit_ranges;
+  llvm::JITEventListener *event_listener;
+  std::map<uint8_t *, MemoryMap> jit_ranges;
   std::unordered_map<unsigned, MemoryMap> pending_jit_ranges;
   std::unique_ptr<llvm::RuntimeDyld> pending_loader;
   std::unique_ptr<llvm::RuntimeDyld> runtime_loader;
-
+  std::string pending_source_file;
   std::unordered_map<TraceId, LiftedFunction *> lifted_functions;
 };
 
@@ -141,7 +157,8 @@ CodeCacheImpl::CodeCacheImpl(const std::shared_ptr<llvm::LLVMContext> &context_)
       compiler(context_),
       code_allocator(kAreaRWX, kAreaCodeCacheCode),
       data_allocator(kAreaRW, kAreaCodeCacheData),
-      index_allocator(kAreaRW, kAreaCodeCacheIndex) {
+      index_allocator(kAreaRW, kAreaCodeCacheIndex),
+      event_listener(llvm::JITEventListener::createGDBRegistrationListener()) {
   LoadRuntimeLibrary();
   if (!LoadLibraries()) {
     ReloadLibraries();
@@ -155,7 +172,8 @@ uint8_t *CodeCacheImpl::allocateCodeSection(
     uintptr_t size, unsigned alignment, unsigned section_id,
     llvm::StringRef name) {
   MemoryMap map = {code_allocator.Allocate(size, alignment), size,
-                   section_id, true, false, true, false};
+                   section_id, true, false, true, false,
+                   pending_source_file};
   pending_jit_ranges[section_id] = map;
   return map.base;
 }
@@ -176,18 +194,24 @@ uint8_t *CodeCacheImpl::allocateDataSection(
     base = data_allocator.Allocate(size, alignment);
   }
   MemoryMap map = {base, size, section_id, true, !is_read_only,
-                   false, is_index};
+                   false, is_index, pending_source_file};
   pending_jit_ranges[section_id] = map;
   return map.base;
+}
+
+// Register exception handling frames.
+void CodeCacheImpl::registerEHFrames(uint8_t *addr, uint64_t, size_t) {
+  if (__register_frame) {
+    __register_frame(addr);
+  }
 }
 
 // Normally this function is meant to finalize permissions of any pending JITed
 // page ranges. We this as the place to
 bool CodeCacheImpl::finalizeMemory(std::string *error_message) {
-  jit_ranges.reserve(jit_ranges.size() + pending_jit_ranges.size());
   for (const auto &entry : pending_jit_ranges) {
     const auto &range = entry.second;
-    jit_ranges.push_back(range);
+    jit_ranges[range.base] = range;
 
     if (!range.is_index) {
       continue;
@@ -246,9 +270,9 @@ llvm::JITSymbol CodeCacheImpl::findSymbol(const std::string &name) {
 // Load the runtime library, this must be done first, as it supported all
 // lifted code execution.
 void CodeCacheImpl::LoadRuntimeLibrary(void) {
-  auto library_path = Workspace::RuntimeLibraryPath();
+  pending_source_file = Workspace::RuntimeLibraryPath();
 
-  if (!remill::FileExists(library_path)) {
+  if (!remill::FileExists(pending_source_file)) {
     auto bitcode_path = Workspace::RuntimeBitcodePath();
     DLOG(INFO)
         << "Loading runtime library bitcode " << bitcode_path;
@@ -258,25 +282,28 @@ void CodeCacheImpl::LoadRuntimeLibrary(void) {
 
     DLOG(INFO)
         << "JIT-compiling runtime library bitcode " << bitcode_path;
-    compiler.CompileModuleToFile(*runtime, library_path);
+    compiler.CompileModuleToFile(*runtime, pending_source_file);
   }
 
   DLOG(INFO)
-      << "Loading runtime library object code " << library_path;
-  LoadLibrary(library_path);
+      << "Loading runtime library object code " << pending_source_file;
+  LoadLibrary(pending_source_file, true);
 
   runtime_loader.swap(pending_loader);
 }
 
 // Load a JIT-compiled module from a file `path`.
-void CodeCacheImpl::LoadLibrary(const std::string &path) {
+void CodeCacheImpl::LoadLibrary(const std::string &path, bool is_runtime) {
+  pending_source_file = path;
   pending_loader.reset(new llvm::RuntimeDyld(*this, *this));
 
   auto maybe_buff_ptr = llvm::MemoryBuffer::getFile(
-      path, -1 /* FileSize */, false /* RequiresNullTerminator */);
+      pending_source_file, -1 /* FileSize */,
+      false /* RequiresNullTerminator */);
+
   if (remill::IsError(maybe_buff_ptr)) {
     LOG(FATAL)
-        << "Unable to open shared library " << path << ": "
+        << "Unable to open shared library " << pending_source_file << ": "
         << remill::GetErrorString(maybe_buff_ptr);
   }
 
@@ -286,7 +313,7 @@ void CodeCacheImpl::LoadLibrary(const std::string &path) {
 
   if (remill::IsError(maybe_obj_file_ptr)) {
     LOG(FATAL)
-        << "Unable to load " << path << " as an object file: "
+        << "Unable to load " << pending_source_file << " as an object file: "
         << remill::GetErrorString(maybe_obj_file_ptr);
   }
 
@@ -295,17 +322,22 @@ void CodeCacheImpl::LoadLibrary(const std::string &path) {
   if (!info) {
     if (pending_loader->hasError()) {
       LOG(FATAL)
-          << "Unable to load " << path << " as an object file: "
+          << "Unable to load " << pending_source_file << " as an object file: "
           << pending_loader->getErrorString().str();
+    }
+  } else {
+
+    // Notify a debugger that the runtime has been loaded, so that the debugger
+    // can go and find the symbols and such. We don't want to do this for lifted
+    // code because that doesn't have much useful symbol information.
+    if (is_runtime && event_listener) {
+      event_listener->NotifyObjectEmitted(*object_file_ptr, *info);
     }
   }
 
-  pending_loader->resolveRelocations();
-  std::string error;
-  CHECK(finalizeMemory(&error))
-      << "Unable to finalize JITed code memory: " << error;
+  pending_loader->finalizeWithMemoryManagerLocking();
 
-  // TODO(pag): Is the library's `_start` function called?
+  // TODO(pag): Issue #12: Is the library's `_start` function called?
 }
 
 // Load all JIT-compiled modules from the libraries directory.

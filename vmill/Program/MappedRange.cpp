@@ -114,6 +114,7 @@ class InvalidMemoryMap : public MappedRangeBase {
   bool Write(uint64_t, uint8_t) override;
   MemoryMapPtr Clone(void) override;
   uint64_t ComputeCodeVersion(void) override;
+  bool IsValid(void) const override;
 };
 
 // Implements an array-backed memory mapping that is filled with actual data
@@ -232,6 +233,10 @@ MemoryMapPtr InvalidMemoryMap::Clone(void) {
 
 uint64_t InvalidMemoryMap::ComputeCodeVersion(void) {
   return 0;
+}
+
+bool InvalidMemoryMap::IsValid(void) const {
+  return false;
 }
 
 ArrayMemoryAllocator ArrayMemoryMap::allocator;
@@ -371,8 +376,14 @@ MemoryMapPtr MappedRange::Create(uint64_t base_address_,
   return ptr;
 }
 
-MemoryMapPtr MappedRange::CreateInvalid(void) {
-  MemoryMapPtr ptr(new InvalidMemoryMap(0, 0, "invalid", 0));
+MemoryMapPtr MappedRange::CreateInvalidLow(void) {
+  MemoryMapPtr ptr(new InvalidMemoryMap(0, 0, "low tombstone", 0));
+  return ptr;
+}
+
+MemoryMapPtr MappedRange::CreateInvalidHigh(void) {
+  auto max = std::numeric_limits<uint64_t>::max();
+  MemoryMapPtr ptr(new InvalidMemoryMap(max, max, "high tombstone", 0));
   return ptr;
 }
 

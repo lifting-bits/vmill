@@ -16,33 +16,37 @@
 
 extern "C" {
 
-Memory *__vmill_reg_tracer(State &state, addr_t, Memory *memory) {
-#if VMILL_RUNTIME_X86 == 64
-  fprintf(
-      stderr,
-      "RIP=%" PRIx64 ",RAX=%" PRIx64 ",RBX=%" PRIx64
-      ",RCX=%" PRIx64 ",RDX=%" PRIx64 ",RSI=%" PRIx64
-      ",RDI=%" PRIx64 ",RBP=%" PRIx64 ",RSP=%" PRIx64
-      ",R8=%" PRIx64 ",R9=%" PRIx64 ",R10=%" PRIx64
-      ",R11=%" PRIx64 ",R12=%" PRIx64 ",R13=%" PRIx64
-      ",R14=%" PRIx64 ",R15=%" PRIx64 "\n",
+struct RegTraceEntry {
+  uint64_t rip;
+  uint64_t rax;
+  uint64_t rbx;
+  uint64_t rcx;
+  uint64_t rdx;
+  uint64_t rsi;
+  uint64_t rdi;
+  uint64_t rbp;
+  uint64_t rsp;
+};
 
-      state.gpr.rip.qword, state.gpr.rax.qword, state.gpr.rbx.qword,
-      state.gpr.rcx.qword, state.gpr.rdx.qword, state.gpr.rsi.qword,
-      state.gpr.rdi.qword, state.gpr.rbp.qword, state.gpr.rsp.qword,
-      state.gpr.r8.qword, state.gpr.r9.qword, state.gpr.r10.qword,
-      state.gpr.r11.qword, state.gpr.r12.qword, state.gpr.r13.qword,
-      state.gpr.r14.qword, state.gpr.r15.qword);
-#else
-  fprintf(
-      stderr,
-      "EIP=%" PRIx32 ",EAX=%" PRIx32 ",EBX=%" PRIx32
-      ",ECX=%" PRIx32 ",EDX=%" PRIx32 ",ESI=%" PRIx32
-      ",EDI=%" PRIx32 ",ESP=%" PRIx32 ",EBP=%" PRIx32 "\n",
-      state.gpr.rip.dword, state.gpr.rax.dword, state.gpr.rbx.dword,
-      state.gpr.rcx.dword, state.gpr.rdx.dword, state.gpr.rsi.dword,
-      state.gpr.rdi.dword, state.gpr.rbp.dword, state.gpr.rsp.dword);
-#endif  // VMILL_RUNTIME_X86
+enum : size_t {
+  kNumEntries = 4096,
+};
+
+size_t __vmill_x86_reg_trace_entry = 0;
+RegTraceEntry __vmill_x86_reg_trace_table[kNumEntries];
+
+Memory *__vmill_breakpoint(State *state, vmill::PC pc, Memory *memory) {
+  auto index = __vmill_x86_reg_trace_entry++ % kNumEntries;
+  auto &entry = __vmill_x86_reg_trace_table[index];
+  entry.rip = state->gpr.rip.aword;
+  entry.rax = state->gpr.rax.aword;
+  entry.rbx = state->gpr.rbx.aword;
+  entry.rcx = state->gpr.rcx.aword;
+  entry.rdx = state->gpr.rdx.aword;
+  entry.rsi = state->gpr.rsi.aword;
+  entry.rdi = state->gpr.rdi.aword;
+  entry.rbp = state->gpr.rbp.aword;
+  entry.rsp = state->gpr.rsp.aword;
   return memory;
 }
 

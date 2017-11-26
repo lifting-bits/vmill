@@ -78,6 +78,10 @@ enum : size_t {
   kNewUTSNameLen = 64UL
 };
 
+struct linux_sockaddr : public sockaddr {
+  char sa_data_extra[128 - sizeof(struct sockaddr)];  // Full Protocol address.
+} __attribute__((packed));
+
 struct linux32_iovec {
   addr32_t iov_base;
   uint32_t iov_len;
@@ -272,7 +276,7 @@ struct linux_dirent {
   addr_t d_off;
   uint16_t d_reclen;
   // char d_name[];
-};
+} __attribute__((packed));
 
 struct linux_dirent64 {
   uint64_t d_ino;
@@ -280,7 +284,7 @@ struct linux_dirent64 {
   uint16_t d_reclen;
   uint8_t d_type;
   // char d_name[];
-};
+} __attribute__((packed));
 
 struct linux32_statfs64 {
   uint32_t f_type;

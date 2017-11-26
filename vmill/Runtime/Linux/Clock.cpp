@@ -19,7 +19,7 @@ namespace {
 // Emulate a 32-bit `gettimeofday` system call.
 template <typename TimeVal, typename TimeZone>
 static Memory *SysGetTimeOfDay(Memory *memory, State *state,
-                                 const SystemCallABI &syscall) {
+                               const SystemCallABI &syscall) {
   addr_t tv_addr = 0;
   addr_t tz_addr = 0;
 
@@ -166,7 +166,9 @@ static Memory *SysClockGetResolution(Memory *memory, State *state,
   auto ret = clock_getres(clock_id, &cur_res);
   if (-1 == ret) {
     auto err = errno;
-    STRACE_ERROR(clock_getres, "Couldn't get resolution: %s", strerror(err));
+    STRACE_ERROR(
+        clock_getres, "Couldn't get resolution for clock_id=%d: %s",
+        clock_id, strerror(err));
     return syscall.SetReturn(memory, state, -err);
   }
 
@@ -181,8 +183,8 @@ static Memory *SysClockGetResolution(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  STRACE_SUCCESS(clock_getres, "tv_sec=%ld, tv_nsec=%ld",
-                 compat_res.tv_sec, compat_res.tv_nsec);
+  STRACE_SUCCESS(clock_getres, "clock_id=%d, tv_sec=%ld, tv_nsec=%ld",
+                 clock_id, compat_res.tv_sec, compat_res.tv_nsec);
   return syscall.SetReturn(memory, state, 0);
 }
 

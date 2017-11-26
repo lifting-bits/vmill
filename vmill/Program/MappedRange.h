@@ -31,7 +31,8 @@ class MappedRange {
  public:
   static MemoryMapPtr Create(uint64_t base_address_, uint64_t limit_address_,
                              const char *name_, uint64_t offset_);
-  static MemoryMapPtr CreateInvalid(void);
+  static MemoryMapPtr CreateInvalidLow(void);
+  static MemoryMapPtr CreateInvalidHigh(void);
 
   virtual ~MappedRange(void);
 

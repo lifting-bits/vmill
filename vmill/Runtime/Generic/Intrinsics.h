@@ -64,24 +64,12 @@ extern Memory *__vmill_protect_memory(Memory *memory, addr_t where,
                                       addr_t size, bool can_read,
                                       bool can_write, bool can_exec);
 
-// Returns the end of the mapped range of memory whose address is greater
-// than `where`. This permits forward iteration through mapped memory ranges.
-//
-// If `A` is a mapped address, then `__vmill_next_memory_end(memory, A)` is
-// the ending of the memory map containing `A`.
-//
-// If there is no next mapped address, then this returns `0`.
-extern addr_t __vmill_next_memory_end(Memory *memory, addr_t where);
+// Returns `true` iff a given page is mapped (independent of permissions).
+extern bool __vmill_is_mapped_address(Memory *memory, addr_t where);
 
-// Returns the beginning of the mapped range of memory whose address is less
-// than or equal to `where`. This permits backward iteration through mapped
-// memory ranges.
-//
-// If `A` is a mapped address, then `__vmill_prev_memory_begin(memory, A)` is
-// the beginning of the memory map containing `A`.
-//
-// If there is no previous mapped address, then this returns `0`.
-extern addr_t __vmill_prev_memory_begin(Memory *memory, addr_t where);
+// Finds some unmapped memory.
+addr_t __vmill_find_unmapped_address(Memory *memory, addr_t base,
+                                     addr_t limit, addr_t size);
 
 }  // extern C
 

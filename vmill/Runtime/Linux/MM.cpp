@@ -23,122 +23,16 @@ namespace {
 static constexpr uint64_t kPageSize = 4096;
 static constexpr uint64_t kMmapMinAddr = 65536;
 static constexpr uint64_t k1GiB = 1ULL << 30ULL;
-static constexpr uint64_t k3GiB = k1GiB * 3ULL;
 static constexpr uint64_t k4GiB = k1GiB * 4ULL;
 
 // Minimum allowed address for an `mmap`. On 64-bit, this is any address
 // above the 4 GiB. In 32-bit, this is anything above 1 GiB.
-static constexpr uint64_t kAllocMin = IF_64BIT_ELSE(k4GiB, k1GiB);
+static constexpr addr_t kAllocMin = IF_64BIT_ELSE(k4GiB, k1GiB);
 
 // Maximum allowed address for an `mmap`.
-static constexpr uint64_t kAllocMax = IF_64BIT_ELSE((1ULL << 47ULL), k3GiB);
+static constexpr addr_t kAllocMax = IF_64BIT_ELSE((1ULL << 47ULL),
+                                                  0xf7000000);
 
-#if 32 == ADDRESS_SIZE_BITS
-static std::subtract_with_carry_engine<uint64_t, 24, 10, 24> gRandGen;
-static constexpr addr_t kRandGenShift = 7;  // Keep high bit is always `0`.
-#else
-static std::subtract_with_carry_engine<uint64_t, 48, 5, 12> gRandGen;
-static constexpr uint64_t kRandGenShift = 0;  // keep high 16 bites `0`.
-#endif
-
-static bool gRandGenInitialized = false;
-
-// Go and find an address to map. This performs mostly opaque requests to the
-// VMill memory manager as a way of finding a hole in memory. The idea here is
-// that we don't want to completely shadow the structure maintained in VMill
-// for the address space, so instead we'll just make queries to it.
-static addr_t FindRegionToMap(Memory *memory, addr_t size,
-                              uint64_t alloc_max=kAllocMax) {
-
-  // TODO(pag): Actually handle global constructors somewhere, this is super
-  //            ugly.
-  if (!gRandGenInitialized) {
-    gRandGenInitialized = true;
-    new (&gRandGen) decltype(gRandGen);
-  }
-
-  for (auto i = 0; i < 16; ++i) {
-    // Guess a random address to allocate. The guess is guaranteed to not be in
-    // the zero page, then we will constrain it to be smaller than the maximum
-    // allocatable address.
-    auto gen = gRandGen();
-    auto guess = (static_cast<uint64_t>(gen) << kRandGenShift) &
-                 ~(kPageSize - 1UL);
-
-    auto where = std::max<uint64_t>(
-        std::min<uint64_t>(guess, alloc_max - size), kAllocMin);
-
-
-    auto where_addr = static_cast<addr_t>(where);
-    if (where != static_cast<uint64_t>(where_addr)) {
-      continue;  // Integer overflow.
-    }
-
-    // The number is interpreted as a negative number. `mmap`s return value
-    // must be positive, otherwise it will be treated as encoding `errno`.
-    if (0 >= static_cast<addr_diff_t>(where)) {
-      continue;
-    }
-
-    // Let's try to get a better guess.
-    if (where == kAllocMin) {
-      continue;
-    }
-
-    // There is no next mapping. This implies that `where` is not part of
-    // any mapping. That being the case, `where` must be beyond any other
-    // mapping, and so we have trivially discovered a hole.
-    auto next_end = __vmill_next_memory_end(memory, where_addr);
-    if (!next_end) {
-      return where_addr;
-    }
-
-    auto next_begin = __vmill_prev_memory_begin(memory, next_end - 1);
-
-    // `where_addr` is inside of an existing range.
-    if (next_begin <= where_addr) {
-      continue;
-    }
-
-    // Found a hole big enough in front of the next mapping.
-    if ((where_addr + size) <= next_begin) {
-      return where_addr;
-    }
-  }
-
-  // Linearly search for a hole, starting from high memory and going down
-  // from there.
-  addr_t candidate = 0;
-  for (auto max = static_cast<addr_t>(alloc_max); max >= kAllocMin; ) {
-    auto prev_begin = __vmill_prev_memory_begin(memory, max - 1);
-    if (!prev_begin) {
-      candidate = max - size;
-      break;
-    }
-
-    auto prev_end = __vmill_next_memory_end(memory, prev_begin);
-
-    // There is at least enough space between the end of one mapped
-    // region and the beginning of another.
-    if ((prev_end + size) <= max) {
-
-      // At least one page of redzone.
-      if ((max - prev_end - size) > kPageSize) {
-        return max - size - static_cast<addr_t>(kPageSize);
-      } else {
-        candidate = max - size;
-      }
-    }
-
-    max = prev_begin;
-  }
-
-  if (candidate < kAllocMin) {
-    return 0;
-  } else {
-    return candidate;
-  }
-}
 
 // Emulate an `brk` system call.
 static Memory *SysBrk(Memory *memory, State *state,
@@ -201,17 +95,18 @@ static Memory *SysMmap(Memory *memory, State *state,
     }
   }
 
-#ifndef MAP_32BIT
-# define MAP_32BIT 0x40
-#endif
-
   auto max_addr = kAllocMax;
-  if (8 == sizeof(addr_t) && 0 != (MAP_32BIT & flags)) {
+#if 64 == ADDRESS_SIZE_BITS
+# ifndef MAP_32BIT
+#   define MAP_32BIT 0x40
+# endif
+  if (0 != (MAP_32BIT & flags)) {
     max_addr = k4GiB;
     if (addr && addr >= max_addr) {
       addr = 0;
     }
   }
+#endif
 
   // Unsupported flags.
   if ((MAP_GROWSDOWN & flags)) {
@@ -237,15 +132,22 @@ static Memory *SysMmap(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EINVAL);
   }
 
-  // Check the  hinted address.
+  // Check the hinted address.
   if (MAP_FIXED & flags) {
     addr = AlignToPage(addr);
     if (!addr) {
       STRACE_ERROR(mmap, "Can't allocate the null page");
       return syscall.SetReturn(memory, state, -EINVAL);
 
+    // TODO(pag): Figure out what the correct behavior is here.
     } else if (addr < kMmapMinAddr) {
       addr = kMmapMinAddr;  // Silently round it up to the minimum.
+    }
+
+    if ((addr + size) > max_addr) {
+      STRACE_ERROR(mmap, "Fixed addr=%" PRIxADDR "+size=%" PRIxADDR " too big",
+                   addr, size);
+      return syscall.SetReturn(memory, state, -ENOMEM);
     }
   } else {
     addr = 0;  // TODO(pag): Is it right to not check this?
@@ -254,7 +156,7 @@ static Memory *SysMmap(Memory *memory, State *state,
   // Try to go and find a region of memory to map, assuming that one has
   // not been explicitly requested.
   if (!addr) {
-    addr = FindRegionToMap(memory, size, max_addr);
+    addr = __vmill_find_unmapped_address(memory, kMmapMinAddr, max_addr, size);
     if (!addr) {
       STRACE_ERROR(mmap, "Out of memory for request of size %" PRIxADDR, size);
       return syscall.SetReturn(memory, state, -ENOMEM);
@@ -272,12 +174,16 @@ static Memory *SysMmap(Memory *memory, State *state,
 
   if (0 <= fd) {
     old_offset = lseek(fd, 0, SEEK_CUR);
+
     if (-1 == old_offset) {
       auto err = errno;
       STRACE_ERROR(mmap, "Couldn't get old seek position for fd %d: %s",
                    fd, strerror(err));
       return syscall.SetReturn(memory, state, -err);
     }
+
+    // TODO(pag): Issue #11: is `offset` relative to the start of the file,
+    //            or is is relative to `old_offset`?
 
     // Seek to the end of the range where we want to `mmap`. This is a dumb
     // way of checking to see that the region of memory is big enough to be
@@ -299,7 +205,7 @@ static Memory *SysMmap(Memory *memory, State *state,
     }
 
     fd_name = GetBasePathAt(fd);
-    fd_offset = offset;
+    fd_offset = static_cast<uint64_t>(offset);
   }
 
   // Allocate the RW memory.

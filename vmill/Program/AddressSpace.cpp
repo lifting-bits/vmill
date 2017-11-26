@@ -50,7 +50,8 @@ static constexpr inline uint64_t RoundUpToPage(uint64_t size) {
 }  // namespace
 
 AddressSpace::AddressSpace(void)
-    : invalid_map(MappedRange::CreateInvalid()),
+    : invalid_min_map(MappedRange::CreateInvalidLow()),
+      invalid_max_map(MappedRange::CreateInvalidHigh()),
       page_to_map(256),
       wnx_page_to_map(256),
       last_read_map(page_to_map.end()),
@@ -58,12 +59,15 @@ AddressSpace::AddressSpace(void)
       is_dead(false),
       code_version_is_invalid(true),
       code_version(0) {
+  maps.push_back(invalid_min_map);
+  maps.push_back(invalid_max_map);
   CreatePageToRangeMap();
 }
 
 AddressSpace::AddressSpace(const AddressSpace &parent)
-    : invalid_map(parent.invalid_map),
-      maps(parent.maps.size()),
+    : invalid_min_map(parent.invalid_min_map),
+      invalid_max_map(parent.invalid_max_map),
+            maps(parent.maps.size()),
       page_to_map(parent.page_to_map.size()),
       is_dead(parent.is_dead),
       code_version_is_invalid(parent.code_version_is_invalid),
@@ -71,7 +75,11 @@ AddressSpace::AddressSpace(const AddressSpace &parent)
 
   unsigned i = 0;
   for (const auto &range : parent.maps) {
-    maps[i++] = range->Clone();
+    if (range->IsValid()) {
+      maps[i++] = range->Clone();
+    } else {
+      maps[i++] = range;
+    }
   }
 
   CreatePageToRangeMap();
@@ -308,6 +316,12 @@ static std::vector<MemoryMapPtr> RemoveRange(
 
   for (auto &map : ranges) {
 
+    // Min or max tombstone.
+    if (!map->IsValid()) {
+      new_ranges.push_back(map);
+      continue;
+    }
+
     auto map_base_address = map->BaseAddress();
     auto map_limit_address = map->LimitAddress();
 
@@ -331,7 +345,7 @@ static std::vector<MemoryMapPtr> RemoveRange(
     } else if (map_base_address < base && map_limit_address > limit) {
       DLOG(INFO)
           << "    Splitting with overlap ["
-          << std::hex << map->BaseAddress() << ", "
+          << std::hex << map_base_address << ", "
           << std::hex << map_limit_address << ") into "
           << "[" << std::hex << map_base_address << ", "
           << std::hex << base << ") and ["
@@ -427,7 +441,6 @@ void AddressSpace::AddMap(uint64_t base_, size_t size, const char *name,
       << ")" << std::dec;
 
   auto old_ranges = RemoveRange(maps, base, limit);
-  CheckRanges(old_ranges);
 
   if (old_ranges.size() < maps.size()) {
     LOG(INFO)
@@ -442,7 +455,6 @@ void AddressSpace::AddMap(uint64_t base_, size_t size, const char *name,
   maps.swap(old_ranges);
   maps.push_back(new_map);
 
-  CheckRanges(maps);
   CreatePageToRangeMap();
 }
 
@@ -479,95 +491,87 @@ void AddressSpace::RemoveMap(uint64_t base_, size_t size) {
     page_is_writable.erase(base);
   }
 
-  CheckRanges(maps);
   CreatePageToRangeMap();
 }
 
-// Find the smallest mapped memory range limit address that is greater
-// than `find`.
-//
-// TODO(pag): Optimize this.
-bool AddressSpace::NearestLimitAddress(
-    uint64_t find, uint64_t *next_end) const {
+// Returns `true` if `find` is a mapped address (with any permission).
+bool AddressSpace::IsMapped(uint64_t find) const {
   if (is_dead) {
-    LOG(ERROR)
-        << "Trying to query nearest limit address of "
-        << std::hex << find << " in destroyed address space"
-        << std::dec;
     return false;
   }
 
-  for (const auto &map : maps) {
-    auto limit_address = map->LimitAddress();
-    if (find < limit_address) {
-      *next_end = limit_address;
-      return true;
-    }
+  auto it = page_to_map.find(AlignDownToPage(find));
+  if (it == page_to_map.end()) {
+    return false;
   }
 
-  *next_end = 0;
+  auto &range = it->second;
+  return range->IsValid();
+}
+
+// Find a hole big enough to hold `size` bytes in the address space,
+// such that the hole falls within the bounds `[min, max)`.
+bool AddressSpace::FindHole(uint64_t min, uint64_t max, uint64_t size,
+                            uint64_t *hole) const {
+  *hole = 0;
+  if (!size) {
+    return false;
+  }
+
+  min = AlignDownToPage(min);
+  max = AlignDownToPage(max);
+  if (min >= max) {
+    return false;
+  }
+
+  size = RoundUpToPage(size);
+  if (size > (max - min)) {
+    asm("nop;" : : :"memory");
+    return false;
+  }
+
+  // Note: There are tombstone ranges bracketing the other ranges.
+
+  auto it = maps.rbegin();
+  auto it_end = maps.rend();
+
+  while (it != it_end) {
+    const auto &range_high = *it++;
+    if (it == it_end) {
+      break;
+    }
+
+    const auto high_base = range_high->BaseAddress();
+    if (high_base < min) {
+      break;
+    }
+
+    const auto &range_low = *it;
+    const auto low_limit = range_low->LimitAddress();
+    CHECK(low_limit <= high_base);
+
+    // No overlap in our range.
+    if (low_limit >= max) {
+      continue;
+    }
+
+    const auto alloc_max = std::min(max, high_base);
+    const auto alloc_min = std::max(min, low_limit);
+    const auto avail_size = alloc_max - alloc_min;
+    if (avail_size < size) {
+      continue;
+    }
+
+    *hole = alloc_max - size;
+    CHECK(*hole >= alloc_min);
+    return true;
+  }
+
   return false;
 }
 
-// Find the largest mapped memory range base address that is less-than
-// or equal to `find`.
-//
-// TODO(pag): Optimize this.
-bool AddressSpace::NearestBaseAddress(
-    uint64_t find, uint64_t *prev_begin) const {
-  if (is_dead) {
-    LOG(ERROR)
-        << "Trying to query nearest base address of "
-        << std::hex << find << " in destroyed address space"
-        << std::dec;
-    return false;
-  }
-
-  *prev_begin = 0;
-  auto found = false;
-  for (const auto &map : maps) {
-    auto base_address = map->BaseAddress();
-    if (base_address <= find) {
-      *prev_begin = base_address;
-      found = true;
-    } else {
-      break;
-    }
-  }
-  return found;
-}
-
-// Check that the ranges are sane.
-void AddressSpace::CheckRanges(std::vector<MemoryMapPtr> &r) {
-#ifndef NDEBUG
-
-  if (1 >= r.size()) {
-    return;  // Trivially sorted.
-  }
-
-  auto it = r.begin();
-  auto it_end = r.end() - 1;
-
-  for (; it != it_end; ) {
-    const auto &curr = *it;
-    const auto &next = *++it;
-
-    CHECK(curr->BaseAddress() < curr->LimitAddress())
-        << "Invalid range bounds [" << std::hex << curr->BaseAddress() << ", "
-        << std::hex << curr->LimitAddress() << ")";
-
-    CHECK(curr->LimitAddress() <= next->BaseAddress())
-          << "Overlapping ranges [" << std::hex << curr->BaseAddress() << ", "
-          << std::hex << curr->LimitAddress() << ") and ["
-          << std::hex << next->BaseAddress() << ", "
-          << std::hex << next->LimitAddress() << ")";
-  }
-#endif
-
-  (void) r;  // Mark as used.
-}
-
 void AddressSpace::CreatePageToRangeMap(void) {
+  CHECK(2 <= maps.size());
 
   last_read_map = page_to_map.end();
   last_written_map = wnx_page_to_map.end();
@@ -578,17 +582,22 @@ void AddressSpace::CreatePageToRangeMap(void) {
   auto old_read_size = page_to_map.size();
   auto old_write_size = wnx_page_to_map.size();
 
+  page_to_map.reserve(old_read_size);
+  wnx_page_to_map.reserve(old_write_size);
+
   std::sort(maps.begin(), maps.end(),
             [=] (const MemoryMapPtr &left, const MemoryMapPtr &right) {
     return left->BaseAddress() < right->BaseAddress();
   });
 
-  page_to_map.reserve(old_read_size);
-  wnx_page_to_map.reserve(old_write_size);
-
   for (const auto &map : maps) {
+    if (!map->IsValid()) {
+      continue;
+    }
+
+    const auto limit_address = map->LimitAddress();
     for (auto addr = map->BaseAddress();
-         addr < map->LimitAddress();
+         addr < limit_address;
          addr += kPageSize) {
 
       if (page_is_readable.count(addr)) {
@@ -600,6 +609,9 @@ void AddressSpace::CreatePageToRangeMap(void) {
       }
     }
   }
+
+  CHECK(!maps.front()->IsValid());  // Min tombstone.
+  CHECK(!maps.back()->IsValid());  // Max tombstone.
 }
 
 const MemoryMapPtr &AddressSpace::FindRange(uint64_t addr) {
@@ -613,7 +625,7 @@ const MemoryMapPtr &AddressSpace::FindRange(uint64_t addr) {
   if (likely(last_read_map != page_to_map.end())) {
     return last_read_map->second;
   } else {
-    return invalid_map;
+    return invalid_min_map;
   }
 }
 
@@ -628,19 +640,25 @@ const MemoryMapPtr &AddressSpace::FindWNXRange(uint64_t addr) {
   if (likely(last_written_map != wnx_page_to_map.end())) {
     return last_written_map->second;
   } else {
-    return invalid_map;
+    return invalid_min_map;
   }
 }
 
 // Log out the current state of the memory maps.
-void AddressSpace::LogMaps(std::ostream &os) {
+void AddressSpace::LogMaps(std::ostream &os) const {
+  auto arch = remill::GetTargetArch();
+
   os << "Memory maps:" << std::endl;
   for (const auto &range : maps) {
+    if (!range->IsValid()) {
+      continue;
+    }
     std::stringstream ss;
     auto flags = ss.flags();
-    ss << "  [" << std::hex << std::setw(16) << std::setfill('0')
-       << range->BaseAddress() << ", " << std::hex << std::setw(16)
-       << std::setfill('0') << range->LimitAddress() << ")";
+    ss << "  [" << std::hex << std::setw(arch->address_size / 4)
+       << std::setfill('0') << range->BaseAddress() << ", " << std::hex
+       << std::setw(arch->address_size / 4) << std::setfill('0')
+       << range->LimitAddress() << ")";
     ss.setf(flags);
 
     auto virt = range->ToVirtualAddress(range->BaseAddress());

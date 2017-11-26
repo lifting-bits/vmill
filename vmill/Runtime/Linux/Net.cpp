@@ -78,23 +78,31 @@ static Memory *SysConnect(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  struct sockaddr addr_val = {};
-  if (addr) {
-    if (!TryReadMemory(memory, addr, &addr_val)) {
+  linux_sockaddr info = {};
+
+  if (static_cast<size_t>(addrlen) > sizeof(info)) {
+    STRACE_ERROR(connect, "addrlen=%u out of bounds", addrlen);
+    return syscall.SetReturn(memory, state, -EINVAL);
+  }
+  if (addrlen) {
+    if (!CanReadMemory(memory, addr, addrlen)) {
       STRACE_ERROR(connect, "Couldn't read address");
       return syscall.SetReturn(memory, state, -EFAULT);
     }
+    CopyFromMemory(memory, &info, addr, addrlen);
   }
 
-  auto ret = connect(sockfd, (addr ? &addr_val : nullptr), addrlen);
+  auto ret = connect(sockfd, (addrlen ? &info : nullptr), addrlen);
+
   if (-1 == ret) {
     auto err = errno;
-    STRACE_ERROR(connect, "Couldn't connect to socket %d: %s",
-                 sockfd, strerror(err));
+    STRACE_ERROR(
+        connect, "fd=%d, sa_family=%d, addrlen=%u: %s",
+        sockfd, info.sa_family, addrlen, strerror(err));
     return syscall.SetReturn(memory, state, -err);
   } else {
-    STRACE_SUCCESS(connect, "fd=%d, addr=%s, len=%s, ret=%d",
-                   sockfd, addr_val.sa_data, addrlen, ret);
+    STRACE_SUCCESS(connect, "fd=%d, sa_family=%d, addrlen=%u, ret=%d",
+                   sockfd, info.sa_family, addrlen, ret);
     return syscall.SetReturn(memory, state, ret);
   }
 }
@@ -120,38 +128,35 @@ static Memory *SysListen(Memory *memory, State *state,
   }
 }
 
-struct SockAddress : public sockaddr {
-  uint8_t extra_space[1024 - sizeof(struct sockaddr)];
-};
-
-static SockAddress gSockAddrBuf = {};
-
 static Memory *DoSysAccept(Memory *memory, State *state,
                            const SystemCallABI &syscall,
-                           int fd, addr_t addr, addr_t addr_len,
+                           int fd, addr_t addr, addr_t addrlen_addr,
                            int flags) {
-  socklen_t addr_len_val = 0;
+  socklen_t addrlen = 0;
+  static linux_sockaddr info = {};
 
   if (addr) {
-    if (!TryReadMemory(memory, addr_len, &addr_len_val)) {
+    if (!TryReadMemory(memory, addrlen_addr, &addrlen)) {
       STRACE_ERROR(accept_generic, "Can't read address length");
       return syscall.SetReturn(memory, state, -EFAULT);
     }
 
-    assert(addr_len_val <= sizeof(SockAddress));
+    if (static_cast<size_t>(addrlen) > sizeof(linux_sockaddr)) {
+      STRACE_ERROR(accept_generic, "addrlen=%u out of bounds", addrlen);
+      return syscall.SetReturn(memory, state, -EINVAL);
+    }
 
-    if (!CanReadMemory(memory, addr, addr_len_val) ||
-        !CanWriteMemory(memory, addr, addr_len_val)) {
+    if (!CanReadMemory(memory, addr, addrlen) ||
+        !CanWriteMemory(memory, addr, addrlen)) {
       STRACE_ERROR(accept_generic, "Can't read or write address");
       return syscall.SetReturn(memory, state, -EFAULT);
     }
 
-    CopyFromMemory(memory, &gSockAddrBuf, addr, addr_len_val);
+    CopyFromMemory(memory, &info, addr, addrlen);
   }
 
-  auto ret_fd = accept4(
-      fd, (addr ? &gSockAddrBuf : nullptr),
-      (addr_len ? &addr_len_val : nullptr), flags);
+  auto ret_fd = accept4(fd, addr ? &info : nullptr,
+      (addrlen_addr ? &addrlen : nullptr), flags);
 
   if (-1 == ret_fd) {
     auto err = errno;
@@ -160,10 +165,10 @@ static Memory *DoSysAccept(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -err);
   }
 
-  if (addr && addr_len) {
-    memory = CopyToMemory(memory, addr, &gSockAddrBuf, addr_len_val);
+  if (addr && addrlen_addr) {
+    memory = CopyToMemory(memory, addr, &info, addrlen);
 
-    if (!TryWriteMemory(memory, addr_len, addr_len_val)) {
+    if (!TryWriteMemory(memory, addrlen_addr, addrlen)) {
       STRACE_ERROR(accept_generic, "Can't write address length.");
       return syscall.SetReturn(memory, state, -EFAULT);
     }
@@ -205,36 +210,41 @@ static Memory *SysGetSockName(Memory *memory, State *state,
                               const SystemCallABI &syscall) {
   int fd = -1;
   addr_t addr = 0;
-  addr_t len = 0;
-  if (!syscall.TryGetArgs(memory, state, &fd, &addr, &len)) {
+  addr_t addrlen_addr = 0;
+  if (!syscall.TryGetArgs(memory, state, &fd, &addr, &addrlen_addr)) {
     STRACE_ERROR(getsockname, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  socklen_t len_val = 0;
-  if (!TryReadMemory(memory, len, &len_val)) {
+  socklen_t addrlen = 0;
+  if (!TryReadMemory(memory, addrlen_addr, &addrlen)) {
     STRACE_ERROR(getsockname, "Couldn't copy sock len.");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  assert(len_val <= sizeof(SockAddress));
+  if (static_cast<size_t>(addrlen) > sizeof(linux_sockaddr)) {
+    STRACE_ERROR(getsockname, "addrlen=%u out of bounds", addrlen);
+    return syscall.SetReturn(memory, state, -EINVAL);
+  }
 
-  if (!CanReadMemory(memory, addr, len_val) ||
-      !CanWriteMemory(memory, addr, len_val)) {
+  if (!CanReadMemory(memory, addr, addrlen) ||
+      !CanWriteMemory(memory, addr, addrlen)) {
     STRACE_ERROR(getsockname, "Couldn't copy sock address to/from memory.");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  CopyFromMemory(memory, &gSockAddrBuf, addr, len_val);
+  linux_sockaddr info = {};
 
-  if (!getsockname(fd, &gSockAddrBuf, &len_val)) {
-    CopyToMemory(memory, addr, &gSockAddrBuf, len_val);
-    if (!TryWriteMemory(memory, len, &len_val)) {
+  CopyFromMemory(memory, &info, addr, addrlen);
+
+  if (!getsockname(fd, &info, &addrlen)) {
+    CopyToMemory(memory, addr, &info, addrlen);
+    if (!TryWriteMemory(memory, addrlen_addr, &addrlen)) {
       STRACE_ERROR(getsockname, "Couldn't copy sock address to memory.");
       return syscall.SetReturn(memory, state, -EFAULT);
     } else {
-      STRACE_SUCCESS(getsockname, "sa_data=%s, sa_family=%s",
-                     gSockAddrBuf.sa_data, gSockAddrBuf.sa_family);
+      STRACE_SUCCESS(getsockname, "sa_family=%u, addrlen=%u",
+                     info.sa_family, addrlen);
       return syscall.SetReturn(memory, state, 0);
     }
   } else {
@@ -248,36 +258,40 @@ static Memory *SysGetPeerName(Memory *memory, State *state,
                               const SystemCallABI &syscall) {
   int fd = -1;
   addr_t addr = 0;
-  addr_t len = 0;
-  if (!syscall.TryGetArgs(memory, state, &fd, &addr, &len)) {
+  addr_t addrlen_addr = 0;
+  if (!syscall.TryGetArgs(memory, state, &fd, &addr, &addrlen_addr)) {
     STRACE_ERROR(getpeername, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  socklen_t len_val = 0;
-  if (!TryReadMemory(memory, len, &len_val)) {
+  socklen_t addrlen = 0;
+  if (!TryReadMemory(memory, addrlen_addr, &addrlen)) {
     STRACE_ERROR(getpeername, "Couldn't copy sock len.");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  assert(len_val <= sizeof(SockAddress));
+  if (static_cast<size_t>(addrlen) > sizeof(linux_sockaddr)) {
+    STRACE_ERROR(getpeername, "addrlen=%u out of bounds", addrlen);
+    return syscall.SetReturn(memory, state, -EINVAL);
+  }
 
-  if (!CanReadMemory(memory, addr, len_val) ||
-      !CanWriteMemory(memory, addr, len_val)) {
+  if (!CanReadMemory(memory, addr, addrlen) ||
+      !CanWriteMemory(memory, addr, addrlen)) {
     STRACE_ERROR(getpeername, "Couldn't copy sock address to/from memory.");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  CopyFromMemory(memory, &gSockAddrBuf, addr, len_val);
+  linux_sockaddr info = {};
+  CopyFromMemory(memory, &info, addr, addrlen);
 
-  if (!getpeername(fd, &gSockAddrBuf, &len_val)) {
-    CopyToMemory(memory, addr, &gSockAddrBuf, len_val);
-    if (!TryWriteMemory(memory, len, &len_val)) {
+  if (!getpeername(fd, &info, &addrlen)) {
+    CopyToMemory(memory, addr, &info, addrlen);
+    if (!TryWriteMemory(memory, addrlen_addr, &addrlen)) {
       STRACE_ERROR(getpeername, "Couldn't copy sock address to memory.");
       return syscall.SetReturn(memory, state, -EFAULT);
     } else {
-      STRACE_SUCCESS(getpeername, "sa_data=%s, sa_family=%s",
-                     gSockAddrBuf.sa_data, gSockAddrBuf.sa_family);
+      STRACE_SUCCESS(getpeername, "sa_family=%u addrlen=%u",
+                     info.sa_family, addrlen);
       return syscall.SetReturn(memory, state, 0);
     }
   } else {
@@ -328,21 +342,31 @@ static Memory *SysSocketPair(Memory *memory, State *state,
 static Memory *DoSysSendTo(Memory *memory, State *state,
                            const SystemCallABI &syscall,
                            int fd, addr_t buf, size_t n, int flags,
-                           addr_t addr, socklen_t addr_len) {
-  assert(addr_len <= sizeof(SockAddress));
+                           addr_t addr, socklen_t addrlen) {
 
-  if (!n) {
+  if (static_cast<size_t>(addrlen) > sizeof(linux_sockaddr)) {
+    STRACE_ERROR(sendto, "addrlen=%u out of bounds", addrlen);
     return syscall.SetReturn(memory, state, -EINVAL);
   }
 
-  if (addr) {
-    if (!CanReadMemory(memory, addr, addr_len)) {
+  if (!n) {
+    STRACE_ERROR(sendto, "empty buffer");
+    return syscall.SetReturn(memory, state, -EINVAL);
+  }
+
+  linux_sockaddr info = {};
+  if (addrlen) {
+    if (!CanReadMemory(memory, addr, addrlen)) {
+      STRACE_ERROR(sendto, "Can't read addrlen=%u bytes from addr=%" PRIxADDR,
+                   addrlen, addr);
       return syscall.SetReturn(memory, state, -EFAULT);
     }
-    CopyFromMemory(memory, &gSockAddrBuf, addr, addr_len);
+    CopyFromMemory(memory, &info, addr, addrlen);
   }
 
   if (!CanReadMemory(memory, buf, n)) {
+    STRACE_ERROR(sendto, "Can't read n=%x bytes from buf=%" PRIxADDR,
+                 n, buf);
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
@@ -350,12 +374,19 @@ static Memory *DoSysSendTo(Memory *memory, State *state,
   CopyFromMemory(memory, buf_val, buf, n);
 
   auto ret = sendto(
-      fd, buf_val, n, flags, (addr ? &gSockAddrBuf : nullptr), addr_len);
+      fd, buf_val, n, flags, (addrlen ? &info : nullptr), addrlen);
   auto err = errno;
   delete[] buf_val;
+
   if (-1 == ret) {
+    STRACE_ERROR(
+        sendto, "fd=%d, n=%z, sa_data=%s, sa_family=%124s, addrlen=%u: %s",
+        fd, n, info.sa_data, info.sa_family, addrlen, strerror(err));
     return syscall.SetReturn(memory, state, -err);
   } else {
+    STRACE_SUCCESS(
+        sendto, "fd=%d, n=%z, sa_data=%s, sa_family=%124s, addrlen=%u",
+        fd, n, info.sa_data, info.sa_family, addrlen);
     return syscall.SetReturn(memory, state, ret);
   }
 }
@@ -367,6 +398,7 @@ static Memory *SysSend(Memory *memory, State *state,
   size_t n = 0;
   int flags = 0;
   if (!syscall.TryGetArgs(memory, state, &fd, &buf, &n, &flags)) {
+    STRACE_ERROR(send, "Can't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
   return DoSysSendTo(memory, state, syscall, fd, buf, n, flags, 0, 0);
@@ -382,6 +414,7 @@ static Memory *SysSendTo(Memory *memory, State *state,
   socklen_t addr_len = 0;
   if (!syscall.TryGetArgs(memory, state, &fd, &buf, &n, &flags,
                           &addr, &addr_len)) {
+    STRACE_ERROR(sendto, "Can't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
   return DoSysSendTo(memory, state, syscall, fd, buf, n, flags, addr, addr_len);
@@ -390,24 +423,35 @@ static Memory *SysSendTo(Memory *memory, State *state,
 static Memory *DoSysRecvFrom(Memory *memory, State *state,
                              const SystemCallABI &syscall,
                              int fd, addr_t buf, size_t n, unsigned flags,
-                             addr_t addr, addr_t addr_len) {
-  assert(addr_len <= sizeof(SockAddress));
-
+                             addr_t addr, addr_t addrlen_addr) {
   if (!n) {
+    STRACE_ERROR(recvfrom, "Empty buffer");
     return syscall.SetReturn(memory, state, -EINVAL);
   }
 
-  socklen_t addr_len_val = 0;
-  if (addr) {
-    if (!TryReadMemory(memory, addr_len, &addr_len_val) ||
-        !CanReadMemory(memory, addr, addr_len)) {
+  linux_sockaddr info = {};
+  socklen_t addrlen = 0;
+  if (addrlen_addr) {
+    if (!TryReadMemory(memory, addrlen_addr, &addrlen)) {
+      STRACE_ERROR(recvfrom, "Can't read addrlen from %" PRIxADDR,
+                   addrlen_addr);
       return syscall.SetReturn(memory, state, -EFAULT);
     }
-    CopyFromMemory(memory, &gSockAddrBuf, addr, addr_len);
-  }
 
-  if (!CanReadMemory(memory, buf, n)) {
-    return syscall.SetReturn(memory, state, -EFAULT);
+    if (static_cast<size_t>(addrlen) > sizeof(linux_sockaddr)) {
+      STRACE_ERROR(recvfrom, "addrlen=%u out of bounds", addrlen);
+      return syscall.SetReturn(memory, state, -EINVAL);
+    }
+
+    if (addrlen) {
+      if (!CanReadMemory(memory, addr, addrlen_addr)) {
+        STRACE_ERROR(recvfrom, "Can't read addrlen=%u byte addr=%" PRIxADDR,
+                     addrlen, addr);
+        return syscall.SetReturn(memory, state, -EFAULT);
+      }
+
+      CopyFromMemory(memory, &info, addr, addrlen_addr);
+    }
   }
 
   auto buf_val = new uint8_t[n];
@@ -416,28 +460,44 @@ static Memory *DoSysRecvFrom(Memory *memory, State *state,
 
   auto ret = recvfrom(
       fd, buf_val, n, static_cast<int>(flags),
-      (addr ? &gSockAddrBuf : nullptr),
-      (addr_len ? &addr_len_val : nullptr));
+      (addrlen ? &info : nullptr),
+      (addrlen_addr ? &addrlen : nullptr));
   auto err = errno;
 
-  if (!CanWriteMemory(memory, addr, addr_len)) {
+  if (!CanWriteMemory(memory, buf, n)) {
     delete[] buf_val;
+    STRACE_ERROR(recvfrom, "Can't write n=%z bytes to buf=%" PRIxADDR, n, buf);
     return syscall.SetReturn(memory, state, -EFAULT);
+
+  } else {
+    CopyToMemory(memory, buf, buf_val, n);
+    delete[] buf_val;
   }
 
-  CopyToMemory(memory, buf, buf_val, n);
-  delete[] buf_val;
+  if (addrlen) {
+    if (!CanWriteMemory(memory, addr, addrlen)) {
+      STRACE_ERROR(
+          recvfrom, "Can't write addrlen=%u bytes to addr=%" PRIxADDR,
+          addrlen, addr);
+      return syscall.SetReturn(memory, state, -EFAULT);
+    }
 
-  if (addr) {
-    if (!CopyToMemory(memory, addr, &gSockAddrBuf, addr_len_val) ||
-        !TryWriteMemory(memory, addr_len, addr_len_val)) {
+    CopyToMemory(memory, addr, &info, addrlen);
+
+    if (!TryWriteMemory(memory, addrlen_addr, addrlen)) {
+      STRACE_ERROR(
+          recvfrom, "Can't write addrlen=%u to %" PRIxADDR,
+          addrlen, addrlen_addr);
       return syscall.SetReturn(memory, state, -EFAULT);
     }
   }
 
   if (-1 == ret) {
+    STRACE_ERROR(recvfrom, "%s", strerror(err));
     return syscall.SetReturn(memory, state, -err);
   } else {
+    STRACE_SUCCESS(recvfrom, "n=%z buf=%" PRIxADDR " addrlen=%u",
+                   n, buf, addrlen);
     return syscall.SetReturn(memory, state, ret);
   }
 }
@@ -449,6 +509,7 @@ static Memory *SysRecv(Memory *memory, State *state,
   size_t n = 0;
   unsigned flags = 0;
   if (!syscall.TryGetArgs(memory, state, &fd, &buf, &n, &flags)) {
+    STRACE_ERROR(recv, "Can't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
   return DoSysRecvFrom(memory, state, syscall, fd, buf, n, flags, 0, 0);
@@ -464,6 +525,7 @@ static Memory *SysRecvFrom(Memory *memory, State *state,
   addr_t addr_len = 0;
   if (!syscall.TryGetArgs(memory, state, &fd, &buf, &n, &flags,
                           &addr, &addr_len)) {
+    STRACE_ERROR(recvfrom, "Can't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
   return DoSysRecvFrom(memory, state, syscall, fd, buf, n,
@@ -475,6 +537,7 @@ static Memory *SysShutdown(Memory *memory, State *state,
   int socket = -1;
   int how = 0;
   if (!syscall.TryGetArgs(memory, state, &socket, &how)) {
+    STRACE_ERROR(shutdown, "Can't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
   if (!shutdown(socket, how)) {
@@ -494,6 +557,7 @@ static Memory *SysSetSockOpt(Memory *memory, State *state,
   socklen_t option_len = 0;
   if (!syscall.TryGetArgs(memory, state, &socket, &level, &option_name,
                           &option_value, &option_len)) {
+    STRACE_ERROR(setsockopt, "Can't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
@@ -529,6 +593,7 @@ static Memory *SysGetSockOpt(Memory *memory, State *state,
   addr_t option_len = 0;
   if (!syscall.TryGetArgs(memory, state, &socket, &level, &option_name,
                           &option_value, &option_len)) {
+    STRACE_ERROR(getsockopt, "Can't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
@@ -907,8 +972,9 @@ static Memory *SysRecvMmsg(Memory *memory, State *state,
 template <typename AddrT>
 class SocketCallABI : public SystemCallABI {
  public:
-  explicit SocketCallABI(addr_t arg_addr_)
-      : arg_addr(arg_addr_),
+  SocketCallABI(const SystemCallABI &syscall_, addr_t arg_addr_)
+      : syscall(syscall_),
+        arg_addr(arg_addr_),
         padding(0) {}
 
   virtual ~SocketCallABI(void) = default;
@@ -917,14 +983,13 @@ class SocketCallABI : public SystemCallABI {
     return ret_addr;
   }
 
-  addr_t GetSystemCallNum(Memory *, State *state) const override {
-    return state->gpr.rax.aword;
+  addr_t GetSystemCallNum(Memory *memory, State *state) const override {
+    return syscall.GetSystemCallNum(memory, state);
   }
 
   Memory *DoSetReturn(Memory *memory, State *state,
-                    addr_t ret_val) const override {
-    state->gpr.rax.aword = static_cast<AddrT>(ret_val);
-    return memory;
+                      addr_t ret_val) const override {
+    return syscall.SetReturn(memory, state, ret_val);
   }
 
   bool CanReadArgs(Memory *memory, State *, int num_args) const override {
@@ -938,6 +1003,7 @@ class SocketCallABI : public SystemCallABI {
         arg_addr + static_cast<addr_t>(static_cast<addr_t>(i) * sizeof(AddrT)));
   }
 
+  const SystemCallABI &syscall;
   addr_t arg_addr;
   uint32_t padding;
 };
@@ -955,7 +1021,7 @@ static Memory *SysSocketCall(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EINVAL);
   }
 
-  SocketCallABI<AddrT> abi(args);
+  SocketCallABI<AddrT> abi(syscall, args);
   switch (call) {
     case SYS_SOCKET:
       return SysSocket(memory, state, abi);

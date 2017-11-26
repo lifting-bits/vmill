@@ -16,6 +16,12 @@
 
 namespace {
 
+extern "C" Memory *__vmill_breakpoint(State *state, vmill::PC pc,
+                                      Memory *memory) {
+  asm volatile ("" :: "m"(state), "m"(pc), "m"(memory) : "memory");
+  return memory;
+}
+
 static void __vmill_init_fpu_environ(State *state) {
   int new_round = 0;
   switch (state->fpcr.rmode) {

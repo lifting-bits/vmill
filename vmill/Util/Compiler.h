@@ -19,4 +19,6 @@
 #define likely(x) __builtin_expect((x), 1)
 #define unlikely(x) __builtin_expect((x), 0)
 
+#define USED(x) __asm__ __volatile__("" : : "m"(x) : "memory")
+
 #endif  // VMILL_UTIL_COMPILER_H_

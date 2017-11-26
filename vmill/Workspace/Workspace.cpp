@@ -277,14 +277,45 @@ static void LoadAddressSpaceFromSnapshot(
   for (const auto &page : orig_addr_space.page_ranges()) {
     CHECK(page.limit() > page.base())
         << "Invalid page map information with base " << std::hex << page.base()
-        << " being greater than or equal to the page limit " << std::hex
-        << page.limit() << " in address space " << std::dec
+        << " being greater than or equal to the page limit " << page.limit()
+        << " in address space " << std::dec
         << orig_addr_space.id();
+
+    const char *path = nullptr;
+    switch (page.kind()) {
+      case snapshot::kLinuxStackPageRange:
+        path = "[stack]";
+        break;
+      case snapshot::kLinuxHeapPageRange:
+        path = "[heap]";
+        break;
+      case snapshot::kLinuxVVarPageRange:
+        path = "[vvar]";
+        break;
+      case snapshot::kLinuxVDSOPageRange:
+        path = "[vdso]";
+        break;
+      case snapshot::kLinuxVSysCallPageRange:
+        path = "[vsyscall]";
+        break;
+      case snapshot::kFileBackedPageRange:
+        if (page.has_file_path()) {
+          path = page.file_path().c_str();
+        } else {
+          LOG(ERROR)
+            << "Page map with base " << std::hex << page.base() << " and limit "
+            << page.limit() << " in address space " << std::dec
+            << orig_addr_space.id() << " is file-backed, but does not have "
+            << "a file path.";
+        }
+        break;
+      case snapshot::kAnonymousPageRange:
+        break;
+    }
 
     auto base = static_cast<uint64_t>(page.base());
     auto limit = static_cast<uint64_t>(page.limit());
     auto size = limit - base;
-    auto path = page.has_file_path() ? page.file_path().c_str() : nullptr;
     auto offset = static_cast<uint64_t>(
         page.has_file_offset() ? page.file_offset() : 0L);
     emu_addr_space->AddMap(base, size, path, offset);

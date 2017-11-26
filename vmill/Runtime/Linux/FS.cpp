@@ -686,7 +686,7 @@ static Memory *SysGetDirEntries64(Memory *memory, State *state,
     entry.d_type = static_cast<decltype(entry.d_type)>(our_entry->d_type);
 
     TryWriteMemory(memory, entry_addr, entry);
-    CopyStringToMemory(memory, entry_addr + dirent_size,
+    CopyStringToMemory(memory, entry_addr + static_cast<addr_t>(dirent_size),
                        our_entry->d_name, name_len + 1);
 
     written += to_write;

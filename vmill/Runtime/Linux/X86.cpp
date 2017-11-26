@@ -38,6 +38,7 @@ class X86Int0x80SystemCall : public SystemCallABI {
     return num_args <= 6;
   }
 
+  // See https://code.woboq.org/linux/linux/arch/x86/entry/entry_64_compat.S.html#283
   addr_t GetArg(Memory *&memory, State *state, int i) const override {
     switch (i) {
       case 0:
@@ -102,6 +103,7 @@ class X86SysEnter32SystemCall : public SystemCallABI {
     return memory;
   }
 
+  // See https://code.woboq.org/linux/linux/arch/x86/entry/entry_64_compat.S.html#38
   addr_t GetArg(Memory *&memory, State *state, int i) const override {
     switch (i) {
       case 0:
@@ -132,10 +134,12 @@ Memory *__remill_async_hyper_call(
   switch (state.hyper_call) {
     case AsyncHyperCall::kX86SysEnter: {
       X86SysEnter32SystemCall syscall;
+      auto user_stack = state.gpr.rsp.aword;
       memory = X86SystemCall(memory, &state, syscall);
       if (syscall.Completed()) {
         ret_addr = syscall.GetReturnAddress(memory, ret_addr);
         state.gpr.rip.aword = ret_addr;
+        state.gpr.rsp.aword = user_stack;
         __vmill_set_location(ret_addr, vmill::kTaskStoppedAfterHyperCall);
       }
       break;

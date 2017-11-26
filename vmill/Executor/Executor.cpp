@@ -40,70 +40,79 @@ static thread_local Task *gTask = nullptr;
 static thread_local Executor *gExecutor = nullptr;
 static thread_local bool gFaulted = false;
 
+// Returns `true` if the Task has errored.
+static bool TaskStatusIsError(void) {
+  switch (gTask->status) {
+    case kTaskStatusRunnable:
+    case kTaskStopped:
+      return false;
+    case kTaskStatusMemoryAccessFault:
+    case kTaskStatusError:
+      return true;
+  }
+}
+
+extern "C" {
+
 // Returns a pointer to the currently executing task.
-extern "C" Task *__vmill_current(void) {
+Task *__vmill_current(void) {
   return gTask;
 }
 
-extern "C" AddressSpace *__vmill_allocate_address_space(void) {
+AddressSpace *__vmill_allocate_address_space(void) {
   return new AddressSpace;
 }
 
-extern "C" void __vmill_free_address_space(AddressSpace *memory) {
+void __vmill_free_address_space(AddressSpace *memory) {
   delete memory;
 }
 
-extern "C" bool __vmill_can_read_byte(AddressSpace *memory, uint64_t addr) {
+bool __vmill_can_read_byte(AddressSpace *memory, uint64_t addr) {
   return memory->CanRead(addr);
 }
 
-extern "C" bool __vmill_can_write_byte(AddressSpace *memory, uint64_t addr) {
+bool __vmill_can_write_byte(AddressSpace *memory, uint64_t addr) {
   return memory->CanWrite(addr);
 }
 
-extern "C" AddressSpace *__vmill_allocate_memory(
+AddressSpace *__vmill_allocate_memory(
     AddressSpace *memory, uint64_t where, uint64_t size,
     const char *name, uint64_t offset) {
   memory->AddMap(where, size, name, offset);
   return memory;
 }
 
-extern "C" AddressSpace *__vmill_free_memory(
+AddressSpace *__vmill_free_memory(
     AddressSpace *memory, uint64_t where, uint64_t size) {
   memory->RemoveMap(where, size);
   return memory;
 }
 
-extern "C" AddressSpace *__vmill_protect_memory(
+AddressSpace *__vmill_protect_memory(
     AddressSpace *memory, uint64_t where, uint64_t size, bool can_read,
     bool can_write, bool can_exec) {
   memory->SetPermissions(where, size, can_read, can_write, can_exec);
   return memory;
 }
 
-extern "C" uint64_t __vmill_next_memory_end(
-    AddressSpace *memory, uint64_t where) {
-
-  uint64_t nearest_end = 0;
-  if (memory->NearestLimitAddress(where, &nearest_end)) {
-    return nearest_end;
-  } else {
-    return 0;
-  }
+// Returns `true` iff a given page is mapped (independent of permissions).
+bool __vmill_is_mapped_address(AddressSpace *memory, uint64_t where) {
+  return memory->IsMapped(where);
 }
 
-extern "C" uint64_t __vmill_prev_memory_begin(
-    AddressSpace *memory, uint64_t where) {
-  uint64_t nearest_begin = 0;
-  if (memory->NearestBaseAddress(where, &nearest_begin)) {
-    return nearest_begin;
+// Finds some unmapped memory.
+uint64_t __vmill_find_unmapped_address(
+    AddressSpace *memory, uint64_t base, uint64_t limit, uint64_t size) {
+  uint64_t hole = 0;
+  if (memory->FindHole(base, limit, size, &hole)) {
+    return hole;
   } else {
     return 0;
   }
 }
 
 #define MAKE_MEM_READ(ret_type, read_type, suffix, read_size, vtype) \
-    extern "C" ret_type __remill_read_memory_ ## suffix( \
+    ret_type __remill_read_memory_ ## suffix( \
         AddressSpace *memory, uint64_t addr) { \
       read_type ret_val = 0; \
       if (likely(memory->TryRead(addr, &ret_val))) { \
@@ -129,7 +138,7 @@ MAKE_MEM_READ(double, double, f64, 8, kMemoryValueTypeFloatingPoint)
 
 #undef MAKE_MEM_READ
 
-extern "C" double __remill_read_memory_f80(
+double __remill_read_memory_f80(
     AddressSpace *memory, uint64_t addr) {
   uint8_t data[sizeof(long double)] = {};
   if (memory->TryRead(addr, data, 10)) {
@@ -147,7 +156,7 @@ extern "C" double __remill_read_memory_f80(
 }
 
 #define MAKE_MEM_WRITE(input_type, write_type, suffix, write_size, vtype) \
-    extern "C" AddressSpace *__remill_write_memory_ ## suffix( \
+    AddressSpace *__remill_write_memory_ ## suffix( \
         AddressSpace *memory, uint64_t addr, input_type val) { \
       if (unlikely(!memory->TryWrite(addr, val))) { \
         if (!gFaulted && gTask) { \
@@ -170,7 +179,7 @@ MAKE_MEM_WRITE(double, double, f64, 8, kMemoryValueTypeFloatingPoint)
 
 #undef MAKE_MEM_WRITE
 
-extern "C" AddressSpace *__remill_write_memory_f80(
+AddressSpace *__remill_write_memory_f80(
     AddressSpace *memory, uint64_t addr, double val) {
   auto long_val = static_cast<long double>(val);
   if (unlikely(!memory->TryWrite(addr, &long_val, 10))) {
@@ -185,19 +194,7 @@ extern "C" AddressSpace *__remill_write_memory_f80(
   return memory;
 }
 
-// Returns `true` if the Task has errored.
-static bool TaskStatusIsError(void) {
-  switch (gTask->status) {
-    case kTaskStatusRunnable:
-    case kTaskStopped:
-      return false;
-    case kTaskStatusMemoryAccessFault:
-    case kTaskStatusError:
-      return true;
-  }
-}
-
-extern "C" void __vmill_set_location(PC pc, vmill::TaskStopLocation loc) {
+void __vmill_set_location(PC pc, vmill::TaskStopLocation loc) {
   gTask->pc = pc;
   gTask->location = loc;
   if (!TaskStatusIsError()) {
@@ -216,7 +213,7 @@ extern "C" void __vmill_set_location(PC pc, vmill::TaskStopLocation loc) {
   }
 }
 
-extern "C" Memory *__remill_error(ArchState *, PC pc, Memory *memory) {
+Memory *__remill_error(ArchState *, PC pc, Memory *memory) {
   gTask->pc = pc;
   gTask->location = kTaskStoppedAtError;
   if (!TaskStatusIsError()) {
@@ -225,7 +222,7 @@ extern "C" Memory *__remill_error(ArchState *, PC pc, Memory *memory) {
   return memory;
 }
 
-extern "C" Memory *__remill_missing_block(ArchState *, PC pc, Memory *memory) {
+Memory *__remill_missing_block(ArchState *, PC pc, Memory *memory) {
   gTask->pc = pc;
   gTask->location = kTaskStoppedAtError;
   if (!TaskStatusIsError()) {
@@ -234,79 +231,77 @@ extern "C" Memory *__remill_missing_block(ArchState *, PC pc, Memory *memory) {
   return memory;
 }
 
-extern "C" Memory *__remill_jump(ArchState *, PC pc, Memory *memory) {
+Memory *__remill_jump(ArchState *, PC pc, Memory *memory) {
   gTask->pc = pc;
   gTask->location = kTaskStoppedAtJumpTarget;
   return memory;
 }
 
-extern "C" Memory *__remill_function_call(ArchState *, PC pc, Memory *memory) {
+Memory *__remill_function_call(ArchState *, PC pc, Memory *memory) {
   gTask->pc = pc;
   gTask->location = kTaskStoppedAtCallTarget;
   return memory;
 }
 
-extern "C" Memory *__remill_function_return(
-    ArchState *, PC pc, Memory *memory) {
+Memory *__remill_function_return(ArchState *, PC pc, Memory *memory) {
   gTask->pc = pc;
   gTask->location = kTaskStoppedAtReturnTarget;
   return memory;
 }
 
 
-extern "C" uint8_t __remill_undefined_8(void) {
+uint8_t __remill_undefined_8(void) {
   return 0;
 }
 
-extern "C" uint16_t __remill_undefined_16(void) {
+uint16_t __remill_undefined_16(void) {
   return 0;
 }
 
-extern "C" uint32_t __remill_undefined_32(void) {
+uint32_t __remill_undefined_32(void) {
   return 0;
 }
 
-extern "C" uint64_t __remill_undefined_64(void) {
+uint64_t __remill_undefined_64(void) {
   return 0;
 }
 
-extern "C" float __remill_undefined_f32(void) {
+float __remill_undefined_f32(void) {
   return 0.0;
 }
 
-extern "C" double __remill_undefined_f64(void) {
+double __remill_undefined_f64(void) {
   return 0.0;
 }
 
 // Memory barriers types, see: http://g.oswego.edu/dl/jmm/cookbook.html
-extern "C" Memory *__remill_barrier_load_load(Memory * memory) {
+Memory *__remill_barrier_load_load(Memory * memory) {
   return memory;
 }
 
-extern "C" Memory *__remill_barrier_load_store(Memory * memory) {
+Memory *__remill_barrier_load_store(Memory * memory) {
   return memory;
 }
 
-extern "C" Memory *__remill_barrier_store_load(Memory * memory) {
+Memory *__remill_barrier_store_load(Memory * memory) {
   return memory;
 }
 
-extern "C" Memory *__remill_barrier_store_store(Memory * memory) {
+Memory *__remill_barrier_store_store(Memory * memory) {
   return memory;
 }
 
 // Atomic operations. The address/size are hints, but the granularity of the
 // access can be bigger. These have implicit StoreLoad semantics.
-extern "C" Memory *__remill_atomic_begin(Memory * memory) {
+Memory *__remill_atomic_begin(Memory * memory) {
   return memory;
 }
 
-extern "C" Memory *__remill_atomic_end(Memory * memory) {
+Memory *__remill_atomic_end(Memory * memory) {
   return memory;
 }
 
-extern "C" int __remill_fpu_exception_test_and_clear(
-    int read_mask, int clear_mask) {
+int __remill_fpu_exception_test_and_clear(int read_mask, int clear_mask) {
 
   auto except = std::fetestexcept(read_mask);
   std::feclearexcept(clear_mask);
@@ -314,7 +309,7 @@ extern "C" int __remill_fpu_exception_test_and_clear(
 }
 
 // Called by the runtime to execute some lifted code.
-extern "C" void __vmill_run(Task *task) {
+void __vmill_run(Task *task) {
   gTask = task;
 
   const auto lifted_func = gExecutor->FindLiftedFunctionForTask(task);
@@ -362,6 +357,7 @@ extern "C" void __vmill_run(Task *task) {
   }
 }
 
+}  // extern "C"
 }  // namespace
 
 Executor::Executor(void)
