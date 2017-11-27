@@ -49,17 +49,9 @@ static void __vmill_init_task(
   task->status = vmill::kTaskStatusRunnable;
   task->location = vmill::kTaskNotYetStarted;
   task->memory = memory;
-
+  task->async_routine = __vmill_allocate_coroutine();
   memcpy(task->state, state, sizeof(State));
 
-  // Initialize this task's floating point environment based on the
-  // arch-specific info in the `State` structure.
-  fenv_t old_env = {};
-  fegetenv(&old_env);
-  feclearexcept(FE_ALL_EXCEPT);
-  fesetenv(FE_DFL_ENV);
-  __vmill_init_fpu_environ(reinterpret_cast<State *>(task->state));
-  fegetenv(&(task->floating_point_env));
-  fesetenv(&old_env);
+  task->fpu_rounding_mode = __vmill_get_rounding_mode(task->state);
 }
 

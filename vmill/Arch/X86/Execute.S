@@ -26,29 +26,81 @@
 
     .extern SYMBOL(__vmill_execute)
 
+    // Swap off of the Task-specific stack.
+    .align 16
+    .globl SYMBOL(__vmill_yield_async)
+SYMBOL(__vmill_yield_async):
+    .cfi_startproc
+.Lbegin0:
+    // RDI -> Stack *
+
+    // Align to an 8-byte boundary.
+    lea rdi, [rdi - 120]
+
+    // Save+restore the callee-saved registers.
+    xchg rbx, [rdi + 0]
+    xchg rbp, [rdi + 8]
+    xchg r12, [rdi + 16]
+    xchg r13, [rdi + 24]
+    xchg r14, [rdi + 32]
+    xchg r15, [rdi + 40]
+
+    // Restore the old stack pointer.
+    xchg rsp, [rdi - 8]
+    ret
+
+.Lend0:
+    .cfi_endproc
+    .size SYMBOL(__vmill_yield_async),.Lend0-.Lbegin0
+
+
     // Swap onto a Task-specific stack.
     .align 16
-    .globl SYMBOL(__vmill_execute_on_stack)
-SYMBOL(__vmill_execute_on_stack):
+    .globl SYMBOL(__vmill_execute_async)
+SYMBOL(__vmill_execute_async):
     .cfi_startproc
-.Lbegin:
+.Lbegin2:
     // RDI -> Task *
-    //          offset 0:   State *
-    //          offset 8:   PC
-    //          offset 16:  Memory *
+    //        0:   State *
+    //        8:   PC
+    //        16:  Memory *
+    //        24:  Coroutine *
+    //             0:   Stack *
     // RSI -> LiftedFunction *
-    // RDX -> Stack *
-    xchg rdx, rsp
-    push rdx
 
-    push rbp
-    mov rbp, rdx  // Setup a link pointer for the stack
+    mov rdx, [rdi + 24] // RDX -> Coroutine *
+    mov rdx, [rdx]      // RDX -> Stack *
 
-    call SYMBOL(__vmill_execute)
+    // Align to an 8-byte boundary. (1)
+    lea rdx, [rdx - 120]
 
-    pop rbp
-    pop rsp
+    // Save the callee-saved registers for `__vmill_pause_async`, or for this
+    // function to restore if it doesn't pause.
+    mov [rdx + 0], rbx
+    mov [rdx + 8], rbp
+    mov [rdx + 16], r12
+    mov [rdx + 24], r13
+    mov [rdx + 32], r14
+    mov [rdx + 40], r15
+
+    xchg rdx, rsp   // Swap stacks.
+    push rdx        // Save the old stack pointer (into the old `rdx + 8`)
+
+    call SYMBOL(__vmill_execute)    // Execute lifted code.
+
+    lea rdx, [rsp + 8]              // Compute old RDX (1) above.
+    pop rsp                         // Swap stacks.
+
+    // Restore the callee-saved registers. These were saved by us, or by
+    //
+    mov rbx, [rdx + 0]
+    mov rbp, [rdx + 8]
+    mov r12, [rdx + 16]
+    mov r13, [rdx + 24]
+    mov r14, [rdx + 32]
+    mov r15, [rdx + 40]
+
     ret
-.Lend:
+.Lend2:
     .cfi_endproc
-    .size SYMBOL(__vmill_execute_on_stack),.Lend-.Lbegin
+    .size SYMBOL(__vmill_execute_async),.Lend2-.Lbegin2

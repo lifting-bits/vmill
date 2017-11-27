@@ -18,6 +18,7 @@
 #include <glog/logging.h>
 
 #include <cfenv>
+#include <setjmp.h>
 
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
@@ -29,13 +30,13 @@
 #include "vmill/BC/Lifter.h"
 #include "vmill/BC/Util.h"
 #include "vmill/Executor/CodeCache.h"
+#include "vmill/Executor/Coroutine.h"
 #include "vmill/Executor/Executor.h"
 #include "vmill/Program/AddressSpace.h"
 #include "vmill/Util/Compiler.h"
 #include "vmill/Workspace/Workspace.h"
 
-DEFINE_uint64(num_io_threads, std::thread::hardware_concurrency(),
-              "Number of I/O threads.");
+DEFINE_uint64(num_io_threads, 0, "Number of I/O threads.");
 
 namespace vmill {
 namespace {
@@ -319,6 +320,14 @@ Memory *__remill_atomic_end(Memory * memory) {
   return memory;
 }
 
+Coroutine *__vmill_allocate_coroutine(void) {
+  if (FLAGS_num_io_threads) {
+    return new Coroutine;
+  } else {
+    return nullptr;
+  }
+}
+
 int __remill_fpu_exception_test_and_clear(int read_mask, int clear_mask) {
 
   auto except = std::fetestexcept(read_mask);
@@ -326,19 +335,19 @@ int __remill_fpu_exception_test_and_clear(int read_mask, int clear_mask) {
   return except;
 }
 
-extern void __vmill_execute_on_stack(Task *, LiftedFunction *, Stack *);
+// Implemented in assembly.
+extern void __vmill_execute_async(Task *, LiftedFunction *);
 
+// Called by assembly in `__vmill_execute_async`.
 void __vmill_execute(Task *task, LiftedFunction *lifted_func) {
   const auto memory = task->memory;
   const auto pc = task->pc;
-  auto &task_fp_env = task->floating_point_env;
 
-  fenv_t native_fp_env = {};
-  fegetenv(&native_fp_env);
-  fesetenv(&task_fp_env);
-  lifted_func(task->state, pc, memory);
-  fegetenv(&task_fp_env);
-  fesetenv(&native_fp_env);
+  auto native_rounding = std::fegetround();
+  std::fesetround(task->fpu_rounding_mode);
+  lifted_func(task->state, pc, memory);  // Calls into lifted code.
+  task->fpu_rounding_mode = std::fegetround();
+  std::fesetround(native_rounding);
 
   task->last_pc = pc;
 
@@ -353,7 +362,6 @@ void __vmill_execute(Task *task, LiftedFunction *lifted_func) {
         task->status = kTaskStatusRunnable;
         break;
     }
-
   } else {
     LogFault(LOG(ERROR), task);
     LogRegisterState(LOG(ERROR), task->state);
@@ -364,27 +372,24 @@ void __vmill_execute(Task *task, LiftedFunction *lifted_func) {
 
 // Called by the runtime to execute some lifted code.
 void __vmill_run(Task *task) {
-  CHECK(!task->must_be_zero);
-
   gTask = task;
 
   // The task is waiting for an asynchronous operation to complete.
-  if (unlikely(kTaskStatusResumable == task->status)) {
-    longjmp(task->resume_context, 1);
+  if (unlikely(FLAGS_num_io_threads)) {
+    if (unlikely(kTaskStatusResumable == task->status)) {
+      task->async_routine->Resume();
+    }
   }
 
-  CHECK(kTaskStatusRunnable == task->status);
+  DCHECK(kTaskStatusRunnable == task->status);
 
   const auto lifted_func = gExecutor->FindLiftedFunctionForTask(task);
 
-  if (!FLAGS_num_io_threads) {
+  if (likely(!FLAGS_num_io_threads)) {
     __vmill_execute(task, lifted_func);
-
   } else {
-    __vmill_execute_on_stack(task, lifted_func, &(task->async_stack[1]));
+    __vmill_execute_async(task, lifted_func);
   }
-
-  CHECK(!task->must_be_zero);
 
   gTask = nullptr;
 }
@@ -533,7 +538,6 @@ void Executor::RunMany(void) {
       << "Executor::RunMany is not yet implemented.";
   gExecutor = this;
   will_run_many = true;
-
   gExecutor = nullptr;
 }
 

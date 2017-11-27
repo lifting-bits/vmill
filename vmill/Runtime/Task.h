@@ -17,11 +17,7 @@
 #ifndef VMILL_RUNTIME_TASKSTATUS_H_
 #define VMILL_RUNTIME_TASKSTATUS_H_
 
-#include <atomic>
 #include <cstdint>
-#include <cfenv>
-#include <setjmp.h>
-#include <future>
 
 struct ArchState;
 struct Memory;
@@ -29,7 +25,7 @@ struct Memory;
 namespace vmill {
 
 class AddressSpace;
-class AsyncContext;
+class Coroutine;
 
 enum class PC : uint64_t;
 
@@ -73,10 +69,6 @@ enum MemoryValueType : uint16_t {
   kMemoryValueTypeInstruction
 };
 
-struct alignas(16) Stack {
-  uint64_t stack[(4096 * 8) / sizeof(uint64_t)];
-};
-
 // A task is like a thread, but really, it's the runtime that gives a bit more
 // meaning to threads. The runtime has `resume`, `pause`, `stop`, and `schedule`
 // intrinsics. When
@@ -91,6 +83,9 @@ struct Task {
   // Memory that this task can access.
   AddressSpace *memory;
 
+  // The stack on which lifted code of this task will execute.
+  Coroutine *async_routine;
+
   // Status information.
   TaskStatus status;
 
@@ -103,25 +98,13 @@ struct Task {
 
   // Information about the first fault encountered while executing.
   struct {
+    uint64_t address;
+    unsigned access_size;  // In bytes.
     MemoryAccessFaultKind kind;
     MemoryValueType value_type;
-    unsigned access_size;  // In bytes.
-    uint64_t address;
-  } __attribute__((packed)) mem_access_fault;
+  } mem_access_fault;
 
-  // Floating point environment of this task; this is to let us resume in this
-  // task with the correct rounding modes and such.
-  fenv_t floating_point_env;
-
-  // The register context, as saved at an asynchronous resume point.
-  jmp_buf resume_context;
-
-  std::atomic<bool> pending_value;
-
-  // The stack on which lifted code of this task will execute.
-  Stack async_stack[1];
-
-  uint64_t must_be_zero;
+  int fpu_rounding_mode;
 };
 
 }  // namespace vmill

@@ -54,23 +54,18 @@ Memory *__vmill_breakpoint(State *state, vmill::PC pc, Memory *memory) {
 
 namespace {
 
-static void __vmill_init_fpu_environ(State *state) {
-  int new_round = 0;
+static int __vmill_get_rounding_mode(const ArchState *state_) {
+  auto state = reinterpret_cast<const State *>(state_);
   switch (state->x87.fxsave.cwd.rc) {
     case kFPURoundToNearestEven:  // RN (round nearest).
-      new_round = FE_TONEAREST;
-      break;
+      return FE_TONEAREST;
     case kFPURoundUpInf:  // RP (round toward plus infinity).
-      new_round = FE_UPWARD;
-      break;
+      return FE_UPWARD;
     case kFPURoundDownNegInf:  // RM (round toward minus infinity).
-      new_round = FE_DOWNWARD;
-      break;
+      return FE_DOWNWARD;
     case kFPURoundToZero:  // RZ (round toward zero).
-      new_round = FE_TOWARDZERO;
-      break;
+      return FE_TOWARDZERO;
   }
-  fesetround(new_round);
 }
 
 }  // namespace

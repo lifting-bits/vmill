@@ -41,10 +41,13 @@
 #include "vmill/Util/Compiler.h"
 #include "vmill/Workspace/Workspace.h"
 
+#include <gflags/gflags.h>
+
 extern "C" {
 // Used to register exception handling frames with the JIT.
 __attribute__((weak))
 extern void __register_frame(void *);
+
 }  // extern C
 namespace vmill {
 namespace {

@@ -23,6 +23,8 @@
 
 extern "C" {
 
+extern vmill::Coroutine *__vmill_allocate_coroutine(void);
+
 // Set the location of a task.
 [[gnu::used]]
 extern void __vmill_set_location(addr_t pc, vmill::TaskStopLocation loc);

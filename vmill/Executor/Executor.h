@@ -30,6 +30,7 @@ struct Memory;
 namespace llvm {
 class LLVMContext;
 }  // namespace llvm
+
 namespace vmill {
 
 class AddressSpace;
