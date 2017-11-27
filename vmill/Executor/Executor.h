@@ -21,6 +21,7 @@
 #include <unordered_map>
 
 #include "vmill/BC/Trace.h"
+#include "vmill/Etc/ThreadPool/ThreadPool.h"
 #include "vmill/Runtime/Task.h"
 
 struct ArchState;
@@ -72,6 +73,10 @@ class Executor {
   // Have we previously executed `Executor::Run`?
   bool has_run;
   bool will_run_many;
+
+  // List of async I/O threads. The executor will offload I/O operations of
+  // emulated tasks onto these threads.
+  ThreadPool async_io_workers;
 
   // List of initial tasks.
   std::vector<InitialTaskInfo> initial_tasks;

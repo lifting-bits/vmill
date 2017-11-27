@@ -50,8 +50,6 @@
 #include "vmill/Workspace/Workspace.h"
 
 DEFINE_uint64(breakpoint, 0, "Address of where to inject a breakpoint.");
-
-DECLARE_string(workspace);
 DECLARE_string(arch);
 DECLARE_string(os);
 

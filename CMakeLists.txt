@@ -51,8 +51,9 @@ add_library(${PROJECT_NAME} STATIC
     ${PROJECT_PROTOBUFSOURCEFILES}
     vmill/Arch/Decoder.cpp
     vmill/Arch/Arch.cpp
-    vmill/Arch/X86.cpp
-    vmill/Arch/AArch64.cpp
+    vmill/Arch/X86/Log.cpp
+    vmill/Arch/X86/Execute.S
+    vmill/Arch/AArch64/Log.cpp
     vmill/BC/Compiler.cpp
     vmill/BC/Lifter.cpp
     vmill/BC/Util.cpp
@@ -65,6 +66,7 @@ add_library(${PROJECT_NAME} STATIC
     vmill/Util/Hash.cpp
     vmill/Util/Timer.cpp
     vmill/Workspace/Workspace.cpp
+    vmill/Etc/ThreadPool/ThreadPool.cpp
     vmill/Etc/xxHash/xxhash.c
 )
 

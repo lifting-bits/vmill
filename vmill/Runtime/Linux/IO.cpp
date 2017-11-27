@@ -19,37 +19,26 @@
 
 namespace {
 
-int DoRead(Memory *memory, int fd, addr_t buf, size_t size,
-           size_t *out_num_bytes) {
+static int DoRead(Memory *memory, int fd, addr_t buf, size_t size,
+                  size_t *out_num_bytes) {
 
   // TODO(pag): Not 100% right; can have partial reads at the page granularity.
   if (!CanWriteMemory(memory, buf, size)) {
     return EFAULT;
   }
 
-  ssize_t read_bytes = 0;
-  for (auto max_bytes = static_cast<ssize_t>(size); read_bytes < max_bytes; ) {
-    auto remaining_bytes = max_bytes - read_bytes;
-    auto wanted_bytes = std::min<ssize_t>(remaining_bytes, kIOBufferSize);
-    errno = 0;
-    auto num_bytes = read(fd, gIOBuffer, static_cast<size_t>(wanted_bytes));
-    auto err = errno;
-    if (0 >= num_bytes) {
-      if (read_bytes || !errno) {
-        break;
-      } else {
-        return err;
-      }
-    } else {
-      memory = CopyToMemory(memory, buf, gIOBuffer,
-                            static_cast<size_t>(num_bytes));
-      buf += static_cast<size_t>(num_bytes);
-      *out_num_bytes += static_cast<size_t>(num_bytes);
-      read_bytes += num_bytes;
-    }
+  auto bytes_read = new uint8_t[size];
+  auto num_bytes = read(fd, bytes_read, size);
+  auto err = errno;
+  if (-1 != num_bytes) {
+    err = 0;
+    *out_num_bytes += static_cast<size_t>(num_bytes);
+    memory = CopyToMemory(memory, buf, bytes_read,
+                          static_cast<size_t>(num_bytes));
   }
 
-  return 0;
+  delete[] bytes_read;
+  return err;
 }
 
 // Emulate a `read` system call.
@@ -72,8 +61,8 @@ static Memory *SysRead(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -err);
   } else {
     STRACE_SUCCESS(read, "fd=%d, size=%d/%d", fd, num_read_bytes, size);
-    return syscall.SetReturn(memory, state,
-                             static_cast<addr_t>(num_read_bytes));
+    return syscall.SetReturn(
+        memory, state, static_cast<addr_t>(num_read_bytes));
   }
 }
 
@@ -85,29 +74,18 @@ static int DoWrite(Memory *memory, int fd, addr_t buf, size_t size,
     return EFAULT;
   }
 
-  ssize_t written_bytes = 0;
-  for (auto max_bytes = static_cast<ssize_t>(size);
-       written_bytes < max_bytes; ) {
+  auto write_bytes = new uint8_t[size];
+  CopyFromMemory(memory, write_bytes, buf, size);
+  auto num_bytes = write(fd, write_bytes, size);
+  auto err = errno;
+  delete[] write_bytes;
 
-    auto num_bytes_left = size - static_cast<size_t>(written_bytes);
-    auto num_to_copy = std::min<size_t>(kIOBufferSize, num_bytes_left);
-    CopyFromMemory(memory, gIOBuffer, buf, num_to_copy);
-
-    errno = 0;
-    auto num_bytes = write(fd, gIOBuffer, num_to_copy);
-    auto err = errno;
-    if (0 >= num_bytes) {
-      if (written_bytes) {
-        break;
-      } else {
-        return err;
-      }
-    } else {
-      written_bytes += num_bytes;
-      *num_written_bytes += static_cast<size_t>(num_bytes);
-    }
+  if (-1 != num_bytes) {
+    err = 0;
+    *num_written_bytes += static_cast<size_t>(num_bytes);
   }
-  return 0;
+
+  return err;
 }
 
 // Emulate a `read` system call.
@@ -131,8 +109,8 @@ static Memory *SysWrite(Memory *memory, State *state,
 
   } else {
     STRACE_SUCCESS(write, "fd=%d, size=%d/%d", fd, num_written_bytes, size);
-    return syscall.SetReturn(memory, state,
-                             static_cast<addr_t>(num_written_bytes));
+    return syscall.SetReturn(
+        memory, state, static_cast<addr_t>(num_written_bytes));
   }
 }
 

@@ -65,6 +65,7 @@ extern "C" void __vmill_resume(void) {
     for (auto task = gTaskList; task; task = task->next) {
       switch (task->status) {
         case vmill::kTaskStatusRunnable:
+        case vmill::kTaskStatusResumable:
           progressed = true;
           if (!task->blocked_count) {
             __vmill_run(task);

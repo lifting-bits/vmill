@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <gflags/gflags.h>
 #include <glog/logging.h>
 
 #include <cfenv>
@@ -33,23 +34,39 @@
 #include "vmill/Util/Compiler.h"
 #include "vmill/Workspace/Workspace.h"
 
+DEFINE_uint64(num_io_threads, std::thread::hardware_concurrency(),
+              "Number of I/O threads.");
+
 namespace vmill {
 namespace {
 
 static thread_local Task *gTask = nullptr;
 static thread_local Executor *gExecutor = nullptr;
-static thread_local bool gFaulted = false;
 
-// Returns `true` if the Task has errored.
-static bool TaskStatusIsError(void) {
-  switch (gTask->status) {
-    case kTaskStatusRunnable:
-    case kTaskStopped:
-      return false;
-    case kTaskStatusMemoryAccessFault:
-    case kTaskStatusError:
-      return true;
+static const char *AccessKindToString(MemoryAccessFaultKind kind) {
+  switch (kind) {
+    case kMemoryAccessNoFault:
+      return "none";
+    case kMemoryAccessFaultOnRead:
+      return "read";
+    case kMemoryAccessFaultOnWrite:
+      return "write";
+    case kMemoryAccessFaultOnExecute:
+      return "execute";
   }
+}
+
+__attribute__((noinline))
+static void LogFault(std::ostream &os, Task *task) {
+  const auto memory = task->memory;
+  const auto pc_uint = static_cast<uint64_t>(task->last_pc);
+  const auto &fault = task->mem_access_fault;
+  os
+      << "Task faulted while executing trace " << std::hex
+      << pc_uint << " (" << memory->ToVirtualAddress(pc_uint) << ")"
+      << std::dec << " when trying to " << AccessKindToString(fault.kind)
+      << " " << fault.access_size << " bytes of memory from "
+      << std::hex << fault.address << std::dec << std::endl;
 }
 
 extern "C" {
@@ -118,13 +135,15 @@ uint64_t __vmill_find_unmapped_address(
       if (likely(memory->TryRead(addr, &ret_val))) { \
         return ret_val; \
       } else { \
-        if (!gFaulted && gTask) { \
-          gTask->mem_access_fault.kind = kMemoryAccessFaultOnRead; \
-          gTask->mem_access_fault.value_type = vtype; \
-          gTask->mem_access_fault.access_size = read_size; \
-          gTask->mem_access_fault.address = addr; \
+        if (likely(gTask != nullptr)) { \
+          auto &fault = gTask->mem_access_fault; \
+          if (kMemoryAccessNoFault == fault.kind) { \
+            fault.kind = kMemoryAccessFaultOnRead; \
+            fault.value_type = vtype; \
+            fault.access_size = read_size; \
+            fault.address = addr; \
+          } \
         } \
-        gFaulted = true; \
         return 0; \
       } \
     }
@@ -144,13 +163,15 @@ double __remill_read_memory_f80(
   if (memory->TryRead(addr, data, 10)) {
     return static_cast<double>(*reinterpret_cast<long double *>(data));
   } else {
-    if (!gFaulted && gTask) {
-      gTask->mem_access_fault.kind = kMemoryAccessFaultOnRead;
-      gTask->mem_access_fault.value_type = kMemoryValueTypeFloatingPoint;
-      gTask->mem_access_fault.access_size = 10;
-      gTask->mem_access_fault.address = addr;
+    if (likely(gTask != nullptr)) {
+      auto &fault = gTask->mem_access_fault;
+      if (kMemoryAccessNoFault == fault.kind) {
+        fault.kind = kMemoryAccessFaultOnRead;
+        fault.value_type = kMemoryValueTypeFloatingPoint;
+        fault.access_size = 10;
+        fault.address = addr;
+      }
     }
-    gFaulted = true;
     return 0.0;
   }
 }
@@ -159,13 +180,15 @@ double __remill_read_memory_f80(
     AddressSpace *__remill_write_memory_ ## suffix( \
         AddressSpace *memory, uint64_t addr, input_type val) { \
       if (unlikely(!memory->TryWrite(addr, val))) { \
-        if (!gFaulted && gTask) { \
-          gTask->mem_access_fault.kind = kMemoryAccessFaultOnWrite; \
-          gTask->mem_access_fault.value_type = vtype; \
-          gTask->mem_access_fault.access_size = write_size; \
-          gTask->mem_access_fault.address = addr; \
+        if (likely(gTask != nullptr)) { \
+          auto &fault = gTask->mem_access_fault; \
+          if (kMemoryAccessNoFault == fault.kind) { \
+            fault.kind = kMemoryAccessFaultOnWrite; \
+            fault.value_type = vtype; \
+            fault.access_size = write_size; \
+            fault.address = addr; \
+          } \
         } \
-        gFaulted = true; \
       } \
       return memory; \
     }
@@ -183,13 +206,15 @@ AddressSpace *__remill_write_memory_f80(
     AddressSpace *memory, uint64_t addr, double val) {
   auto long_val = static_cast<long double>(val);
   if (unlikely(!memory->TryWrite(addr, &long_val, 10))) {
-    if (!gFaulted && gTask) {
-      gTask->mem_access_fault.kind = kMemoryAccessFaultOnRead;
-      gTask->mem_access_fault.value_type = kMemoryValueTypeFloatingPoint;
-      gTask->mem_access_fault.access_size = 10;
-      gTask->mem_access_fault.address = addr;
+    if (likely(gTask != nullptr)) {
+      auto &fault = gTask->mem_access_fault;
+      if (kMemoryAccessNoFault == fault.kind) {
+        fault.kind = kMemoryAccessFaultOnWrite;
+        fault.value_type = kMemoryValueTypeFloatingPoint;
+        fault.access_size = 10;
+        fault.address = addr;
+      }
     }
-    gFaulted = true;
   }
   return memory;
 }
@@ -197,37 +222,31 @@ AddressSpace *__remill_write_memory_f80(
 void __vmill_set_location(PC pc, vmill::TaskStopLocation loc) {
   gTask->pc = pc;
   gTask->location = loc;
-  if (!TaskStatusIsError()) {
-    switch (loc) {
-      case kTaskStoppedAtError:
-      case kTaskStoppedBeforeUnhandledHyperCall:
-        gTask->status = kTaskStatusError;
-        break;
-      case kTaskExited:
-        gTask->status = kTaskStopped;
-        break;
+  switch (loc) {
+    case kTaskStoppedAtError:
+    case kTaskStoppedBeforeUnhandledHyperCall:
+      gTask->status = kTaskStatusError;
+      break;
+    case kTaskStoppedAtExit:
+      gTask->status = kTaskStatusExited;
+      break;
 
-      default:
-        break;
-    }
+    default:
+      break;
   }
 }
 
 Memory *__remill_error(ArchState *, PC pc, Memory *memory) {
   gTask->pc = pc;
   gTask->location = kTaskStoppedAtError;
-  if (!TaskStatusIsError()) {
-    gTask->status = kTaskStatusError;
-  }
+  gTask->status = kTaskStatusError;
   return memory;
 }
 
 Memory *__remill_missing_block(ArchState *, PC pc, Memory *memory) {
   gTask->pc = pc;
   gTask->location = kTaskStoppedAtError;
-  if (!TaskStatusIsError()) {
-    gTask->status = kTaskStatusError;
-  }
+  gTask->status = kTaskStatusError;
   return memory;
 }
 
@@ -248,7 +267,6 @@ Memory *__remill_function_return(ArchState *, PC pc, Memory *memory) {
   gTask->location = kTaskStoppedAtReturnTarget;
   return memory;
 }
-
 
 uint8_t __remill_undefined_8(void) {
   return 0;
@@ -308,43 +326,24 @@ int __remill_fpu_exception_test_and_clear(int read_mask, int clear_mask) {
   return except;
 }
 
-// Called by the runtime to execute some lifted code.
-void __vmill_run(Task *task) {
-  gTask = task;
+extern void __vmill_execute_on_stack(Task *, LiftedFunction *, Stack *);
 
-  const auto lifted_func = gExecutor->FindLiftedFunctionForTask(task);
+void __vmill_execute(Task *task, LiftedFunction *lifted_func) {
+  const auto memory = task->memory;
   const auto pc = task->pc;
-  const auto pc_uint = static_cast<uint64_t>(pc);
+  auto &task_fp_env = task->floating_point_env;
 
-  DLOG(INFO)
-      << "Executing trace " << std::hex << pc_uint << std::dec;
-
-  fenv_t old_env = {};
-  fegetenv(&old_env);
-  fesetenv(&(task->floating_point_env));
-  lifted_func(task->state, task->pc, task->memory);
-  fegetenv(&(task->floating_point_env));
-  fesetenv(&old_env);
+  fenv_t native_fp_env = {};
+  fegetenv(&native_fp_env);
+  fesetenv(&task_fp_env);
+  lifted_func(task->state, pc, memory);
+  fegetenv(&task_fp_env);
+  fesetenv(&native_fp_env);
 
   task->last_pc = pc;
 
-  gTask = nullptr;
-
-  if (gFaulted) {
-    auto memory = task->memory;
-    LOG(ERROR)
-        << "Task faulted while executing trace " << std::hex
-        << pc_uint << " (" << memory->ToVirtualAddress(pc_uint)
-        << " lifted to " << reinterpret_cast<void *>(lifted_func)
-        << ")" << std::dec;
-
-    LogRegisterState(LOG(ERROR), task->state);
-    memory->LogMaps(LOG(ERROR));
-
-    gFaulted = false;
-    task->status = kTaskStatusMemoryAccessFault;
-
-  } else {
+  const auto &fault = task->mem_access_fault;
+  if (kMemoryAccessNoFault == fault.kind) {
     switch (task->location) {
       case kTaskStoppedAtError:
       case kTaskStoppedBeforeUnhandledHyperCall:
@@ -354,7 +353,40 @@ void __vmill_run(Task *task) {
         task->status = kTaskStatusRunnable;
         break;
     }
+
+  } else {
+    LogFault(LOG(ERROR), task);
+    LogRegisterState(LOG(ERROR), task->state);
+    memory->LogMaps(LOG(ERROR));
+    task->status = kTaskStatusError;
   }
+}
+
+// Called by the runtime to execute some lifted code.
+void __vmill_run(Task *task) {
+  CHECK(!task->must_be_zero);
+
+  gTask = task;
+
+  // The task is waiting for an asynchronous operation to complete.
+  if (unlikely(kTaskStatusResumable == task->status)) {
+    longjmp(task->resume_context, 1);
+  }
+
+  CHECK(kTaskStatusRunnable == task->status);
+
+  const auto lifted_func = gExecutor->FindLiftedFunctionForTask(task);
+
+  if (!FLAGS_num_io_threads) {
+    __vmill_execute(task, lifted_func);
+
+  } else {
+    __vmill_execute_on_stack(task, lifted_func, &(task->async_stack[1]));
+  }
+
+  CHECK(!task->must_be_zero);
+
+  gTask = nullptr;
 }
 
 }  // extern "C"
@@ -366,6 +398,7 @@ Executor::Executor(void)
       code_cache(CodeCache::Create(context)),
       has_run(false),
       will_run_many(false),
+      async_io_workers(FLAGS_num_io_threads),
       init_intrinsic(reinterpret_cast<decltype(init_intrinsic)>(
           code_cache->Lookup("__vmill_init"))),
       create_task_intrinsic(
@@ -535,7 +568,7 @@ LiftedFunction *Executor::FindLiftedFunctionForTask(Task *task) {
     LogRegisterState(LOG(ERROR), task->state);
     memory->LogMaps(LOG(ERROR));
 
-    task->status = kTaskStatusMemoryAccessFault;
+    task->status = kTaskStatusError;
     task->mem_access_fault.kind = kMemoryAccessFaultOnExecute;
     task->mem_access_fault.value_type = kMemoryValueTypeInstruction;
     task->mem_access_fault.access_size = 1;

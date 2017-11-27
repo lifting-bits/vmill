@@ -24,7 +24,7 @@ static Memory *SysExit(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EFAULT);
   } else {
     STRACE_SUCCESS(exit, "status=%d", exit_code);
-    __vmill_set_location(0, vmill::kTaskExited);
+    __vmill_set_location(0, vmill::kTaskStoppedAtExit);
     return memory;
   }
 }
