@@ -16,6 +16,8 @@
 
 #include <fcntl.h>
 #include <unistd.h>
+#include <termios.h>
+#include <poll.h>
 
 namespace {
 
@@ -281,29 +283,122 @@ static Memory *SysClose(Memory *memory, State *state,
   return syscall.SetReturn(memory, state, ret * errno);
 }
 
-// Emulate a `close` system call.
+// Emulate an `ioctl` system call.
 static Memory *SysIoctl(Memory *memory, State *state,
                         const SystemCallABI &syscall) {
   int fd = -1;
-  unsigned long request = 0;
-  if (!syscall.TryGetArgs(memory, state, &fd, &request)) {
+  unsigned long cmd = 0;
+  addr_t argp = 0;
+  if (!syscall.TryGetArgs(memory, state, &fd, &cmd, &argp)) {
     STRACE_ERROR(ioctl, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  switch (request) {
+  if (0 > fd) {
+    STRACE_ERROR(ioctl, "Bad file descriptor fd=%d", fd);
+    return syscall.SetReturn(memory, state, -EBADF);
+  }
+
+  struct termios info = {};
+
+  switch (cmd) {
     case TCGETS:
-      STRACE_ERROR(ioctl_tcgets, "No tty.");
-      return syscall.SetReturn(memory, state, -ENOTTY);
+      if (!ioctl(fd, TCGETS, &info)) {
+        if (!TryWriteMemory(memory, argp, info)) {
+          STRACE_ERROR(ioctl_tcgets, "Fault writing info fd=%d argp=%" PRIxADDR,
+                       fd, argp);
+          return syscall.SetReturn(memory, state, -EFAULT);
+        } else {
+          STRACE_SUCCESS(ioctl_tcgets, "fd=%d");
+          return syscall.SetReturn(memory, state, 0);
+        }
+      } else {
+        auto err = errno;
+        STRACE_ERROR(ioctl_tcgets, "Error with fd=%d: %s", fd, strerror(err));
+        return syscall.SetReturn(memory, state, -err);
+      }
+
     case TCSETS:
-      STRACE_ERROR(ioctl_tcsets, "No tty.");
-      return syscall.SetReturn(memory, state, -ENOTTY);
+      if (TryReadMemory(memory, argp, &info)) {
+        if (!ioctl(fd, TCSETS, &info)) {
+          STRACE_SUCCESS(ioctl_tcsets, "fd=%d");
+          return syscall.SetReturn(memory, state, 0);
+        } else {
+          auto err = errno;
+          STRACE_ERROR(ioctl_tcsets, "Error with fd=%d: %s", fd, strerror(err));
+          return syscall.SetReturn(memory, state, -err);
+        }
+      } else {
+        STRACE_ERROR(ioctl_tcsets, "Fault reading info fd=%d argp=%" PRIxADDR,
+                     fd, argp);
+        return syscall.SetReturn(memory, state, -EFAULT);
+      }
+
     case TIOCGWINSZ:
       STRACE_ERROR(ioctl_tiocgwinsz, "No tty.");
       return syscall.SetReturn(memory, state, -ENOTTY);
+
     default:
-      return syscall.SetReturn(memory, state, -EINVAL);
+      STRACE_ERROR(ioctl, "Unsupported cmd=%d on fd=%d", cmd, fd);
+      return syscall.SetReturn(memory, state, 0);
   }
+}
+
+// Emulate a `poll` system call.
+static Memory *SysPoll(Memory *memory, State *state,
+                       const SystemCallABI &syscall) {
+  addr_t fds = 0;
+  uint32_t nfds = 0;
+  int timeout_msec = 0;
+  if (!syscall.TryGetArgs(memory, state, &fds, &nfds, &timeout_msec)) {
+    STRACE_ERROR(poll, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  struct rlimit lim = {};
+  getrlimit(RLIMIT_NOFILE, &lim);
+  auto max_fds = std::min(lim.rlim_cur, lim.rlim_max);
+  if (nfds >= max_fds) {
+    STRACE_ERROR(poll, "nfds=%u is too big (max %lu)", nfds, max_fds);
+    return syscall.SetReturn(memory, state, -ENOMEM);
+  }
+
+  auto fd_mem_size = nfds * sizeof(struct pollfd);
+  if (!CanReadMemory(memory, fds, fd_mem_size)) {
+    STRACE_ERROR(
+        poll, "Can't read all bytes=%lu pointed to by fds=%" PRIxADDR,
+        fd_mem_size, fds);
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  auto poll_fds = new pollfd[nfds];
+  CopyFromMemory(memory, poll_fds, fds, fd_mem_size);
+
+  auto ret = poll(poll_fds, nfds, timeout_msec);
+  auto err = errno;
+
+  if (-1 == ret) {
+    delete[] poll_fds;
+    STRACE_ERROR(
+        poll, "Error polling nfds=%u fds=%" PRIxADDR ": %s",
+        nfds, fds, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  }
+
+  if (!CanWriteMemory(memory, fds, fd_mem_size)) {
+    delete[] poll_fds;
+    STRACE_ERROR(
+        poll, "Can't write all bytes=%lu pointed to by fds=%" PRIxADDR,
+        fd_mem_size, fds);
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  CopyToMemory(memory, fds, poll_fds, fd_mem_size);
+  delete[] poll_fds;
+
+  STRACE_SUCCESS(poll, "fds=%" PRIxADDR ", nfds=%u, timeout=%d, ret=%d",
+                 fds, nfds, timeout_msec, ret);
+  return syscall.SetReturn(memory, state, ret);
 }
 
 }  // namespace

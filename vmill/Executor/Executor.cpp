@@ -231,16 +231,6 @@ LiftedFunction *Executor::FindLiftedFunctionForTask(Task *task) {
 
   // We do a preliminary check here to make sure the code is executable. We
   if (!memory->CanExecute(task_pc_uint)) {
-    auto last_pc = static_cast<uint64_t>(task->last_pc);
-    LOG(ERROR)
-        << "Cannot execute non-executable code at "
-        << std::hex << task_pc_uint << ". Last trace entry PC was "
-        << last_pc << " (" << memory->ToVirtualAddress(last_pc)
-        << ")."<< std::dec;
-
-    LogRegisterState(LOG(ERROR), task->state);
-    memory->LogMaps(LOG(ERROR));
-
     task->status = kTaskStatusError;
     task->mem_access_fault.kind = kMemoryAccessFaultOnExecute;
     task->mem_access_fault.value_type = kMemoryValueTypeInstruction;

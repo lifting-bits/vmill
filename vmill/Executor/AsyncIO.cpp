@@ -39,9 +39,8 @@ extern thread_local Task *gTask;
 
 namespace {
 
+// Thread pool that processes blocking system calls.
 static std::unique_ptr<ThreadPool> gPool;
-
-static std::unordered_map<std::string, uintptr_t> gIOFunctions;
 
 // Returns the thread pool, and potentially lazily initializes it.
 static const std::unique_ptr<ThreadPool> &GetThreadPool(void) {
@@ -51,6 +50,14 @@ static const std::unique_ptr<ThreadPool> &GetThreadPool(void) {
   return gPool;
 }
 
+// Wraps around a blocking system call (passed as the first argument to get
+// all of the type information), whose implementation is at `target` (this
+// second argument is so that an instrumentation tool can substitute its own
+// implementation (via `Tool::FindSymbolForLinking`).
+//
+// Because the types of system calls may not be unique, an extra `Tag` parameter
+// is passed to the template, and there should be a unique tag type per system
+// call to be wrapped.
 template <typename Tag, typename Ret, typename... Args>
 static uint64_t AsyncWrapper_(Ret (*)(Args...), uintptr_t target) {
   using FuncType = Ret(Args...);
@@ -59,25 +66,38 @@ static uint64_t AsyncWrapper_(Ret (*)(Args...), uintptr_t target) {
   func_to_run = reinterpret_cast<FuncType *>(target);
 
   struct Wrapper {
+
     struct OutVal {
-      Ret ret;
+      Ret ret_val;
       int new_errno;
     };
 
-    static OutVal run_func_async(Args... args) {
+    // Calls `func_to_run` in the context of the worker thread.
+    static OutVal run_func_async(Task *task, Args... args) {
+
+      // Note: This is thread-local. Other instrumentation tools may want
+      //       access to the task, e.g. if they are going to generate fuzzed
+      //       info for `read` syscalls on demand.
+      gTask = task;
       errno = 0;
       auto ret = func_to_run(args...);
       auto new_errno = errno;
+      gTask = nullptr;
+
       return {ret, new_errno};
     }
 
+    // Enqueue our blocking function to be run on a separate thread. Then
+    // wait for a result. If the syscall is still running, then yield the
+    // coroutine's execution to process other tasks, otherwise continue on
+    // with the value.
     static Ret run_func(Args... args) {
       auto coro = gTask->async_routine;
       auto &pool = GetThreadPool();
-      std::future<OutVal> future = pool->Submit(run_func_async, args...);
+      std::future<OutVal> future = pool->Submit(run_func_async, gTask, args...);
       auto done = false;
       do {
-        switch (future.wait_for(std::chrono::nanoseconds(300))) {
+        switch (future.wait_for(std::chrono::nanoseconds(100))) {
           case std::future_status::deferred:
             future.wait();
             done = true;
@@ -93,7 +113,7 @@ static uint64_t AsyncWrapper_(Ret (*)(Args...), uintptr_t target) {
 
       auto res = future.get();
       errno = res.new_errno;
-      return res.ret;
+      return res.ret_val;
     }
   };
 
@@ -112,6 +132,10 @@ AsyncIOTool::AsyncIOTool(std::unique_ptr<Tool> tool_)
 
   async_funcs["read"] = AsyncWrapper(read);
   async_funcs["write"] = AsyncWrapper(write);
+  async_funcs["recvfrom"] = AsyncWrapper(recvfrom);
+  async_funcs["sendto"] = AsyncWrapper(sendto);
+  async_funcs["sendmsg"] = AsyncWrapper(sendmsg);
+  async_funcs["recvmsg"] = AsyncWrapper(recvmsg);
   async_funcs["poll"] = AsyncWrapper(poll);
   async_funcs["select"] = AsyncWrapper(select);
   async_funcs["getaddrinfo"] = AsyncWrapper(getaddrinfo);

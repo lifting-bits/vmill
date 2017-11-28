@@ -87,6 +87,7 @@ static Memory *X86SystemCall(Memory *memory, State *state,
     case 140: return SysLlseek(memory, state, syscall);
     case 145: return SysReadV(memory, state, syscall);
     case 146: return SysWriteV(memory, state, syscall);
+    case 168: return SysPoll(memory, state, syscall);
     case 174:
       STRACE_ERROR(rt_sigaction, "Suppressed");
       return syscall.SetReturn(memory, state, 0);

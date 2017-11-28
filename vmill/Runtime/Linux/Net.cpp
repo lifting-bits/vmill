@@ -148,7 +148,10 @@ static Memory *DoSysAccept(Memory *memory, State *state,
 
     if (!CanReadMemory(memory, addr, addrlen) ||
         !CanWriteMemory(memory, addr, addrlen)) {
-      STRACE_ERROR(accept_generic, "Can't read or write address");
+      STRACE_ERROR(
+          accept_generic,
+          "Can't read or write addrlen=%u bytes of addr=%" PRIxADDR,
+          addrlen, addr);
       return syscall.SetReturn(memory, state, -EFAULT);
     }
 
@@ -386,12 +389,12 @@ static Memory *DoSysSendTo(Memory *memory, State *state,
 
   if (-1 == ret) {
     STRACE_ERROR(
-        sendto, "fd=%d, n=%z, sa_data=%s, sa_family=%124s, addrlen=%u: %s",
+        sendto, "fd=%d, n=%lu, sa_data=%s, sa_family=%124s, addrlen=%u: %s",
         fd, n, info.sa_data, info.sa_family, addrlen, strerror(err));
     return syscall.SetReturn(memory, state, -err);
   } else {
     STRACE_SUCCESS(
-        sendto, "fd=%d, n=%z, sa_data=%s, sa_family=%124s, addrlen=%u",
+        sendto, "fd=%d, n=%lu, sa_data=%s, sa_family=%124s, addrlen=%u",
         fd, n, info.sa_data, info.sa_family, addrlen);
     return syscall.SetReturn(memory, state, ret);
   }
@@ -470,7 +473,7 @@ static Memory *DoSysRecvFrom(Memory *memory, State *state,
 
   if (!CanWriteMemory(memory, buf, n)) {
     delete[] buf_val;
-    STRACE_ERROR(recvfrom, "Can't write n=%z bytes to buf=%" PRIxADDR, n, buf);
+    STRACE_ERROR(recvfrom, "Can't write n=%lu bytes to buf=%" PRIxADDR, n, buf);
     return syscall.SetReturn(memory, state, -EFAULT);
 
   } else {
@@ -500,7 +503,7 @@ static Memory *DoSysRecvFrom(Memory *memory, State *state,
     STRACE_ERROR(recvfrom, "%s", strerror(err));
     return syscall.SetReturn(memory, state, -err);
   } else {
-    STRACE_SUCCESS(recvfrom, "n=%z buf=%" PRIxADDR " addrlen=%u",
+    STRACE_SUCCESS(recvfrom, "n=%lu buf=%" PRIxADDR " addrlen=%u",
                    n, buf, addrlen);
     return syscall.SetReturn(memory, state, ret);
   }
@@ -532,6 +535,7 @@ static Memory *SysRecvFrom(Memory *memory, State *state,
     STRACE_ERROR(recvfrom, "Can't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
+
   return DoSysRecvFrom(memory, state, syscall, fd, buf, n,
                        flags, addr, addr_len);
 }
@@ -544,10 +548,14 @@ static Memory *SysShutdown(Memory *memory, State *state,
     STRACE_ERROR(shutdown, "Can't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
+
   if (!shutdown(socket, how)) {
+    STRACE_SUCCESS(shutdown, "socket=%d how=%d", socket, how);
     return syscall.SetReturn(memory, state, 0);
   } else {
-    return syscall.SetReturn(memory, state, -errno);
+    auto err = errno;
+    STRACE_ERROR(shutdown, "socket=%d how=%d: %s", socket, how, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
   }
 }
 
@@ -557,33 +565,45 @@ static Memory *SysSetSockOpt(Memory *memory, State *state,
   int socket = -1;
   int level = 0;
   int option_name = 0;
-  addr_t option_value = 0;
-  socklen_t option_len = 0;
+  addr_t optval = 0;
+  socklen_t optlen = 0;
   if (!syscall.TryGetArgs(memory, state, &socket, &level, &option_name,
-                          &option_value, &option_len)) {
+                          &optval, &optlen)) {
     STRACE_ERROR(setsockopt, "Can't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  if (!option_len) {
+  if (!optlen) {
+    STRACE_ERROR(setsockopt, "Zero-length socket option");
     return syscall.SetReturn(memory, state, -EINVAL);
-  } else if (!CanReadMemory(memory, option_value, option_len)) {
+  }
+
+  if (!CanReadMemory(memory, optval, optlen)) {
+    STRACE_ERROR(
+        setsockopt, "Can't read optlen=%u bytes from optval=%" PRIxADDR,
+        optlen, optval);
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  auto option_value_data = new uint8_t[option_len];
-  CopyFromMemory(memory, option_value_data, option_value, option_len);
+  auto option_value_data = new uint8_t[optlen];
+  CopyFromMemory(memory, option_value_data, optval, optlen);
 
   auto ret = setsockopt(socket, level, option_name,
-                        option_value_data, option_len);
+                        option_value_data, optlen);
 
   auto err = errno;
   delete[] option_value_data;
 
   if (-1 == ret) {
+    STRACE_ERROR(
+        setsockopt, "socket=%d, optlen=%u, optval=%" PRIxADDR ": %s",
+        socket, optlen, optval, strerror(err));
     return syscall.SetReturn(memory, state, -err);
   } else {
-    return syscall.SetReturn(memory, state, 0);
+    STRACE_SUCCESS(
+        setsockopt, "socket=%d, optlen=%u, optval=%" PRIxADDR ": ret=%d",
+        socket, optlen, optval, ret);
+    return syscall.SetReturn(memory, state, ret);
   }
 }
 
@@ -593,46 +613,68 @@ static Memory *SysGetSockOpt(Memory *memory, State *state,
   int socket = -1;
   int level = 0;
   int option_name = 0;
-  addr_t option_value = 0;
-  addr_t option_len = 0;
+  addr_t optval = 0;
+  addr_t optlen_ptr = 0;
   if (!syscall.TryGetArgs(memory, state, &socket, &level, &option_name,
-                          &option_value, &option_len)) {
+                          &optval, &optlen_ptr)) {
     STRACE_ERROR(getsockopt, "Can't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  socklen_t option_len_val = 0;
-  if (!TryReadMemory(memory, option_len, &option_len_val) ||
-      !CanReadMemory(memory, option_value, option_len_val)) {
+  socklen_t optlen = 0;
+  if (!TryReadMemory(memory, optlen_ptr, &optlen)) {
+    STRACE_ERROR(getsockopt, "Can't read optlen_ptr=%" PRIxADDR,
+                 optlen_ptr);
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  if (!option_len_val) {
+  if (!CanReadMemory(memory, optval, optlen)) {
+    STRACE_ERROR(
+        getsockopt, "Can't read all optlen_ptr=%u bytes from optval=%" PRIxADDR,
+        optlen, optval);
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  if (!optlen) {
+    STRACE_ERROR(getsockopt, "Zero-length optval");
     return syscall.SetReturn(memory, state, -EINVAL);
   }
 
-  auto option_value_data = new uint8_t[option_len_val];
-  CopyFromMemory(memory, option_value_data, option_value, option_len_val);
+  auto option_value_data = new uint8_t[optlen];
+  CopyFromMemory(memory, option_value_data, optval, optlen);
 
   auto ret = getsockopt(socket, level, option_name,
-                        option_value_data, &option_len_val);
+                        option_value_data, &optlen);
 
   if (-1 == ret) {
     auto err = errno;
     delete[] option_value_data;
+    STRACE_ERROR(getsockopt, "socket=%u optlen=%u: %s", socket, optlen,
+                 strerror(err));
     return syscall.SetReturn(memory, state, -err);
   }
 
-  if (!CanWriteMemory(memory, option_value, option_len_val) ||
-      !TryWriteMemory(memory, option_len, &option_len_val)) {
+  if (!CanWriteMemory(memory, optval, optlen)) {
     delete[] option_value_data;
+    STRACE_ERROR(getsockopt, "Can't write optlen=%u bytes to optval=%" PRIxADDR,
+                 optlen, optval);
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  CopyToMemory(memory, option_value, option_value_data, option_len_val);
+  if (!TryWriteMemory(memory, optlen_ptr, &optlen)) {
+    delete[] option_value_data;
+    STRACE_ERROR(getsockopt, "Can't write optlen=%u to optlen_ptr=%" PRIxADDR,
+                 optlen, optlen_ptr);
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  CopyToMemory(memory, optval, option_value_data, optlen);
   delete[] option_value_data;
 
-  return syscall.SetReturn(memory, state, 0);
+  STRACE_SUCCESS(
+      getsockopt, "socket=%d, optlen=%u, optval=%" PRIxADDR ": ret=%d",
+      socket, optlen, optval, ret);
+  return syscall.SetReturn(memory, state, ret);
 }
 
 template <typename IOVecT>
@@ -770,7 +812,7 @@ struct MessageHeader final : public msghdr {
         }
       }
       if (!CanWriteMemory(memory, compat.msg_iov, msg_iovlen)) {
-        return -EFAULT;
+        return EFAULT;
       }
 
       auto total_len = msg_iovlen * sizeof(IOVecT);
@@ -817,24 +859,33 @@ static Memory *SysSendMsg(Memory *memory, State *state,
   addr_t message = 0;
   int flags = 0;
   if (!syscall.TryGetArgs(memory, state, &socket, &message, &flags)) {
+    STRACE_ERROR(sendmsg, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
   MsgHdrT compat_header = {};
   if (!TryReadMemory(memory, message, &compat_header)) {
+    STRACE_ERROR(sendmsg, "socket=%d flags=%x: can't read message=%" PRIxADDR,
+                 socket, flags, message);
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
   MessageHeader<MsgHdrT, IOVecT> header;
   auto err = header.Import(memory, compat_header);
   if (err) {
+    STRACE_ERROR(sendmsg, "socket=%d flags=%x: %s",
+                 socket, flags, strerror(err));
     return syscall.SetReturn(memory, state, -err);
   }
 
   auto ret = sendmsg(socket, &header, flags);
   if (-1 == ret) {
-    return syscall.SetReturn(memory, state, -errno);
+    err = errno;
+    STRACE_ERROR(sendmsg, "socket=%d flags=%x: %s",
+                 socket, flags, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
   } else {
+    STRACE_SUCCESS(sendmsg, "socket=%d flags=%x", socket, flags);
     return syscall.SetReturn(memory, state, ret);
   }
 }
@@ -846,30 +897,43 @@ static Memory *SysRecvMsg(Memory *memory, State *state,
   addr_t message = 0;
   int flags = 0;
   if (!syscall.TryGetArgs(memory, state, &socket, &message, &flags)) {
+    STRACE_ERROR(recvmsg, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
   MsgHdrT compat_header = {};
   if (!TryReadMemory(memory, message, &compat_header)) {
+    STRACE_ERROR(recvmsg, "socket=%d flags=%x: can't read message=%" PRIxADDR,
+                 socket, flags, message);
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
   MessageHeader<MsgHdrT, IOVecT> header;
   auto err = header.Import(memory, compat_header);
   if (err) {
+    STRACE_ERROR(recvmsg, "socket=%d flags=%x: %s",
+                 socket, flags, strerror(err));
     return syscall.SetReturn(memory, state, -err);
   }
 
   auto ret = recvmsg(socket, &header, flags);
   if (-1 == ret) {
-    return syscall.SetReturn(memory, state, -errno);
+    err = errno;
+    STRACE_ERROR(recvmsg, "socket=%d flags=%x: %s",
+                 socket, flags, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
   }
 
   err = header.Export(memory, compat_header);
   if (!TryWriteMemory(memory, message, compat_header)) {
+    STRACE_ERROR(recvmsg, "socket=%d flags=%x: can't write message=%" PRIxADDR,
+                 socket, flags, message);
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
+  STRACE_SUCCESS(
+      recvmsg, "socket=%d, flags=%x, message=%" PRIxADDR ", ret=%d",
+      socket, flags, message, ret);
   return syscall.SetReturn(memory, state, ret);
 }
 
