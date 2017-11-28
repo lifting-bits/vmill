@@ -16,9 +16,50 @@
 #ifndef VMILL_WORKSPACE_TOOL_H_
 #define VMILL_WORKSPACE_TOOL_H_
 
+#include <cstdint>
+#include <string>
+#include <memory>
+
 namespace vmill {
 
+class Tool {
+ public:
+  // Create a new instance of the tool identified by `name_or_path`.
+  static std::unique_ptr<Tool> Load(const std::string &name_or_path);
 
+  virtual ~Tool(void);
+
+  // Called when lifted bitcode or the runtime needs to resolve an external
+  // symbol.
+  virtual uint64_t FindSymbolForLinking(
+      const std::string &name, uint64_t resolved);
+
+ protected:
+  Tool(void);
+};
+
+class NullTool : public Tool {
+ public:
+  virtual ~NullTool(void);
+};
+
+class ProxyTool : public Tool {
+ public:
+  explicit ProxyTool(std::unique_ptr<Tool> tool_);
+
+  virtual ~ProxyTool(void);
+
+  // Called when lifted bitcode or the runtime needs to resolve an external
+  // symbol.
+  uint64_t FindSymbolForLinking(
+      const std::string &name, uint64_t resolved) override;
+
+ protected:
+  const std::unique_ptr<Tool> tool;
+
+ private:
+  ProxyTool(void) = delete;
+};
 
 }  // namespace
 

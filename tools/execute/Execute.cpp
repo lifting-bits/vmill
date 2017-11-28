@@ -56,7 +56,7 @@ int main(int argc, char **argv) {
   std::stringstream ss;
   ss << std::endl << std::endl
      << "  " << argv[0] << " \\" << std::endl
-     << "    [--tool INSTRUMENTATION_TOOL_NAME] \\" << std::endl
+     << "    [--tool TOOL_NAME_OR_PATH] \\" << std::endl
      << "    [--workspace WORKSPACE_DIR]" << std::endl
      << "    [--runtime RUNTIME_PATH]" << std::endl;
 

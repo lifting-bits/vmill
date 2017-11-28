@@ -39,6 +39,7 @@
 #include "vmill/Program/AddressSpace.h"
 #include "vmill/Util/AreaAllocator.h"
 #include "vmill/Util/Compiler.h"
+#include "vmill/Workspace/Tool.h"
 #include "vmill/Workspace/Workspace.h"
 
 #include <gflags/gflags.h>
@@ -78,7 +79,8 @@ class CodeCacheImpl : public CodeCache,
                       public llvm::RuntimeDyld::MemoryManager,
                       public llvm::JITSymbolResolver {
  public:
-  explicit CodeCacheImpl(const std::shared_ptr<llvm::LLVMContext> &context_);
+  CodeCacheImpl(std::unique_ptr<Tool> tool_,
+                const std::shared_ptr<llvm::LLVMContext> &context_);
 
   virtual ~CodeCacheImpl(void);
 
@@ -138,6 +140,8 @@ class CodeCacheImpl : public CodeCache,
  private:
   CodeCacheImpl(void) = delete;
 
+  const std::unique_ptr<Tool> tool;
+
   const std::shared_ptr<llvm::LLVMContext> &context;
 
   Compiler compiler;
@@ -154,8 +158,10 @@ class CodeCacheImpl : public CodeCache,
   std::unordered_map<TraceId, LiftedFunction *> lifted_functions;
 };
 
-CodeCacheImpl::CodeCacheImpl(const std::shared_ptr<llvm::LLVMContext> &context_)
+CodeCacheImpl::CodeCacheImpl(std::unique_ptr<Tool> tool_,
+                             const std::shared_ptr<llvm::LLVMContext> &context_)
     : CodeCache(),
+      tool(std::move(tool_)),
       context(context_),
       compiler(context_),
       code_allocator(kAreaRWX, kAreaCodeCacheCode),
@@ -263,6 +269,7 @@ llvm::JITSymbol CodeCacheImpl::findSymbolInLogicalDylib(
 // Resolve external/exported symbols during linking.
 llvm::JITSymbol CodeCacheImpl::findSymbol(const std::string &name) {
   uint64_t addr = llvm::RTDyldMemoryManager::getSymbolAddressInProcess(name);
+  addr = tool->FindSymbolForLinking(name, addr);
   if (!addr) {
     LOG(ERROR)
         << "Could not locate symbol " << name;
@@ -426,8 +433,10 @@ uintptr_t CodeCacheImpl::Lookup(const char *symbol) {
 CodeCache::CodeCache(void) { }
 
 std::unique_ptr<CodeCache> CodeCache::Create(
+    std::unique_ptr<Tool> tool_,
     const std::shared_ptr<llvm::LLVMContext> &context_) {
-  return std::unique_ptr<CodeCache>(new CodeCacheImpl(context_));
+  return std::unique_ptr<CodeCache>(
+      new CodeCacheImpl(std::move(tool_), context_));
 }
 
 CodeCache::~CodeCache(void) {}

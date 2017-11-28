@@ -32,7 +32,7 @@ class Module;
 namespace vmill {
 
 class AddressSpace;
-
+class Tool;
 using LiftedFunction = Memory *(ArchState *, PC, Memory *);
 
 // Manages the native and lifted code caches.
@@ -41,6 +41,7 @@ class CodeCache {
   virtual ~CodeCache(void);
 
   static std::unique_ptr<CodeCache> Create(
+      std::unique_ptr<Tool> tool_,
       const std::shared_ptr<llvm::LLVMContext> &context_);
 
   virtual void AddModuleToCache(

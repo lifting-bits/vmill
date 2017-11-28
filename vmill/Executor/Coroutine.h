@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-#include <cfenv>
 #include <cstdint>
 
 #ifndef VMILL_EXECUTOR_COROUTINE_H_
@@ -28,39 +27,17 @@ struct Memory;
 namespace vmill {
 
 struct Task;
-enum class PC : uint64_t;
 
-// A compiled lifted trace.
-using LiftedFunction = Memory *(ArchState *, PC, Memory *);
-
-
-extern "C" {
-
-// Implemented in assembly.
-extern void __vmill_execute_async(Task *, LiftedFunction *);
-
-extern void __vmill_yield_async(void *);
-
-}  // extern "C"
-
-// Coroutine that implements
+// Executes some code (lifted code, runtime code) on another stack, in such a
+// way that the runtime can "pause" its execute (while waiting on a
+// `std::future`) and then the executor can resume back into the paused
+// execution.
 class Coroutine {
  public:
-  Coroutine(void)
-      : stack_end(&(stack[1])),
-        fpu_rounding_mode(0) {}
+  Coroutine(void);
 
-  [[gnu::noinline]]
-  void Yield(void) {
-    fpu_rounding_mode = std::fegetround();
-    __vmill_yield_async(stack_end);
-  }
-
-  [[gnu::noinline]]
-  void Resume(void) {
-    std::fesetround(fpu_rounding_mode);
-    __vmill_yield_async(stack_end);
-  }
+  void Pause(Task *task);
+  void Resume(Task *task);
 
  private:
   Coroutine(const Coroutine &) = delete;
