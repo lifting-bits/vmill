@@ -132,6 +132,7 @@ AsyncIOTool::AsyncIOTool(std::unique_ptr<Tool> tool_)
 
   async_funcs["read"] = AsyncWrapper(read);
   async_funcs["write"] = AsyncWrapper(write);
+  async_funcs["connect"] = AsyncWrapper(connect);
   async_funcs["recvfrom"] = AsyncWrapper(recvfrom);
   async_funcs["sendto"] = AsyncWrapper(sendto);
   async_funcs["sendmsg"] = AsyncWrapper(sendmsg);
