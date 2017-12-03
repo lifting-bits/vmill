@@ -31,6 +31,7 @@
 
 #include "remill/BC/Compat/Error.h"
 #include "remill/BC/Compat/RuntimeDyld.h"
+#include "remill/BC/Compat/JITSymbol.h"
 #include "remill/BC/Util.h"
 #include "remill/OS/FileSystem.h"
 
@@ -424,8 +425,10 @@ uintptr_t CodeCacheImpl::Lookup(const char *symbol) {
   if (!sym) {
     sym = findSymbol(name);
   }
-
-  return sym.getAddress();
+  if (!sym) {
+    return 0;
+  }
+  return sym.getAddress() IF_LLVM_GTE_50(.get());
 }
 
 }  // namespace

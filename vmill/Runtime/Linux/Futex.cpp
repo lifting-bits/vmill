@@ -52,17 +52,28 @@ FutexCommand FutexOpToCommand(int op) {
 
 const char *FutexCommandName(FutexCommand op) {
   switch (op) {
-    case kFutexWait: return "FUTEX_WAIT";
-    case kFutexWake: return "FUTEX_WAKE";
-    case kFutedFd: return "FUTEX_FD";
-    case kFutexRequeue: return "FUTEX_REQUEUE";
-    case kFutexCompareAndRequeue: return "FUTEX_CMP_REQUEUE";
-    case kFutexWakeOp: return "FUTEX_WAKE_OP";
-    case kFutexLockWithPriorityInheritance: return "FUTEX_LOCK_PI";
-    case kFutexUnlockWithPriorityInheritance: return "FUTEX_UNLOCK_PI";
-    case kFutexTryLockWithPriorityInheritance: return "FUTEX_TRYLOCK_PI";
-    case kFutexWaitBitset: return "FUTEX_WAIT_BITSET";
-    case kFutexWakeBitset: return "FUTEX_WAKE_BITSET";
+    case kFutexWait:
+      return "FUTEX_WAIT";
+    case kFutexWake:
+      return "FUTEX_WAKE";
+    case kFutedFd:
+      return "FUTEX_FD";
+    case kFutexRequeue:
+      return "FUTEX_REQUEUE";
+    case kFutexCompareAndRequeue:
+      return "FUTEX_CMP_REQUEUE";
+    case kFutexWakeOp:
+      return "FUTEX_WAKE_OP";
+    case kFutexLockWithPriorityInheritance:
+      return "FUTEX_LOCK_PI";
+    case kFutexUnlockWithPriorityInheritance:
+      return "FUTEX_UNLOCK_PI";
+    case kFutexTryLockWithPriorityInheritance:
+      return "FUTEX_TRYLOCK_PI";
+    case kFutexWaitBitset:
+      return "FUTEX_WAIT_BITSET";
+    case kFutexWakeBitset:
+      return "FUTEX_WAKE_BITSET";
     case kFutexWaitRequeueWithPriorityInheritance:
       return "FUTEX_WAIT_REQUEUE_PI";
     case kFutexCompareAndRequeueWithPriorityInheritance:
@@ -89,63 +100,91 @@ static Memory *DoFutexWaitBitSet(Memory *memory, State *state,
 
   uint32_t uval = 0;
 
-  if (!TryReadMemory(memory, uaddr, &uval) ||
-      !CanWriteMemory(memory, uaddr, sizeof(uval))) {
-    STRACE_ERROR(futex_wait, "uaddr=%" PRIxADDR " must be readable and writable",
-                 uaddr);
-    return syscall.SetReturn(memory, state, -EFAULT);
-  }
-
   auto task = __vmill_current();
 
-  if (uval != val) {
-    STRACE_SUCCESS(
-        futex_wait, "Retry on uaddr=%" PRIxADDR " with val=%x and uval=%x",
-        uaddr, val, uval);
-
-    return syscall.SetReturn(memory, state, -EAGAIN);
-  } else {
-
-    if (task->futex_uaddr && !task->blocked_count) {
-      assert(task->futex_uaddr == uaddr);
-      task->futex_bitset = 0;
-      task->futex_uaddr = 0;
-
-      STRACE_SUCCESS(futex_wait, "Woken up");
-      return syscall.SetReturn(memory, state, 0);
+  while (true) {
+    if (!TryReadMemory(memory, uaddr, &uval) ||
+        !CanWriteMemory(memory, uaddr, sizeof(uval))) {
+      STRACE_ERROR(
+          futex_wait, "uaddr=%" PRIxADDR " must be readable and writable",
+          uaddr);
+      return syscall.SetReturn(memory, state, -EFAULT);
     }
 
-    // TODO(pag): These numbers are made up and here to represent "rounds"
-    //            through the executor that we're allowed to keep going for.
-    if (task->blocked_count) {
-      task->blocked_count--;
-    } else if (timeout) {
-      task->blocked_count = 100;
-    } else {
-      task->blocked_count = ~0U;  // Basically infinity.
-    }
-
-    if (!task->blocked_count) {
-      task->futex_bitset = 0;
+    if (uval != val) {
       task->futex_uaddr = 0;
-
-      STRACE_SUCCESS(futex_wait, "Timed out on uaddr=%" PRIxADDR,
-                     uaddr, val, uval);
-      return syscall.SetReturn(memory, state, -ETIMEDOUT);
-
-    } else {
-      task->futex_bitset = bitset;
-      task->futex_uaddr = uaddr;
+      task->blocked_count = 0;
 
       STRACE_SUCCESS(
-          futex_wait, "Blocked on uaddr=%" PRIxADDR " with val=%x and uval=%x",
+          futex_wait, "Retry on uaddr=%" PRIxADDR " with val=%x and uval=%x",
           uaddr, val, uval);
 
-      // NOTE(pag): Leaves the syscall incomplete by not calling
-      //            `syscall.SetReturn`.
-      return memory;
+      return syscall.SetReturn(memory, state, -EAGAIN);
+    } else {
+
+      if (task->futex_uaddr && !task->blocked_count) {
+        assert(task->futex_uaddr == uaddr);
+        task->futex_bitset = 0;
+        task->futex_uaddr = 0;
+
+        STRACE_SUCCESS(futex_wait, "Woken up on val=%x and uaddr=%" PRIxADDR,
+                       val, uaddr);
+        return syscall.SetReturn(memory, state, 0);
+      }
+
+      // TODO(pag): These numbers are made up and here to represent "rounds"
+      //            through the executor that we're allowed to keep going for.
+      if (task->blocked_count) {
+        task->blocked_count--;
+      } else if (timeout) {
+        task->blocked_count = kFutexBlockedForABit;
+      } else {
+        task->blocked_count = kBlockedForever;
+      }
+
+      if (!task->blocked_count) {
+        task->futex_bitset = 0;
+        task->futex_uaddr = 0;
+
+        STRACE_SUCCESS(futex_wait, "Timed out on uaddr=%" PRIxADDR,
+                       uaddr, val, uval);
+        return syscall.SetReturn(memory, state, -ETIMEDOUT);
+
+      } else {
+        task->futex_bitset = bitset;
+        task->futex_uaddr = uaddr;
+
+        STRACE_SUCCESS(
+            futex_wait,
+            "Blocked on uaddr=%" PRIxADDR " with val=%x and uval=%x",
+            uaddr, val, uval);
+
+        __vmill_yield(task);
+      }
     }
   }
+}
+
+static uint32_t DoWake(linux_task *task, addr_t uaddr, uint32_t bitset,
+                       uint32_t num_to_wake) {
+  uint32_t num_woken = 0;
+  for (auto next_task = task->next_circular;
+       next_task != task;
+       next_task = next_task->next_circular) {
+
+    if (next_task->futex_uaddr == uaddr &&
+        0 < next_task->blocked_count &&
+        0U != (next_task->futex_bitset & bitset)) {
+
+      next_task->blocked_count = 0;  // Unblock the task.
+
+      num_woken++;
+      if (num_woken >= num_to_wake) {
+        break;
+      }
+    }
+  }
+  return num_woken;
 }
 
 static Memory *DoFutexWakeBitSet(Memory *memory, State *state,
@@ -172,40 +211,155 @@ static Memory *DoFutexWakeBitSet(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  uint32_t num_woken = 0;
-
-  for (auto next_task = task->next_circular;
-       next_task != task;
-       next_task = task->next_circular) {
-
-    if (next_task->futex_uaddr == uaddr &&
-        0 < next_task->blocked_count &&
-        0U != (next_task->futex_bitset & bitset)) {
-
-      next_task->blocked_count = 0;  // Unblock the task.
-
-      num_woken++;
-      if (num_woken >= num_to_wake) {
-        break;
-      }
-    }
-  }
+  auto num_woken = DoWake(task, uaddr, bitset, num_to_wake);
 
   STRACE_SUCCESS(futex_wake, "Waking %u tasks blocked on uaddr=%" PRIxADDR,
                  num_woken, uaddr);
   return syscall.SetReturn(memory, state, num_woken);
 }
 
+enum FutexOperator : uint32_t {
+  kFutexOperatorSet,
+  kFutexOperatorAdd,
+  kFutexOperatorOr,
+  kFutexOperatorAndNot,
+  kFutexOperatorXor
+};
+
+enum FutexComparator : uint32_t {
+  kFutexCompareEqual,
+  kFutexCompareNotEqual,
+  kFutexCompareLessThan,
+  kFutexCompareLessThanEqual,
+  kFutexCompareGreaterThan,
+  kFutexCompareGreaterThanEqual
+};
+
+union FutexOp {
+  uint32_t flat;
+  struct {
+    int32_t cmparg:12;
+    int32_t oparg:12;
+    uint32_t cmp:4;
+    uint32_t op:4;
+  } __attribute__((packed));
+} __attribute__((packed));
+
+static constexpr uint32_t kFutexShiftOpArg = 8;
+
+static_assert(sizeof(FutexOp) == sizeof(uint32_t),
+              "Invalid packing of `union FutexOpArg`.");
+
+//      8 futex_wake_op(u32 __user *uaddr1, unsigned int flags, u32 __user *uaddr2,
+//      1609          int nr_wake, int nr_wake2, int op)
+
+static Memory *DoFutexWakeOp(Memory *memory, State *state,
+                             const SystemCallABI &syscall,
+                             addr_t uaddr1, unsigned flags,
+                             addr_t uaddr2, uint32_t num_to_wake1,
+                             uint32_t num_to_wake2, uint32_t op_) {
+  FutexOp op = {op_};
+
+  // Get the `oparg`. We may need to shift it.
+  int32_t oparg = op.oparg;
+  if (op.op & kFutexShiftOpArg) {
+    if (oparg > 0 || 31 < oparg) {
+      STRACE_ERROR(futex_wake_op, "oparg=%d is out of bounds for shift", oparg);
+      return syscall.SetReturn(memory, state, -EINVAL);
+    }
+
+    op.op ^= kFutexShiftOpArg;
+    oparg = 1 << oparg;
+  }
+
+  if (op.op > static_cast<uint32_t>(kFutexOperatorXor)) {
+    STRACE_ERROR(futex_wake_op, "op=%u is out of bounds", op.op);
+    return syscall.SetReturn(memory, state, -ENOSYS);
+  }
+
+  if (op.cmp > static_cast<uint32_t>(kFutexCompareGreaterThanEqual)) {
+    STRACE_ERROR(futex_wake_op, "cmp=%u is out of bounds", op.cmp);
+    return syscall.SetReturn(memory, state, -ENOSYS);
+  }
+
+  int32_t old_val = 0;
+  if (!TryReadMemory(memory, uaddr2, &old_val)) {
+    STRACE_ERROR(futex_wake, "Could read oldval from uaddr2=%" PRIxADDR,
+                 uaddr2);
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  if (!CanWriteMemory(memory, uaddr2, sizeof(old_val))) {
+    STRACE_ERROR(futex_wake, "Can't write new val back to uaddr2=%" PRIxADDR,
+                 uaddr2);
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  int32_t new_val = 0;
+  switch (static_cast<FutexOperator>(op.op)) {
+    case kFutexOperatorSet:
+      new_val = oparg;
+      break;
+    case kFutexOperatorAdd:
+      new_val = old_val + oparg;
+      break;
+    case kFutexOperatorOr:
+      new_val = old_val | oparg;
+      break;
+    case kFutexOperatorAndNot:
+      new_val = old_val & ~oparg;
+      break;
+    case kFutexOperatorXor:
+      new_val = old_val ^ oparg;
+      break;
+  }
+
+  (void) TryWriteMemory(memory, uaddr2, new_val);
+
+  bool wake_another = false;
+  const auto cmparg = op.cmparg;
+  switch (static_cast<FutexComparator>(op.cmp)) {
+    case kFutexCompareEqual:
+      wake_another = old_val == cmparg;
+      break;
+    case kFutexCompareNotEqual:
+      wake_another = old_val != cmparg;
+      break;
+    case kFutexCompareLessThan:
+      wake_another = old_val < cmparg;
+      break;
+    case kFutexCompareLessThanEqual:
+      wake_another = old_val <= cmparg;
+      break;
+    case kFutexCompareGreaterThan:
+      wake_another = old_val > cmparg;
+      break;
+    case kFutexCompareGreaterThanEqual:
+      wake_another = old_val >= cmparg;
+      break;
+  }
+
+  auto task = __vmill_current();
+  auto num_woken1 = DoWake(task, uaddr1, ~0U, num_to_wake1);
+  uint32_t num_woken2 = 0;
+  if (wake_another) {
+    num_woken2 += DoWake(task, uaddr2, ~0U, num_to_wake2);
+  }
+
+  STRACE_SUCCESS(
+      futex_wake_op, "Waking %u tasks blocked on uaddr1=%" PRIxADDR
+      " and %u tasks blocks on uaddr2=%" PRIxADDR,
+      num_woken1, uaddr1, num_woken2, uaddr2);
+  return syscall.SetReturn(memory, state, num_woken1 + num_woken2);
+}
+
 // Emulate a `futex` system call.
-//
-// TODO(pag): Change this to emulate in terms of pthread-related function
-//            calls (for portability to non-Linux platforms). Alternatively,
-//            call out to a VMill scheduler of some kind.
 template <typename TimeSpecT>
 static Memory *SysFutex(Memory *memory, State *state,
                         const SystemCallABI &syscall) {
   addr_t uaddr = 0;
   int op = -1;
+  unsigned flags = 0;
   uint32_t val = 0;
   uint32_t val2 = 0;
   addr_t utime = 0;
@@ -274,6 +428,10 @@ static Memory *SysFutex(Memory *memory, State *state,
       [[clang::fallthrough]];
     case kFutexWakeBitset:
       return DoFutexWakeBitSet(memory, state, syscall, uaddr, val, val3);
+
+    case kFutexWakeOp:
+      return DoFutexWakeOp(memory, state, syscall, uaddr,
+                           flags, uaddr2, val, val2, val3);
 
     case kFutexInvalidCommand:
       STRACE_ERROR(futex, "invalid futex command with op=%d", op);

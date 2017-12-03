@@ -14,6 +14,8 @@
 
 python import re
 
+b vmill_break_on_fault
+
 set $__num_x86_trace_entries = 4096
 set $__x86_trace_entry_size = 9 * 8
 set $__imported_capstone = 0

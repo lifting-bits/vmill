@@ -82,6 +82,7 @@ static Memory *X86SystemCall(Memory *memory, State *state,
     case 107: return SysLstat<linux32_stat>(memory, state, syscall);
     case 108: return SysFstat<linux32_stat>(memory, state, syscall);
     case 109: return SysUname<linux_old_utsname>(memory, state, syscall);
+    case 120: return SysCloneB(memory, state, syscall);
     case 122: return SysUname<linux_new_utsname>(memory, state, syscall);
     case 125: return SysMprotect(memory, state, syscall);
     case 140: return SysLlseek(memory, state, syscall);
@@ -118,6 +119,8 @@ static Memory *X86SystemCall(Memory *memory, State *state,
     case 300: return SysFStatAt<linux32_stat64>(memory, state, syscall);
     case 305: return SysReadLinkAt(memory, state, syscall);
     case 307: return SysFAccessAt(memory, state, syscall);
+    case 323: return SysEventFd(memory, state, syscall);
+    case 328: return SysEventFd2(memory, state, syscall);
     default:
       STRACE_ERROR(unsupported, ANSI_COLOR_MAGENTA "nr=%d", syscall_num);
       return syscall.SetReturn(memory, state, 0);

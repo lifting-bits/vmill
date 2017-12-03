@@ -19,31 +19,32 @@ namespace {
 // Emulate an `getpid` system call.
 static Memory *SysGetProcessId(Memory *memory, State *state,
                                const SystemCallABI &syscall) {
-  auto id = getpid();
-  STRACE_SUCCESS(getpid, "process id=%u", id);
-  return syscall.SetReturn(memory, state, id);
+  //auto id = getpid();
+  STRACE_SUCCESS(getpid, "process id=%u", kProcessId);
+  return syscall.SetReturn(memory, state, kProcessId);
 }
 
 // Emulate an `getpid` system call.
 static Memory *SysGetParentProcessId(Memory *memory, State *state,
                                const SystemCallABI &syscall) {
-  auto id = getppid();
-  STRACE_SUCCESS(getppid, "parent process id=%u", id);
-  return syscall.SetReturn(memory, state, id);
+  //auto id = getppid();
+  STRACE_SUCCESS(getppid, "parent process id=%u", kParentProcessId);
+  return syscall.SetReturn(memory, state, kParentProcessId);
 }
 
-// Emulate an `getpid` system call.
+// Emulate an `getpgrp` system call.
 static Memory *SysGetProcessGroupId(Memory *memory, State *state,
                                     const SystemCallABI &syscall) {
-  auto id = getpgrp();
-  STRACE_SUCCESS(getpgrp, "process group id=%u", id);
-  return syscall.SetReturn(memory, state, id);
+  //auto id = getpgrp();
+  STRACE_SUCCESS(getpgrp, "process group id=0", kParentProcessGroupId);
+  return syscall.SetReturn(memory, state, kParentProcessGroupId);
 }
 
 // Emulate an `gettid` system call.
 static Memory *SysGetThreadId(Memory *memory, State *state,
-                               const SystemCallABI &syscall) {
-  auto id = getpid();  // TODO(pag): Emulate `gettid`?
+                              const SystemCallABI &syscall) {
+  auto current = __vmill_current();
+  auto id = current->tid;
   STRACE_SUCCESS(gettid, "thread id=%u", id);
   return syscall.SetReturn(memory, state, id);
 }

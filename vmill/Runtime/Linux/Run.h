@@ -34,6 +34,7 @@
 #include <linux/net.h>
 #include <dirent.h>
 #include <fcntl.h>
+#include <sys/eventfd.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
@@ -301,6 +302,17 @@ struct linux32_statfs64 {
   uint32_t f_spare[4];
 } __attribute__((packed));
 
+constexpr pid_t kParentProcessId = 0;
+static constexpr pid_t kProcessId = 1;
+static constexpr pid_t kParentProcessGroupId = 0;
+
+// Number of iterations of the task loop to be blocked for.
+static constexpr unsigned kFutexBlockedForABit = 100;
+
+// Basically infinity.
+static constexpr unsigned kBlockedForever = ~0U;
+
+// State needed to emulate a Linux thread.
 struct linux_task : public vmill::Task {
  public:
   linux_task *next;
@@ -315,10 +327,16 @@ struct linux_task : public vmill::Task {
   // that are blocked on futexes.
   uint32_t futex_bitset;
   addr_t futex_uaddr;
+
+  pid_t tid;
 };
 
 // Returns a pointer to the currently executing task.
 extern "C" linux_task *__vmill_current(void);
+
+// Add a task to the operating system.
+extern "C" linux_task *__vmill_create_task(
+    const void *state, vmill::PC pc, vmill::AddressSpace *memory);
 
 }  // namespace
 

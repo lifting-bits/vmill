@@ -35,12 +35,16 @@ extern "C" void __vmill_fini(void) {
 
 }
 
+static pid_t gNextTid = kProcessId;
+
 // Add a task to the operating system.
-extern "C" void __vmill_create_task(
+extern "C" linux_task *__vmill_create_task(
     const void *state, vmill::PC pc, vmill::AddressSpace *memory) {
   auto task = new linux_task;
   memset(task, 0, sizeof(linux_task));
   __vmill_init_task(task, state, pc, memory);
+
+  task->tid = gNextTid++;
 
   if (gTaskList) {
     gLastTask->next_circular = task;
@@ -53,6 +57,8 @@ extern "C" void __vmill_create_task(
 
   task->next = gTaskList;
   gTaskList = task;
+
+  return task;
 }
 
 // Call into vmill to execute the actual task.

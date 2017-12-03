@@ -28,8 +28,6 @@
 #include "vmill/Runtime/Task.h"
 #include "vmill/Util/Compiler.h"
 
-DECLARE_uint64(num_io_threads);
-
 namespace vmill {
 
 extern thread_local Executor *gExecutor;
@@ -122,7 +120,13 @@ uint64_t __vmill_find_unmapped_address(
   }
 }
 
+__attribute__((noinline))
+void vmill_break_on_fault(void) {
+  asm volatile ("" : : : "memory");
+}
+
 #define MAKE_MEM_READ(ret_type, read_type, suffix, read_size, vtype) \
+    __attribute__((hot)) \
     ret_type __remill_read_memory_ ## suffix( \
         AddressSpace *memory, uint64_t addr) { \
       read_type ret_val = 0; \
@@ -132,6 +136,7 @@ uint64_t __vmill_find_unmapped_address(
         if (likely(gTask != nullptr)) { \
           auto &fault = gTask->mem_access_fault; \
           if (kMemoryAccessNoFault == fault.kind) { \
+            vmill_break_on_fault(); \
             fault.kind = kMemoryAccessFaultOnRead; \
             fault.value_type = vtype; \
             fault.access_size = read_size; \
@@ -160,6 +165,7 @@ double __remill_read_memory_f80(
     if (likely(gTask != nullptr)) {
       auto &fault = gTask->mem_access_fault;
       if (kMemoryAccessNoFault == fault.kind) {
+        vmill_break_on_fault();
         fault.kind = kMemoryAccessFaultOnRead;
         fault.value_type = kMemoryValueTypeFloatingPoint;
         fault.access_size = 10;
@@ -171,12 +177,14 @@ double __remill_read_memory_f80(
 }
 
 #define MAKE_MEM_WRITE(input_type, write_type, suffix, write_size, vtype) \
+    __attribute__((hot)) \
     AddressSpace *__remill_write_memory_ ## suffix( \
         AddressSpace *memory, uint64_t addr, input_type val) { \
       if (unlikely(!memory->TryWrite(addr, val))) { \
         if (likely(gTask != nullptr)) { \
           auto &fault = gTask->mem_access_fault; \
           if (kMemoryAccessNoFault == fault.kind) { \
+            vmill_break_on_fault(); \
             fault.kind = kMemoryAccessFaultOnWrite; \
             fault.value_type = vtype; \
             fault.access_size = write_size; \
@@ -203,6 +211,7 @@ AddressSpace *__remill_write_memory_f80(
     if (likely(gTask != nullptr)) {
       auto &fault = gTask->mem_access_fault;
       if (kMemoryAccessNoFault == fault.kind) {
+        vmill_break_on_fault();
         fault.kind = kMemoryAccessFaultOnWrite;
         fault.value_type = kMemoryValueTypeFloatingPoint;
         fault.access_size = 10;
@@ -314,11 +323,15 @@ Memory *__remill_atomic_end(Memory * memory) {
 }
 
 Coroutine *__vmill_allocate_coroutine(void) {
-  if (FLAGS_num_io_threads) {
-    return new Coroutine;
-  } else {
-    return nullptr;
-  }
+  return new Coroutine;
+}
+
+void __vmill_yield(Task *task) {
+  DCHECK(gTask != nullptr);
+  DCHECK(gTask == task);
+  auto coro = task->async_routine;
+  DCHECK(coro != nullptr);
+  coro->Pause(task);
 }
 
 int __remill_fpu_exception_test_and_clear(int read_mask, int clear_mask) {
@@ -370,28 +383,19 @@ void __vmill_run(Task *task) {
 
   gTask = task;
 
-  const auto use_async = FLAGS_num_io_threads > 0;
-
   // The task is waiting for an asynchronous operation to complete.
-  if (unlikely(use_async)) {
-    DCHECK(task->async_routine != nullptr);
-    if (unlikely(kTaskStatusResumable == task->status)) {
-      task->async_routine->Resume(task);
-      gTask = nullptr;
-      return;
-    }
+  DCHECK(task->async_routine != nullptr);
+  if (unlikely(kTaskStatusResumable == task->status)) {
+    task->async_routine->Resume(task);
+    gTask = nullptr;
+    return;
   }
 
   DCHECK(kTaskStatusRunnable == task->status);
 
   const auto lifted_func = gExecutor->FindLiftedFunctionForTask(task);
 
-  if (unlikely(use_async)) {
-    __vmill_execute_async(task, lifted_func);
-  } else {
-    DCHECK(task->async_routine == nullptr);
-    __vmill_execute(task, lifted_func);
-  }
+  __vmill_execute_async(task, lifted_func);
 
   gTask = nullptr;
 }

@@ -88,7 +88,7 @@ class Executor {
 
   // Pointer to the compiled `__vmill_allocate_state`. This is a runtime
   // function that allocates arch-specific `State` structures.
-  void (*create_task_intrinsic)(const void *, PC, AddressSpace *);
+  Task *(*create_task_intrinsic)(const void *, PC, AddressSpace *);
 
   // Pointer to the compiled `__vmill_resume`. This "resumes" execution from
   // where the snapshot left off.

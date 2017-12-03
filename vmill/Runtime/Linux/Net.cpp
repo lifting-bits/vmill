@@ -1047,6 +1047,18 @@ class SocketCallABI : public SystemCallABI {
 
   virtual ~SocketCallABI(void) = default;
 
+  addr_t GetPC(const State *state) const override {
+    return syscall.GetPC(state);
+  }
+
+  void SetPC(State *state, addr_t new_pc) const override {
+    syscall.SetPC(state, new_pc);
+  }
+
+  void SetSP(State *state, addr_t new_sp) const override {
+    syscall.SetSP(state, new_sp);
+  }
+
   addr_t GetReturnAddress(Memory *, addr_t ret_addr) const override {
     return ret_addr;
   }

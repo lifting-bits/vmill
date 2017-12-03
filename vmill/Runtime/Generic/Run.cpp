@@ -24,7 +24,11 @@
 
 #if 1
 # define STRACE_SYSCALL_NUM(nr) \
-    fprintf(stderr, ANSI_COLOR_YELLOW "%u:" ANSI_COLOR_RESET, nr)
+    do { \
+      auto curr = __vmill_current(); \
+      fprintf(stderr, ANSI_COLOR_YELLOW "%p %p %3u:" ANSI_COLOR_RESET, \
+              curr, curr->memory, nr); \
+    } while (false)
 
 # define STRACE_ERROR(syscall, fmt, ...) \
     fprintf(stderr, ANSI_COLOR_RED #syscall ":" fmt ANSI_COLOR_RESET "\n", \

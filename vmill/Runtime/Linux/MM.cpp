@@ -208,6 +208,10 @@ static Memory *SysMmap(Memory *memory, State *state,
     fd_offset = static_cast<uint64_t>(offset);
   }
 
+  if (!fd_name && 0 != (MAP_STACK & flags)) {
+    fd_name = "[stack]";
+  }
+
   // Allocate the RW memory.
   memory = __vmill_allocate_memory(memory, addr, size, fd_name, fd_offset);
 

@@ -811,4 +811,46 @@ static Memory *SysStatFs64(Memory *memory, State *state,
   return syscall.SetReturn(memory, state, 0);
 }
 
+
+static Memory *SysEventFd(Memory *memory, State *state,
+                           const SystemCallABI &syscall) {
+  uint32_t count = 0;
+
+  if (!syscall.TryGetArgs(memory, state, &count)) {
+    STRACE_ERROR(eventfd, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  auto ret = eventfd(count, 0);
+  if (-1 == ret) {
+    auto err = errno;
+    STRACE_ERROR(eventfd, "count=%x: %s", count, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  } else {
+    STRACE_SUCCESS(eventfd, "count=%x, fd=%d", count, ret);
+    return syscall.SetReturn(memory, state, ret);
+  }
+}
+
+static Memory *SysEventFd2(Memory *memory, State *state,
+                           const SystemCallABI &syscall) {
+  uint32_t count = 0;
+  int flags = 0;
+
+  if (!syscall.TryGetArgs(memory, state, &count, &flags)) {
+    STRACE_ERROR(eventfd2, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+  auto ret = eventfd(count, flags);
+  if (-1 == ret) {
+    auto err = errno;
+    STRACE_ERROR(eventfd2, "count=%x, flags=%x: %s",
+                 count, flags, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  } else {
+    STRACE_SUCCESS(eventfd2, "count=%x, flags=%x, fd=%d", count, flags, ret);
+    return syscall.SetReturn(memory, state, ret);
+  }
+}
+
 }  // namespace

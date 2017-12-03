@@ -54,8 +54,8 @@ AddressSpace::AddressSpace(void)
       invalid_max_map(MappedRange::CreateInvalidHigh()),
       page_to_map(256),
       wnx_page_to_map(256),
-      last_read_map(page_to_map.end()),
-      last_written_map(wnx_page_to_map.end()),
+      last_map(page_to_map.end()),
+      last_wnx_map(wnx_page_to_map.end()),
       is_dead(false),
       code_version_is_invalid(true),
       code_version(0) {
@@ -139,7 +139,7 @@ bool AddressSpace::IsMarkedTraceHead(PC pc) const {
 void AddressSpace::Kill(void) {
   maps.clear();
   page_to_map.clear();
-  last_read_map = page_to_map.end();
+  last_map = page_to_map.end();
   is_dead = true;
 }
 
@@ -160,6 +160,18 @@ bool AddressSpace::CanExecute(uint64_t addr) const {
   return page_is_executable.count(AlignDownToPage(addr));
 }
 
+bool AddressSpace::CanReadAligned(uint64_t addr) const {
+  return page_is_readable.count(addr);
+}
+
+bool AddressSpace::CanWriteAligned(uint64_t addr) const {
+  return page_is_writable.count(addr);
+}
+
+bool AddressSpace::CanExecuteAligned(uint64_t addr) const {
+  return page_is_executable.count(addr);
+}
+
 bool AddressSpace::TryRead(uint64_t addr, void *val_out, size_t size) {
   auto out_stream = reinterpret_cast<uint8_t *>(val_out);
   for (auto page_addr = AlignDownToPage(addr),
@@ -167,7 +179,7 @@ bool AddressSpace::TryRead(uint64_t addr, void *val_out, size_t size) {
        page_addr < end_addr;
        page_addr += kPageSize) {
 
-    const auto &range = FindRange(page_addr);
+    const auto &range = FindRangeAligned(page_addr);
     auto page_end_addr = page_addr + kPageSize;
     auto next_end_addr = std::min(end_addr, page_end_addr);
     while (addr < next_end_addr) {
@@ -186,12 +198,12 @@ bool AddressSpace::TryWrite(uint64_t addr, const void *val, size_t size) {
        page_addr < end_addr;
        page_addr += kPageSize) {
 
-    if (!CanWrite(page_addr)) {
+    if (!CanWriteAligned(page_addr)) {
       return false;
     }
 
-    const auto &range = FindRange(page_addr);
-    if (CanExecute(page_addr)) {
+    const auto &range = FindRangeAligned(page_addr);
+    if (CanExecuteAligned(page_addr)) {
       range->InvalidateCodeVersion();
 
       if (!code_version_is_invalid) {
@@ -378,50 +390,49 @@ static std::vector<MemoryMapPtr> RemoveRange(
 
 void AddressSpace::SetPermissions(uint64_t base_, size_t size, bool can_read,
                                   bool can_write, bool can_exec) {
-  auto base = AlignDownToPage(base_);
-  auto limit = base + RoundUpToPage(size);
-
-  auto seen_exec = false;
-  auto seen_non_exec = false;
+  const auto base = AlignDownToPage(base_);
+  const auto limit = base + RoundUpToPage(size);
 
   for (auto addr = base; addr < limit; addr += kPageSize) {
-    page_is_readable.erase(addr);
-    page_is_writable.erase(addr);
-
-    if (page_is_executable.count(addr)) {
-      seen_exec = true;
-      page_is_executable.erase(addr);
-    } else {
-      seen_non_exec = true;
-    }
-
     if (can_read) {
       page_is_readable.insert(addr);
+    } else {
+      page_is_readable.erase(addr);
     }
+
+    const auto old_write_size = page_is_writable.size();
     if (can_write) {
       page_is_writable.insert(addr);
+    } else {
+      page_is_writable.erase(addr);
     }
+    const auto new_write_size = page_is_writable.size();
+
+    const auto old_exec_size = page_is_executable.size();
     if (can_exec) {
       page_is_executable.insert(addr);
+    } else {
+      page_is_executable.erase(addr);
+    }
+    const auto new_exec_size = page_is_executable.size();
+
+    // Does it look like we should invalidate the code version?
+    auto invalidate = false;
+    if (old_exec_size != new_exec_size) {
+      invalidate = true;
+    } else if (can_exec && old_write_size != new_write_size) {
+      invalidate = true;
     }
   }
 
-  if (!code_version_is_invalid) {
-    if (can_exec && seen_non_exec) {
-      code_version_is_invalid = true;
-    }
-
-    if (!can_exec && seen_exec) {
-      code_version_is_invalid = true;
-    }
-
-    if (code_version_is_invalid) {
-      LOG(INFO)
-          << "Invalidating code version because of change of permissions "
-          << "of memory [" << std::hex << base << ", " << limit
-          << ")" << std::dec;
-    }
+  if (code_version_is_invalid) {
+    LOG(INFO)
+        << "Invalidating code version because of change of permissions "
+        << "of memory [" << std::hex << base << ", " << limit
+        << ")" << std::dec;
   }
+
+  CreatePageToRangeMap();
 }
 
 void AddressSpace::AddMap(uint64_t base_, size_t size, const char *name,
@@ -450,12 +461,10 @@ void AddressSpace::AddMap(uint64_t base_, size_t size, const char *name,
   }
 
   auto new_map = MappedRange::Create(base, limit, name, offset);
-  SetPermissions(base, (limit - base), true, true, false);
-
   maps.swap(old_ranges);
   maps.push_back(new_map);
 
-  CreatePageToRangeMap();
+  SetPermissions(base, limit - base, true, true, false);
 }
 
 void AddressSpace::RemoveMap(uint64_t base_, size_t size) {
@@ -477,14 +486,13 @@ void AddressSpace::RemoveMap(uint64_t base_, size_t size) {
   maps = RemoveRange(maps, base, limit);
 
   for (; base < limit; base += kPageSize) {
-    if (page_is_executable.count(base)) {
+    if (page_is_executable.erase(base)) {
       if (!code_version_is_invalid) {
         code_version_is_invalid = true;
         LOG(INFO)
           << "Invalidating code version because of removal of executable page "
           << "at " << std::hex << base << std::dec;
       }
-      page_is_executable.erase(base);
     }
 
     page_is_readable.erase(base);
@@ -573,8 +581,8 @@ bool AddressSpace::FindHole(uint64_t min, uint64_t max, uint64_t size,
 void AddressSpace::CreatePageToRangeMap(void) {
   CHECK(2 <= maps.size());
 
-  last_read_map = page_to_map.end();
-  last_written_map = wnx_page_to_map.end();
+  last_map = page_to_map.end();
+  last_wnx_map = wnx_page_to_map.end();
 
   page_to_map.clear();
   wnx_page_to_map.clear();
@@ -595,16 +603,19 @@ void AddressSpace::CreatePageToRangeMap(void) {
       continue;
     }
 
+    const auto base_address = map->BaseAddress();
     const auto limit_address = map->LimitAddress();
-    for (auto addr = map->BaseAddress();
-         addr < limit_address;
-         addr += kPageSize) {
+    for (auto addr = base_address; addr < limit_address; addr += kPageSize) {
 
-      if (page_is_readable.count(addr)) {
+      auto can_read = CanReadAligned(addr);
+      auto can_write = CanWriteAligned(addr);
+      auto can_exec = CanExecuteAligned(addr);
+
+      if (can_read || can_write || can_exec) {
         page_to_map[addr] = map;
       }
 
-      if (page_is_writable.count(addr) && !page_is_executable.count(addr)) {
+      if (can_write && !can_exec) {
         wnx_page_to_map[addr] = map;
       }
     }
@@ -615,30 +626,38 @@ void AddressSpace::CreatePageToRangeMap(void) {
 }
 
 const MemoryMapPtr &AddressSpace::FindRange(uint64_t addr) {
+  return FindRangeAligned(AlignDownToPage(addr));
+}
+
+const MemoryMapPtr &AddressSpace::FindRangeAligned(uint64_t addr) {
   auto page_addr = AlignDownToPage(addr);
-  if (likely(last_read_map != page_to_map.end() &&
-             page_addr == last_read_map->first)) {
-    return last_read_map->second;
+  if (likely(last_map != page_to_map.end() &&
+             page_addr == last_map->first)) {
+    return last_map->second;
   }
 
-  last_read_map = page_to_map.find(page_addr);
-  if (likely(last_read_map != page_to_map.end())) {
-    return last_read_map->second;
+  last_map = page_to_map.find(page_addr);
+  if (likely(last_map != page_to_map.end())) {
+    return last_map->second;
   } else {
     return invalid_min_map;
   }
 }
 
 const MemoryMapPtr &AddressSpace::FindWNXRange(uint64_t addr) {
+  return FindWNXRangeAligned(AlignDownToPage(addr));
+}
+
+const MemoryMapPtr &AddressSpace::FindWNXRangeAligned(uint64_t addr) {
   auto page_addr = AlignDownToPage(addr);
-  if (likely(last_written_map != wnx_page_to_map.end() &&
-             page_addr == last_written_map->first)) {
-    return last_written_map->second;
+  if (likely(last_wnx_map != wnx_page_to_map.end() &&
+             page_addr == last_wnx_map->first)) {
+    return last_wnx_map->second;
   }
 
-  last_written_map = wnx_page_to_map.find(page_addr);
-  if (likely(last_written_map != wnx_page_to_map.end())) {
-    return last_written_map->second;
+  last_wnx_map = wnx_page_to_map.find(page_addr);
+  if (likely(last_wnx_map != wnx_page_to_map.end())) {
+    return last_wnx_map->second;
   } else {
     return invalid_min_map;
   }

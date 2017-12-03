@@ -138,10 +138,19 @@ class AddressSpace : public Memory {
   // Recreate the `range_base_to_index` and `range_limit_to_index` indices.
   void CreatePageToRangeMap(void);
 
+  // Permission checking on page-aligned `addr` values.
+  bool CanReadAligned(uint64_t addr) const;
+  bool CanWriteAligned(uint64_t addr) const;
+  bool CanExecuteAligned(uint64_t addr) const;
+
   // Find the memory map containing `addr`. If none is found then a "null"
   // map pointer is returned, whose operations will all fail.
   const MemoryMapPtr &FindRange(uint64_t addr);
   const MemoryMapPtr &FindWNXRange(uint64_t addr);
+
+  // Find the range associated with a page-aligned value of `addr`.
+  const MemoryMapPtr &FindRangeAligned(uint64_t addr);
+  const MemoryMapPtr &FindWNXRangeAligned(uint64_t addr);
 
   // Used to represent an invalid memory map.
   MemoryMapPtr invalid_min_map;
@@ -155,8 +164,8 @@ class AddressSpace : public Memory {
   PageCache page_to_map;
   PageCache wnx_page_to_map;
 
-  PageCache::iterator last_read_map;
-  PageCache::iterator last_written_map;
+  PageCache::iterator last_map;
+  PageCache::iterator last_wnx_map;
 
   // Sets of pages that are readable, writable, and executable.
   std::unordered_set<uint64_t> page_is_readable;

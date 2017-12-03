@@ -19,6 +19,18 @@ class AArch64SupervisorCall : public SystemCallABI {
  public:
   virtual ~AArch64SupervisorCall(void) = default;
 
+  addr_t GetPC(const State *state) const override {
+    return state->gpr.pc.aword;
+  }
+
+  void SetPC(State *state, addr_t new_pc) const override {
+    state->gpr.pc.aword = new_pc;
+  }
+
+  void SetSP(State *state, addr_t new_sp) const override {
+    state->gpr.sp.aword = new_sp;
+  }
+
   addr_t GetReturnAddress(Memory *, addr_t ret_addr) const override {
     return ret_addr;
   }

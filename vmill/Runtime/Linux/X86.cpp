@@ -19,6 +19,18 @@ class X86Int0x80SystemCall : public SystemCallABI {
  public:
   virtual ~X86Int0x80SystemCall(void) = default;
 
+  addr_t GetPC(const State *state) const override {
+    return state->gpr.rip.aword;
+  }
+
+  void SetPC(State *state, addr_t new_pc) const override {
+    state->gpr.rip.aword = new_pc;
+  }
+
+  void SetSP(State *state, addr_t new_sp) const override {
+    state->gpr.rsp.aword = new_sp;
+  }
+
   addr_t GetReturnAddress(Memory *, addr_t ret_addr) const override {
     return ret_addr;
   }
@@ -63,6 +75,18 @@ class X86Int0x80SystemCall : public SystemCallABI {
 class X86SysEnter32SystemCall : public SystemCallABI {
  public:
   virtual ~X86SysEnter32SystemCall(void) = default;
+
+  addr_t GetPC(const State *state) const override {
+    return state->gpr.rip.aword;
+  }
+
+  void SetPC(State *state, addr_t new_pc) const override {
+    state->gpr.rip.aword = new_pc;
+  }
+
+  void SetSP(State *state, addr_t new_sp) const override {
+    state->gpr.rsp.aword = new_sp;
+  }
 
   // Find the return address of this system call.
   addr_t GetReturnAddress(Memory *memory, addr_t ret_addr) const override {
@@ -273,6 +297,7 @@ Memory *__remill_sync_hyper_call(
 
     default:
       STRACE_ERROR(sync_hyper_call, "%u", call);
+      __builtin_trap();
       break;
   }
 
