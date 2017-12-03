@@ -26,17 +26,17 @@
 # define STRACE_SYSCALL_NUM(nr) \
     do { \
       auto curr = __vmill_current(); \
-      fprintf(stderr, ANSI_COLOR_YELLOW "%p %p %3u:" ANSI_COLOR_RESET, \
-              curr, curr->memory, nr); \
+      __vmill_strace(ANSI_COLOR_YELLOW "%p %p %3u:" ANSI_COLOR_RESET, \
+                     curr, curr->memory, nr); \
     } while (false)
 
 # define STRACE_ERROR(syscall, fmt, ...) \
-    fprintf(stderr, ANSI_COLOR_RED #syscall ":" fmt ANSI_COLOR_RESET "\n", \
-            ##__VA_ARGS__)
+    __vmill_strace(ANSI_COLOR_RED #syscall ":" fmt ANSI_COLOR_RESET "\n", \
+                   ##__VA_ARGS__)
 
 # define STRACE_SUCCESS(syscall, fmt, ...) \
-    fprintf(stderr, ANSI_COLOR_GREEN #syscall ":" fmt ANSI_COLOR_RESET "\n", \
-          ##__VA_ARGS__)
+    __vmill_strace(ANSI_COLOR_GREEN #syscall ":" fmt ANSI_COLOR_RESET "\n", \
+                   ##__VA_ARGS__)
 #else
 # define STRACE_SYSCALL_NUM(...)
 # define STRACE_ERROR(...)

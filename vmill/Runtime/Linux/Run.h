@@ -29,6 +29,7 @@
 #endif
 
 #include <algorithm>
+#include <csignal>
 #include <ctime>
 #include <linux/limits.h>
 #include <linux/net.h>
@@ -41,6 +42,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/sysinfo.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -211,6 +213,23 @@ struct linux_new_utsname {
   char version[kNewUTSNameLen + 1];
   char machine[kNewUTSNameLen + 1];
   char domainname[kNewUTSNameLen + 1];
+};
+
+struct linux_sysinfo {
+  addr_diff_t uptime;
+  addr_t loads[3];
+  addr_t totalram;
+  addr_t freeram;
+  addr_t sharedram;
+  addr_t bufferram;
+  addr_t totalswap;
+  addr_t freeswap;
+  uint16_t procs;
+  uint16_t pad;
+  addr_t totalhigh;
+  addr_t freehigh;
+  uint32_t mem_unit;
+  uint8_t _f[20 - 2*sizeof(addr_t)-sizeof(uint32_t)];
 };
 
 struct linux_rlimit {

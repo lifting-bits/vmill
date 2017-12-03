@@ -18,6 +18,8 @@
 #include <glog/logging.h>
 
 #include <cfenv>
+#include <cstdarg>
+#include <cstdio>
 #include <ostream>
 
 #include "vmill/Arch/Arch.h"
@@ -28,12 +30,53 @@
 #include "vmill/Runtime/Task.h"
 #include "vmill/Util/Compiler.h"
 
+DEFINE_string(strace_output_file, "/dev/stderr",
+              "If a debug build of the runtime is being used, "
+              "then should be print out a trace of all the "
+              "system calls?");
+
 namespace vmill {
 
 extern thread_local Executor *gExecutor;
 thread_local Task *gTask = nullptr;
 
 namespace {
+
+static FILE *gStraceFile = nullptr;
+
+// Gets a file pointer to an open file for writing the log output of strace
+// info, as produced by the runtime.
+static FILE *GetOpenStraceOutputFile(void) {
+  if (likely(gStraceFile != nullptr)) {
+    return gStraceFile;
+  }
+
+  if (FLAGS_strace_output_file.empty()) {
+    return nullptr;
+  }
+
+  if (FLAGS_strace_output_file == "/dev/stderr") {
+    gStraceFile = stderr;
+
+  } else if (FLAGS_strace_output_file == "/dev/stdout") {
+    gStraceFile = stdout;
+
+  } else if (FLAGS_strace_output_file == "/dev/null") {
+    FLAGS_strace_output_file.clear();
+    return nullptr;
+
+  } else {
+    struct CloseStrace {
+      ~CloseStrace(void) {
+        if (gStraceFile) {
+          fclose(gStraceFile);
+        }
+      }
+    };
+    gStraceFile = fopen(FLAGS_strace_output_file.c_str(), "w");
+  }
+  return gStraceFile;
+}
 
 static const char *AccessKindToString(MemoryAccessFaultKind kind) {
   switch (kind) {
@@ -312,8 +355,6 @@ Memory *__remill_barrier_store_store(Memory * memory) {
   return memory;
 }
 
-// Atomic operations. The address/size are hints, but the granularity of the
-// access can be bigger. These have implicit StoreLoad semantics.
 Memory *__remill_atomic_begin(Memory * memory) {
   return memory;
 }
@@ -326,6 +367,9 @@ Coroutine *__vmill_allocate_coroutine(void) {
   return new Coroutine;
 }
 
+// Called by the runtime to yield execution. This allows the runtime to pause
+// where it is in the execution of some system call, in the hope that another
+// system call will make progress.
 void __vmill_yield(Task *task) {
   DCHECK(gTask != nullptr);
   DCHECK(gTask == task);
@@ -334,6 +378,20 @@ void __vmill_yield(Task *task) {
   coro->Pause(task);
 }
 
+// Called by the runtime to print out information about the running system
+// calls.
+__attribute__((format(printf, 1, 2)))
+void __vmill_strace(const char *format, ...) {
+  if (auto fp = GetOpenStraceOutputFile()) {
+    va_list args;
+    va_start(args, format);
+    vfprintf(fp, format, args);
+    va_end(args);
+  }
+}
+
+// Return the current FPU exceptions, masked with `read_mask`, then clear any
+// exceptions present in `clear_mask`.
 int __remill_fpu_exception_test_and_clear(int read_mask, int clear_mask) {
 
   auto except = std::fetestexcept(read_mask);
@@ -341,7 +399,8 @@ int __remill_fpu_exception_test_and_clear(int read_mask, int clear_mask) {
   return except;
 }
 
-// Implemented in assembly.
+// Implemented in assembly. This calls `__vmill_execute` (defined below) from
+// inside of a coroutine.
 extern void __vmill_execute_async(Task *, LiftedFunction *);
 
 // Called by assembly in `__vmill_execute_async`.

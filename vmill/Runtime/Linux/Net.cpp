@@ -85,12 +85,13 @@ static Memory *SysConnect(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EINVAL);
   }
   if (addrlen) {
-    if (!CanReadMemory(memory, addr, addrlen)) {
+    if (!TryReadMemory(memory, addr, &info)) {
       STRACE_ERROR(connect, "Couldn't read address");
       return syscall.SetReturn(memory, state, -EFAULT);
     }
-    CopyFromMemory(memory, &info, addr, addrlen);
   }
+
+  STRACE_ERROR(connect, "HERE!!! %" PRIxADDR, addr);
 
   auto ret = connect(sockfd, (addrlen ? &info : nullptr), addrlen);
 
@@ -146,16 +147,13 @@ static Memory *DoSysAccept(Memory *memory, State *state,
       return syscall.SetReturn(memory, state, -EINVAL);
     }
 
-    if (!CanReadMemory(memory, addr, addrlen) ||
-        !CanWriteMemory(memory, addr, addrlen)) {
+    if (!TryReadMemory(memory, addr, &info)) {
       STRACE_ERROR(
           accept_generic,
           "Can't read or write addrlen=%u bytes of addr=%" PRIxADDR,
           addrlen, addr);
       return syscall.SetReturn(memory, state, -EFAULT);
     }
-
-    CopyFromMemory(memory, &info, addr, addrlen);
   }
 
   auto orig_addrlen = addrlen;
@@ -231,15 +229,11 @@ static Memory *SysGetSockName(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EINVAL);
   }
 
-  if (!CanReadMemory(memory, addr, addrlen) ||
-      !CanWriteMemory(memory, addr, addrlen)) {
+  linux_sockaddr info = {};
+  if (!TryReadMemory(memory, addr, &info)) {
     STRACE_ERROR(getsockname, "Couldn't copy sock address to/from memory.");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
-
-  linux_sockaddr info = {};
-
-  CopyFromMemory(memory, &info, addr, addrlen);
 
   const auto orig_addrlen = addrlen;
   if (!getsockname(fd, &info, &addrlen)) {
@@ -283,14 +277,11 @@ static Memory *SysGetPeerName(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EINVAL);
   }
 
-  if (!CanReadMemory(memory, addr, addrlen) ||
-      !CanWriteMemory(memory, addr, addrlen)) {
+  linux_sockaddr info = {};
+  if (!TryReadMemory(memory, addr, &info)) {
     STRACE_ERROR(getpeername, "Couldn't copy sock address to/from memory.");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
-
-  linux_sockaddr info = {};
-  CopyFromMemory(memory, &info, addr, addrlen);
 
   const auto orig_addrlen = addrlen;
   if (!getpeername(fd, &info, &addrlen)) {
@@ -365,12 +356,11 @@ static Memory *DoSysSendTo(Memory *memory, State *state,
 
   linux_sockaddr info = {};
   if (addrlen) {
-    if (!CanReadMemory(memory, addr, addrlen)) {
+    if (!TryReadMemory(memory, addr, &info)) {
       STRACE_ERROR(sendto, "Can't read addrlen=%u bytes from addr=%" PRIxADDR,
                    addrlen, addr);
       return syscall.SetReturn(memory, state, -EFAULT);
     }
-    CopyFromMemory(memory, &info, addr, addrlen);
   }
 
   if (!CanReadMemory(memory, buf, n)) {
@@ -453,13 +443,11 @@ static Memory *DoSysRecvFrom(Memory *memory, State *state,
     }
 
     if (addrlen) {
-      if (!CanReadMemory(memory, addr, addrlen_addr)) {
+      if (!TryReadMemory(memory, addr, &info)) {
         STRACE_ERROR(recvfrom, "Can't read addrlen=%u byte addr=%" PRIxADDR,
                      addrlen, addr);
         return syscall.SetReturn(memory, state, -EFAULT);
       }
-
-      CopyFromMemory(memory, &info, addr, addrlen_addr);
     }
   }
 
@@ -1018,7 +1006,8 @@ static Memory *SysRecvMmsg(Memory *memory, State *state,
 
   auto ret = recvmsg(socket, &header, flags);
   if (-1 == ret) {
-    return syscall.SetReturn(memory, state, -errno);
+    auto err = errno;
+    return syscall.SetReturn(memory, state, -err);
   }
 
   err = header.Export(memory, compat_header);

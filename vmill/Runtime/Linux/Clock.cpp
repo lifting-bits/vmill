@@ -30,8 +30,12 @@ static Memory *SysGetTimeOfDay(Memory *memory, State *state,
 
   struct timeval tv = {};
   struct timezone tz = {};
-  gettimeofday(&tv, &tz);
-  auto ret = errno;
+  auto ret = gettimeofday(&tv, &tz);
+  if (-1 == ret) {
+    auto err = errno;
+    STRACE_ERROR(gettimeofday, "%s", strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  }
 
   if (tv_addr) {
     TimeVal tv_compat = {};
@@ -61,7 +65,7 @@ static Memory *SysGetTimeOfDay(Memory *memory, State *state,
       gettimeofday, "tv_sec=%ld, tv_usec=%ld, tz_minuteswest=%d, tz_dsttime=%d",
       tv.tv_sec, tv.tv_usec, tz.tz_minuteswest, tz.tz_dsttime);
 
-  return syscall.SetReturn(memory, state, -ret);
+  return syscall.SetReturn(memory, state, ret);
 }
 
 // Emulate a 32-bit `settimeofday` system call.
@@ -184,7 +188,7 @@ static Memory *SysClockGetResolution(Memory *memory, State *state,
   }
 
   STRACE_SUCCESS(clock_getres, "clock_id=%d, tv_sec=%ld, tv_nsec=%ld",
-                 clock_id, compat_res.tv_sec, compat_res.tv_nsec);
+                 clock_id, cur_res.tv_sec, cur_res.tv_nsec);
   return syscall.SetReturn(memory, state, 0);
 }
 

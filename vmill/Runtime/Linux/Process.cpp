@@ -49,4 +49,34 @@ static Memory *SysGetThreadId(Memory *memory, State *state,
   return syscall.SetReturn(memory, state, id);
 }
 
+// Emulate an `kill` system call.
+static Memory *SysKill(Memory *memory, State *state,
+                       const SystemCallABI &syscall) {
+  pid_t pid = 0;
+  int signum = 0;
+  if (!syscall.TryGetArgs(memory, state, &pid, &signum)) {
+    STRACE_ERROR(kill, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  auto task = __vmill_current();
+  if (-1 == pid || 0 == pid || kProcessId == pid) {
+    STRACE_ERROR(kill, "pid=%u, signal=%d, suppressed", pid, signum);
+    return syscall.SetReturn(memory, state, 0);
+
+  } else {
+    auto ret = kill(pid, signum);
+    if (-1 == ret) {
+      auto err = errno;
+      STRACE_ERROR(kill, "pid=%u, signal=%d: %s", pid, signum, strerror(err));
+      return syscall.SetReturn(memory, state, -err);
+
+    } else {
+      STRACE_SUCCESS(kill, "pid=%u, signal=%d", pid, signum);
+      return syscall.SetReturn(memory, state, 0);
+    }
+  }
+
+}
+
 }  // namespace

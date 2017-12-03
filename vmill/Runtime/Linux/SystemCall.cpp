@@ -58,6 +58,7 @@ static Memory *X86SystemCall(Memory *memory, State *state,
     case 20: return SysGetProcessId(memory, state, syscall);
     case 24: return SysGetUserId(memory, state, syscall);
     case 33: return SysAccess(memory, state, syscall);
+    case 37: return SysKill(memory, state, syscall);
     case 45: return SysBrk(memory, state, syscall);
     case 47: return SysGetGroupId(memory, state, syscall);
     case 49: return SysGetEffectiveUserId(memory, state, syscall);
@@ -82,13 +83,16 @@ static Memory *X86SystemCall(Memory *memory, State *state,
     case 107: return SysLstat<linux32_stat>(memory, state, syscall);
     case 108: return SysFstat<linux32_stat>(memory, state, syscall);
     case 109: return SysUname<linux_old_utsname>(memory, state, syscall);
+    case 116: return SysGetSysInfo<linux_sysinfo>(memory, state, syscall);
     case 120: return SysCloneB(memory, state, syscall);
     case 122: return SysUname<linux_new_utsname>(memory, state, syscall);
     case 125: return SysMprotect(memory, state, syscall);
     case 140: return SysLlseek(memory, state, syscall);
     case 145: return SysReadV(memory, state, syscall);
     case 146: return SysWriteV(memory, state, syscall);
+    case 165: return SysGetRESUserId<uid_t>(memory, state, syscall);
     case 168: return SysPoll(memory, state, syscall);
+    case 171: return SysGetRESGroupId<gid_t>(memory, state, syscall);
     case 174:
       STRACE_ERROR(rt_sigaction, "Suppressed");
       return syscall.SetReturn(memory, state, 0);
@@ -105,6 +109,8 @@ static Memory *X86SystemCall(Memory *memory, State *state,
     case 200: return SysGetGroupId(memory, state, syscall);
     case 201: return SysGetEffectiveUserId(memory, state, syscall);
     case 202: return SysGetEffectiveGroupId(memory, state, syscall);
+    case 209: return SysGetRESUserId<uint32_t>(memory, state, syscall);
+    case 211: return SysGetRESGroupId<uint32_t>(memory, state, syscall);
     case 220: return SysGetDirEntries64(memory, state, syscall);
     case 221: return SysFcntl64(memory, state, syscall);
     case 224: return SysGetThreadId(memory, state, syscall);
@@ -115,6 +121,8 @@ static Memory *X86SystemCall(Memory *memory, State *state,
     case 266:
       return SysClockGetResolution<linux32_timespec>(memory, state, syscall);
     case 268: return SysStatFs64<linux32_statfs64>(memory, state, syscall);
+    case 269: return SysFStatFs64<linux32_statfs64>(memory, state, syscall);
+    case 272: return SysFAdvise<int32_t, int32_t>(memory, state, syscall);
     case 295: return SysOpenAt(memory, state, syscall);
     case 300: return SysFStatAt<linux32_stat64>(memory, state, syscall);
     case 305: return SysReadLinkAt(memory, state, syscall);

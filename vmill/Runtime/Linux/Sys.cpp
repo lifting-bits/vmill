@@ -222,4 +222,149 @@ static Memory *SysGetRlimit(Memory *memory, State *state,
   return syscall.SetReturn(memory, state, 0);
 }
 
+template <typename T>
+static Memory *SysGetRESUserId(Memory *memory, State *state,
+                               const SystemCallABI &syscall) {
+  addr_t rid = 0;
+  addr_t eid = 0;
+  addr_t sid = 0;
+  if (!syscall.TryGetArgs(memory, state, &rid, &eid, &sid)) {
+    STRACE_ERROR(getresuid, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  uid_t real_uid = 0;
+  uid_t effective_uid = 0;
+  uid_t set_uid = 0;
+  auto ret = getresuid(&real_uid, &effective_uid, &set_uid);
+  if (-1 == ret) {
+    auto err = errno;
+    STRACE_ERROR(getresuid, "%s", strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  }
+
+  if (rid) {
+    if (!TryWriteMemory(memory, rid, static_cast<uint32_t>(real_uid))) {
+      STRACE_ERROR(getresuid, "Coudn't write real uid to %" PRIxADDR, rid);
+      return syscall.SetReturn(memory, state, -EFAULT);
+    }
+  }
+
+  if (eid) {
+    if (!TryWriteMemory(memory, eid, static_cast<uint32_t>(effective_uid))) {
+      STRACE_ERROR(getresuid, "Coudn't write effective uid to %" PRIxADDR, eid);
+      return syscall.SetReturn(memory, state, -EFAULT);
+    }
+  }
+
+  if (sid) {
+    if (!TryWriteMemory(memory, sid, static_cast<uint32_t>(set_uid))) {
+      STRACE_ERROR(getresuid, "Coudn't write setsid uid to %" PRIxADDR, sid);
+      return syscall.SetReturn(memory, state, -EFAULT);
+    }
+  }
+
+  STRACE_SUCCESS(getresuid, "real_uid=%u, effective_uid=%u, set_uid=%u",
+                 real_uid, effective_uid, set_uid);
+
+  return syscall.SetReturn(memory, state, 0);
+}
+
+
+template <typename T>
+static Memory *SysGetRESGroupId(Memory *memory, State *state,
+                               const SystemCallABI &syscall) {
+  addr_t rid = 0;
+  addr_t eid = 0;
+  addr_t sid = 0;
+  if (!syscall.TryGetArgs(memory, state, &rid, &eid, &sid)) {
+    STRACE_ERROR(getresgid, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  gid_t real_gid = 0;
+  gid_t effective_gid = 0;
+  gid_t set_gid = 0;
+  auto ret = getresgid(&real_gid, &effective_gid, &set_gid);
+  if (-1 == ret) {
+    auto err = errno;
+    STRACE_ERROR(getresgid, "%s", strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  }
+
+  if (rid) {
+    if (!TryWriteMemory(memory, rid, static_cast<uint32_t>(real_gid))) {
+      STRACE_ERROR(getresgid, "Coudn't write real gid to %" PRIxADDR, rid);
+      return syscall.SetReturn(memory, state, -EFAULT);
+    }
+  }
+
+  if (eid) {
+    if (!TryWriteMemory(memory, eid, static_cast<uint32_t>(effective_gid))) {
+      STRACE_ERROR(getresgid, "Coudn't write effective gid to %" PRIxADDR, eid);
+      return syscall.SetReturn(memory, state, -EFAULT);
+    }
+  }
+
+  if (sid) {
+    if (!TryWriteMemory(memory, sid, static_cast<uint32_t>(set_gid))) {
+      STRACE_ERROR(getresgid, "Coudn't write setsid gid to %" PRIxADDR, sid);
+      return syscall.SetReturn(memory, state, -EFAULT);
+    }
+  }
+
+  STRACE_SUCCESS(getresgid, "real_gid=%u, effective_gid=%u, set_gid=%u",
+                 real_gid, effective_gid, set_gid);
+
+  return syscall.SetReturn(memory, state, 0);
+}
+
+template <typename InfoT>
+static Memory *SysGetSysInfo(Memory *memory, State *state,
+                             const SystemCallABI &syscall) {
+  addr_t info_addr = 0;
+  if (!syscall.TryGetArgs(memory, state, &info_addr)) {
+    STRACE_ERROR(sysinfo, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  InfoT compat_info = {};
+  if (!TryReadMemory(memory, info_addr, &compat_info)) {
+    STRACE_ERROR(sysinfo, "Couldn't read info=%" PRIxADDR, info_addr);
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  struct sysinfo info = {};
+  auto ret = sysinfo(&info);
+  if (-1 == ret) {
+    auto err = errno;
+    STRACE_ERROR(sysinfo, "%s", strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  }
+
+  compat_info.uptime = static_cast<addr_diff_t>(info.uptime);
+  compat_info.loads[0] = static_cast<addr_t>(info.loads[0]);
+  compat_info.loads[1] = static_cast<addr_t>(info.loads[1]);
+  compat_info.loads[1] = static_cast<addr_t>(info.loads[2]);
+  compat_info.totalram = static_cast<addr_t>(info.totalram);
+  compat_info.freeram = static_cast<addr_t>(info.freeram);
+  compat_info.sharedram = static_cast<addr_t>(info.sharedram);
+  compat_info.bufferram = static_cast<addr_t>(info.bufferram);
+  compat_info.totalswap = static_cast<addr_t>(info.totalswap);
+  compat_info.freeswap = static_cast<addr_t>(info.freeswap);
+  compat_info.procs = info.procs;
+  compat_info.totalhigh = static_cast<addr_t>(info.totalhigh);
+  compat_info.freehigh = static_cast<addr_t>(info.freehigh);
+  compat_info.mem_unit = info.mem_unit;
+
+  if (!TryWriteMemory(memory, info_addr, compat_info)) {
+    STRACE_ERROR(sysinfo, "Couldn't write info=%" PRIxADDR, info_addr);
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  STRACE_SUCCESS(sysinfo, "uptime=%lu, loads=[%lu, %lu, %lu], ...",
+                 info.uptime, info.loads[0], info.loads[1], info.loads[2]);
+  return syscall.SetReturn(memory, state, 0);
+}
+
 }  // namespace

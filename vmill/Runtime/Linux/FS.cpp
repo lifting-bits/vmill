@@ -811,6 +811,80 @@ static Memory *SysStatFs64(Memory *memory, State *state,
   return syscall.SetReturn(memory, state, 0);
 }
 
+template <typename StatType>
+static Memory *SysFStatFs64(Memory *memory, State *state,
+                           const SystemCallABI &syscall) {
+  int fd = 0;
+  addr_t buf_size = 0;
+  addr_t buf = 0;
+
+  if (!syscall.TryGetArgs(memory, state, &fd, &buf_size, &buf)) {
+    STRACE_ERROR(fstatfs64, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  if (buf_size != sizeof(StatType)) {
+    STRACE_ERROR(fstatfs64, "buf_size=%" PRIdADDR " must be %ld",
+                 buf_size, sizeof(StatType));
+    return syscall.SetReturn(memory, state, -EINVAL);
+  }
+
+  struct statfs64 info = {};
+  auto ret = fstatfs64(fd, &info);
+  if (-1 == ret) {
+    auto err = errno;
+    STRACE_ERROR(fstatfs64, "Can't stat fd=%d: %s", fd, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  }
+
+  StatType cinfo = {};
+  cinfo.f_type = static_cast<decltype(cinfo.f_type)>(info.f_type);
+  cinfo.f_bsize = static_cast<decltype(cinfo.f_bsize)>(info.f_bsize);
+  cinfo.f_blocks = static_cast<decltype(cinfo.f_blocks)>(info.f_blocks);
+  cinfo.f_bfree = static_cast<decltype(cinfo.f_bfree)>(info.f_bfree);
+  cinfo.f_bavail = static_cast<decltype(cinfo.f_bavail)>(info.f_bavail);
+  cinfo.f_files = static_cast<decltype(cinfo.f_files)>(info.f_files);
+  cinfo.f_ffree = static_cast<decltype(cinfo.f_ffree)>(info.f_ffree);
+  cinfo.f_fsid = 0;
+  cinfo.f_namelen = static_cast<decltype(cinfo.f_namelen)>(info.f_namelen);
+  cinfo.f_frsize = static_cast<decltype(cinfo.f_frsize)>(info.f_frsize);
+  cinfo.f_flags = static_cast<decltype(cinfo.f_flags)>(info.f_flags);
+
+  if (!TryWriteMemory(memory, buf, cinfo)) {
+    STRACE_ERROR(fstatfs64, "Can't write info on fd=%d to buf=%" PRIxADDR,
+                 fd, buf);
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  STRACE_SUCCESS(fstatfs64, "fd=%d f_type=%ld f_bsize=%ld",
+                 fd, info.f_type, info.f_bsize);
+  return syscall.SetReturn(memory, state, 0);
+}
+
+template <typename OffsetT, typename LenT>
+static Memory *SysFAdvise(Memory *memory, State *state,
+                          const SystemCallABI &syscall) {
+  int fd = -1;
+  OffsetT offset = 0;
+  LenT len = 0;
+  int advice = 0;
+  if (!syscall.TryGetArgs(memory, state, &fd, &offset, &len, &advice)) {
+    STRACE_ERROR(fadvise, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  auto ret = posix_fadvise(fd, offset, len, advice);
+  if (-1 == ret) {
+    auto err = errno;
+    STRACE_ERROR(fadvise, "fd=%d, offset=%d, len=%d, advice=%d: %s",
+                 fd, offset, len, advice, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  }
+
+  STRACE_SUCCESS(fadvise, "fd=%d, offset=%d, len=%d, advice=%d",
+                 fd, offset, len, advice);
+  return syscall.SetReturn(memory, state, 0);
+}
 
 static Memory *SysEventFd(Memory *memory, State *state,
                            const SystemCallABI &syscall) {

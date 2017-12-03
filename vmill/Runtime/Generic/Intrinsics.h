@@ -25,6 +25,9 @@ extern "C" {
 
 extern vmill::Coroutine *__vmill_allocate_coroutine(void);
 
+__attribute__((format(printf, 1, 2)))
+extern void __vmill_strace(const char *format, ...);
+
 extern void __vmill_yield(vmill::Task *task);
 
 // Set the location of a task.
