@@ -146,8 +146,7 @@ static Memory *DoFutexWaitBitSet(Memory *memory, State *state,
         task->futex_bitset = 0;
         task->futex_uaddr = 0;
 
-        STRACE_SUCCESS(futex_wait, "Timed out on uaddr=%" PRIxADDR,
-                       uaddr, val, uval);
+        STRACE_SUCCESS(futex_wait, "Timed out on uaddr=%" PRIxADDR, uaddr);
         return syscall.SetReturn(memory, state, -ETIMEDOUT);
 
       } else {

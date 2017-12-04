@@ -22,6 +22,8 @@
 
 namespace vmill {
 
+enum class CodeVersion : uint64_t;
+
 // Forward declaration of underlying memory map type.
 class MappedRange;
 using MemoryMapPtr = std::shared_ptr<MappedRange>;
@@ -71,7 +73,7 @@ class MappedRange {
 
   // Compute the "code version" of this range. This is only relevant for
   // ranges with executable permissions.
-  virtual uint64_t ComputeCodeVersion(void) = 0;
+  virtual CodeVersion ComputeCodeVersion(void) = 0;
 
   // Read a byte of memory from this range.
   virtual bool Read(uint64_t address, uint8_t *out_val) = 0;
@@ -86,7 +88,10 @@ class MappedRange {
   virtual MemoryMapPtr Copy(uint64_t clone_base, uint64_t clone_limit) = 0;
 
   // Return the virtual address of the memory backing `addr`.
-  virtual void *ToVirtualAddress(uint64_t addr);
+  virtual void *ToReadWriteVirtualAddress(uint64_t addr);
+
+  // Return the virtual address of the memory backing `addr`.
+  virtual const void *ToReadOnlyVirtualAddress(uint64_t addr);
 
  protected:
   MappedRange(uint64_t base_address_, uint64_t limit_address_,

@@ -84,12 +84,12 @@ static Memory *SysMmap(Memory *memory, State *state,
       return syscall.SetReturn(memory, state, -EBADFD);
 
     } else if (0 > offset || offset % 4096) {  // Not page-aligned.
-      STRACE_ERROR(mmap, "Unaligned offset %" PRIxADDR " of fd %d", offset, fd);
+      STRACE_ERROR(mmap, "Unaligned offset %ld of fd %d", offset, fd);
       return syscall.SetReturn(memory, state, -EINVAL);
     }
 
     if (offset > (offset + static_cast<ssize_t>(size))) {  // Signed overflow.
-      STRACE_ERROR(mmap, "Signed overflow of offset %" PRIxADDR " and size %"
+      STRACE_ERROR(mmap, "Signed overflow of offset %ld and size %"
                    PRIxADDR " for fd %d", offset, size, fd);
       return syscall.SetReturn(memory, state, -EOVERFLOW);
     }
@@ -110,7 +110,7 @@ static Memory *SysMmap(Memory *memory, State *state,
 
   // Unsupported flags.
   if ((MAP_GROWSDOWN & flags)) {
-    STRACE_ERROR(mmap, "Unsupported flag: MAP_GROWSDOWN", flags);
+    STRACE_ERROR(mmap, "Unsupported flag: MAP_GROWSDOWN");
     return syscall.SetReturn(memory, state, -EINVAL);
   }
 
@@ -262,8 +262,7 @@ static Memory *SysMmap(Memory *memory, State *state,
 
   STRACE_SUCCESS(
       mmap, "addr=%" PRIxADDR ", size=%" PRIxADDR ", read=%d, "
-            "write=%d, exec=%d, fd=%d, offset=%" PRIxADDR
-            ", return=%" PRIxADDR,
+            "write=%d, exec=%d, fd=%d, offset=%ld, return=%" PRIxADDR,
       input_addr, size, can_read, can_write, can_exec, fd, offset, addr);
 
   return syscall.SetReturn(memory, state, addr);

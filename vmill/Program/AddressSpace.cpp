@@ -56,9 +56,7 @@ AddressSpace::AddressSpace(void)
       wnx_page_to_map(256),
       last_map(page_to_map.end()),
       last_wnx_map(wnx_page_to_map.end()),
-      is_dead(false),
-      code_version_is_invalid(true),
-      code_version(0) {
+      is_dead(false) {
   maps.push_back(invalid_min_map);
   maps.push_back(invalid_max_map);
   CreatePageToRangeMap();
@@ -69,9 +67,7 @@ AddressSpace::AddressSpace(const AddressSpace &parent)
       invalid_max_map(parent.invalid_max_map),
             maps(parent.maps.size()),
       page_to_map(parent.page_to_map.size()),
-      is_dead(parent.is_dead),
-      code_version_is_invalid(parent.code_version_is_invalid),
-      code_version(parent.code_version) {
+      is_dead(parent.is_dead) {
 
   unsigned i = 0;
   for (const auto &range : parent.maps) {
@@ -83,48 +79,6 @@ AddressSpace::AddressSpace(const AddressSpace &parent)
   }
 
   CreatePageToRangeMap();
-}
-
-// Have we observed a write to executable memory since our last attempt
-// to read from executable memory?
-bool AddressSpace::CodeVersionIsInvalid(void) const {
-  return code_version_is_invalid;
-}
-
-// Returns a hash of all executable code. Useful for getting the current
-// version of the code.
-CodeVersion AddressSpace::ComputeCodeVersion(void) {
-  if (unlikely(!CodeVersionIsInvalid())) {
-    return static_cast<CodeVersion>(code_version);
-  }
-
-  trace_heads.clear();
-
-  XXH64_state_t state = {};
-  XXH64_reset(&state, 0);
-
-  auto num_maps = 0;
-  for (auto &map : this->maps) {
-    auto addr = map->BaseAddress();
-    auto limit_addr = map->LimitAddress();
-    for (; addr < limit_addr; addr += kPageSize) {
-      if (CanExecute(addr)) {
-        num_maps += 1;
-        uint64_t map_code_version = map->ComputeCodeVersion();
-        XXH64_update(&state, &map_code_version, sizeof(map_code_version));
-        break;
-      }
-    }
-  }
-
-  code_version = XXH64_digest(&state);
-  code_version_is_invalid = false;
-
-  LOG(INFO)
-      << "New code version " << std::hex << code_version << " is a hash of "
-      << std::dec << num_maps << " memory maps";
-
-  return static_cast<CodeVersion>(code_version);
 }
 
 void AddressSpace::MarkAsTraceHead(PC pc) {
@@ -204,14 +158,11 @@ bool AddressSpace::TryWrite(uint64_t addr, const void *val, size_t size) {
 
     const auto &range = FindRangeAligned(page_addr);
     if (CanExecuteAligned(page_addr)) {
-      range->InvalidateCodeVersion();
 
-      if (!code_version_is_invalid) {
-        LOG(INFO)
-            << "Invalidating code version because of write to executable "
-            << "memory at " << std::hex << addr << std::dec;
-        code_version_is_invalid = true;
-      }
+      // TODO(pag): remove cache entries associated with this range
+      // TODO(pag): Split the range?
+
+      range->InvalidateCodeVersion();
     }
 
     auto page_end_addr = page_addr + kPageSize;
@@ -234,20 +185,20 @@ bool AddressSpace::TryRead(uint64_t addr, uint8_t *val_out) {
 #define MAKE_TRY_READ(type) \
     bool AddressSpace::TryRead(uint64_t addr, type *val_out) { \
       const auto &range = FindRange(addr); \
-      auto out_stream = reinterpret_cast<uint8_t *>(val_out); \
-      if (unlikely(!range->Read(addr, out_stream))) { \
+      auto ptr = reinterpret_cast<const type *>( \
+          range->ToReadOnlyVirtualAddress(addr)); \
+      if (unlikely(ptr == nullptr)) { \
         return false; \
       } \
+      const auto end_addr = addr + sizeof(type) - 1; \
       if (likely(range->BaseAddress() <= addr && \
-                 (addr + sizeof(type)) <= range->LimitAddress())) { \
-        _Pragma("unroll") \
-        for (size_t i = 1; i < sizeof(type); ++i) { \
-          (void) range->Read(addr + i, &(out_stream[i])); \
+                 end_addr < range->LimitAddress())) { \
+        if (likely(AlignDownToPage(addr) == AlignDownToPage(end_addr))) { \
+          *val_out = *ptr; \
+          return true; \
         } \
-        return true; \
-      } else { \
-        return TryRead(addr, val_out, sizeof(type)); \
       } \
+      return TryRead(addr, val_out, sizeof(type)); \
     }
 
 MAKE_TRY_READ(uint16_t)
@@ -269,18 +220,20 @@ bool AddressSpace::TryWrite(uint64_t addr, uint8_t val) {
 #define MAKE_TRY_WRITE(type) \
     bool AddressSpace::TryWrite(uint64_t addr, type val) { \
       const auto &range = FindWNXRange(addr); \
-      const auto out_stream = reinterpret_cast<const uint8_t *>(&val); \
-      if (likely(range->Write(addr, out_stream[0]) && \
-                 range->BaseAddress() <= addr && \
-                 (addr + sizeof(type)) <= range->LimitAddress())) { \
-        _Pragma("unroll") \
-        for (size_t i = 1; i < sizeof(type); ++i) { \
-          (void) range->Write(addr + i, out_stream[i]); \
+      auto ptr = reinterpret_cast<type *>( \
+          range->ToReadWriteVirtualAddress(addr)); \
+      if (likely(ptr != nullptr)) { \
+        const auto end_addr = addr + sizeof(type) - 1; \
+        if (likely(range->BaseAddress() <= addr && \
+                   end_addr < range->LimitAddress())) { \
+          if (likely(AlignDownToPage(addr) == AlignDownToPage(end_addr))) { \
+            *ptr = val; \
+            return true; \
+          } \
         } \
-        return true; \
-      } else { \
-        return TryWrite(addr, out_stream, sizeof(type)); \
       } \
+      const auto out_stream = reinterpret_cast<const uint8_t *>(&val); \
+      return TryWrite(addr, out_stream, sizeof(type)); \
     }
 
 
@@ -292,24 +245,23 @@ MAKE_TRY_WRITE(double)
 #undef MAKE_TRY_WRITE
 
 // Return the virtual address of the memory backing `addr`.
-void *AddressSpace::ToVirtualAddress(uint64_t addr) {
+void *AddressSpace::ToReadWriteVirtualAddress(uint64_t addr) {
   auto &range = FindRange(addr);
-  return range->ToVirtualAddress(addr);
+  return range->ToReadWriteVirtualAddress(addr);
+}
+
+// Return the virtual address of the memory backing `addr`.
+const void *AddressSpace::ToReadOnlyVirtualAddress(uint64_t addr) {
+  auto &range = FindRange(addr);
+  return range->ToReadOnlyVirtualAddress(addr);
 }
 
 // Read a byte as an executable byte. This is used for instruction decoding.
 bool AddressSpace::TryReadExecutable(PC pc, uint8_t *val) {
   auto addr = static_cast<uint64_t>(pc);
-  auto &range = FindRange(addr);
-  auto was_readable = range->Read(addr, val);
-  if (likely(was_readable && CanExecute(addr))) {
-    if (unlikely(code_version_is_invalid)) {
-      (void) ComputeCodeVersion();
-    }
-    return true;
-  } else {
-    return false;
-  }
+  auto page_addr = AlignDownToPage(addr);
+  auto &range = FindRangeAligned(page_addr);
+  return range->Read(addr, val) && CanExecuteAligned(page_addr);
 }
 
 namespace {
@@ -400,38 +352,18 @@ void AddressSpace::SetPermissions(uint64_t base_, size_t size, bool can_read,
       page_is_readable.erase(addr);
     }
 
-    const auto old_write_size = page_is_writable.size();
     if (can_write) {
       page_is_writable.insert(addr);
     } else {
       page_is_writable.erase(addr);
     }
-    const auto new_write_size = page_is_writable.size();
 
-    const auto old_exec_size = page_is_executable.size();
     if (can_exec) {
       page_is_executable.insert(addr);
     } else {
       page_is_executable.erase(addr);
     }
-    const auto new_exec_size = page_is_executable.size();
-
-    // Does it look like we should invalidate the code version?
-    auto invalidate = false;
-    if (old_exec_size != new_exec_size) {
-      invalidate = true;
-    } else if (can_exec && old_write_size != new_write_size) {
-      invalidate = true;
-    }
   }
-
-  if (code_version_is_invalid) {
-    LOG(INFO)
-        << "Invalidating code version because of change of permissions "
-        << "of memory [" << std::hex << base << ", " << limit
-        << ")" << std::dec;
-  }
-
   CreatePageToRangeMap();
 }
 
@@ -486,15 +418,7 @@ void AddressSpace::RemoveMap(uint64_t base_, size_t size) {
   maps = RemoveRange(maps, base, limit);
 
   for (; base < limit; base += kPageSize) {
-    if (page_is_executable.erase(base)) {
-      if (!code_version_is_invalid) {
-        code_version_is_invalid = true;
-        LOG(INFO)
-          << "Invalidating code version because of removal of executable page "
-          << "at " << std::hex << base << std::dec;
-      }
-    }
-
+    page_is_executable.erase(base);
     page_is_readable.erase(base);
     page_is_writable.erase(base);
   }
@@ -625,6 +549,11 @@ void AddressSpace::CreatePageToRangeMap(void) {
   CHECK(!maps.back()->IsValid());  // Max tombstone.
 }
 
+// Get the code version associated with some program counter.
+CodeVersion AddressSpace::ComputeCodeVersion(PC pc) {
+  return FindRange(static_cast<uint64_t>(pc))->ComputeCodeVersion();
+}
+
 const MemoryMapPtr &AddressSpace::FindRange(uint64_t addr) {
   return FindRangeAligned(AlignDownToPage(addr));
 }
@@ -680,7 +609,7 @@ void AddressSpace::LogMaps(std::ostream &os) const {
        << range->LimitAddress() << ")";
     ss.setf(flags);
 
-    auto virt = range->ToVirtualAddress(range->BaseAddress());
+    auto virt = range->ToReadOnlyVirtualAddress(range->BaseAddress());
     if (virt) {
       ss << " at " << virt;
     }

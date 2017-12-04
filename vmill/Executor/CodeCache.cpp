@@ -85,9 +85,9 @@ class CodeCacheImpl : public CodeCache,
 
   virtual ~CodeCacheImpl(void);
 
-  LiftedFunction *Lookup(TraceId trace_id) const override;
+  LiftedFunction *Lookup(TraceId trace_id) const final;
 
-  uintptr_t Lookup(const char *symbol) override;
+  uintptr_t Lookup(const char *symbol) final;
 
   // Load the runtime library, this must be done first, as it supported all
   // lifted code execution.
@@ -105,38 +105,38 @@ class CodeCacheImpl : public CodeCache,
 
   // Implementing the `CodeCache` interface. This takes ownership of the
   // module.
-  void AddModuleToCache(const std::unique_ptr<llvm::Module> &module) override;
+  void AddModuleToCache(const std::unique_ptr<llvm::Module> &module) final;
 
   // Implementing the `llvm::RuntimeDyld::MemoryManager` interface:
 
   // Allocate memory for a code section.
   uint8_t *allocateCodeSection(uintptr_t size, unsigned alignment,
-                               unsigned section_id, llvm::StringRef) override;
+                               unsigned section_id, llvm::StringRef) final;
 
   /// Allocate memory for a data section.
   uint8_t *allocateDataSection(uintptr_t size, unsigned alignment,
                                unsigned section_id, llvm::StringRef,
-                               bool is_read_only) override;
+                               bool is_read_only) final;
 
   // Register exception handling frames.
   void registerEHFrames(uint8_t *addr, uint64_t load_addr,
-                        size_t size) override;
+                        size_t size) final;
 
   // We never unload JITed code.
   void deregisterEHFrames(
-      IF_LLVM_LT(5, 0, uint8_t *, uint64_t, size_t)) override {}
+      IF_LLVM_LT(5, 0, uint8_t *, uint64_t, size_t)) final {}
 
   // Apply all final permissions to any pending JITed page ranges, moving
   // them into the `jit_ranges` list.
-  bool finalizeMemory(std::string *error_message=nullptr) override;
+  bool finalizeMemory(std::string *error_message=nullptr) final;
 
   // Implementing the `llvm::JITSymbolResolver` interface.
 
   // Resolve symbols, including hidden symbols, for handling relocations.
-  llvm::JITSymbol findSymbolInLogicalDylib(const std::string &name) override;
+  llvm::JITSymbol findSymbolInLogicalDylib(const std::string &name) final;
 
   /// Resolve external/exported symbols during linking.
-  llvm::JITSymbol findSymbol(const std::string &name) override;
+  llvm::JITSymbol findSymbol(const std::string &name) final;
 
  private:
   CodeCacheImpl(void) = delete;
@@ -232,8 +232,18 @@ bool CodeCacheImpl::finalizeMemory(std::string *error_message) {
 
     for (; base < limit; ++base) {
       if (!code_allocator.Contains(base->lifted_function)) {
-        *error_message = "Lifted function address is not managed by the "
-                         "code cache allocator.";
+        if (error_message) {
+          *error_message = "Lifted function address is not managed by the "
+                           "code cache allocator.";
+        } else {
+          LOG(ERROR)
+              << "Cache entry with trace id (" << std::hex
+              << static_cast<TraceHashBaseType>(base->trace_id.hash1) << ", "
+              << static_cast<TraceHashBaseType>(base->trace_id.hash2)
+              << std::dec << ") and lifted code at "
+              << reinterpret_cast<void *>(base->lifted_function)
+              << " is not valid; the lifted code isn't inside the code cache!";
+        }
         return false;
       }
 
@@ -241,10 +251,11 @@ bool CodeCacheImpl::finalizeMemory(std::string *error_message) {
       if (lifted_func != nullptr) {
         LOG(ERROR)
             << "Code at " << reinterpret_cast<void *>(base->lifted_function)
-            << " implementing trace with hash ("
+            << " implementing trace with hash (" << std::hex
             << static_cast<TraceHashBaseType>(base->trace_id.hash1) << ", "
-            << static_cast<TraceHashBaseType>(base->trace_id.hash2)
-            << ") already implemented at " << lifted_func << std::dec;
+            << static_cast<TraceHashBaseType>(base->trace_id.hash2) << std::dec
+            << ") already implemented at "
+            << reinterpret_cast<void *>(lifted_func);
       } else {
         lifted_func = base->lifted_function;
       }

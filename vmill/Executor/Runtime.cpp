@@ -98,7 +98,7 @@ static void LogFault(std::ostream &os, Task *task) {
   const auto &fault = task->mem_access_fault;
   os
       << "Task faulted while executing trace " << std::hex
-      << pc_uint << " (" << memory->ToVirtualAddress(pc_uint) << ")"
+      << pc_uint << " (" << memory->ToReadOnlyVirtualAddress(pc_uint) << ")"
       << std::dec << " when trying to " << AccessKindToString(fault.kind)
       << " " << fault.access_size << " bytes of memory from "
       << std::hex << fault.address << std::dec << std::endl;
@@ -282,6 +282,18 @@ void __vmill_set_location(PC pc, vmill::TaskStopLocation loc) {
   }
 }
 
+// Called by the runtime to yield execution. This allows the runtime to pause
+// where it is in the execution of some system call, in the hope that another
+// system call will make progress.
+void __vmill_yield(Task *task) {
+  DCHECK(gTask != nullptr);
+  DCHECK(gTask == task);
+  auto coro = task->async_routine;
+  DCHECK(coro != nullptr);
+  coro->Pause(task);
+  DCHECK(gTask == task);
+}
+
 Memory *__remill_error(ArchState *, PC pc, Memory *memory) {
   gTask->pc = pc;
   gTask->location = kTaskStoppedAtError;
@@ -289,28 +301,31 @@ Memory *__remill_error(ArchState *, PC pc, Memory *memory) {
   return memory;
 }
 
-Memory *__remill_missing_block(ArchState *, PC pc, Memory *memory) {
-  gTask->pc = pc;
-  gTask->location = kTaskStoppedAtError;
-  gTask->status = kTaskStatusError;
-  return memory;
-}
-
-Memory *__remill_jump(ArchState *, PC pc, Memory *memory) {
+Memory *__remill_jump(ArchState *state, PC pc, Memory *memory) {
   gTask->pc = pc;
   gTask->location = kTaskStoppedAtJumpTarget;
-  return memory;
+  __vmill_yield(gTask);
+  const auto lifted_func = gExecutor->FindLiftedFunctionForTask(gTask);
+  return lifted_func(state, pc, memory);
 }
 
-Memory *__remill_function_call(ArchState *, PC pc, Memory *memory) {
+Memory *__remill_missing_block(ArchState *state, PC pc, Memory *memory) {
+  return __remill_jump(state, pc, memory);
+}
+
+Memory *__remill_function_call(ArchState *state, PC pc, Memory *memory) {
   gTask->pc = pc;
   gTask->location = kTaskStoppedAtCallTarget;
-  return memory;
+  __vmill_yield(gTask);
+  const auto lifted_func = gExecutor->FindLiftedFunctionForTask(gTask);
+  return lifted_func(state, pc, memory);
 }
 
 Memory *__remill_function_return(ArchState *, PC pc, Memory *memory) {
   gTask->pc = pc;
   gTask->location = kTaskStoppedAtReturnTarget;
+  // NOTE(pag): This does not yield, instead it just returns to its caller,
+  //            thus maintaining the call-graph structure of the native code.
   return memory;
 }
 
@@ -367,15 +382,8 @@ Coroutine *__vmill_allocate_coroutine(void) {
   return new Coroutine;
 }
 
-// Called by the runtime to yield execution. This allows the runtime to pause
-// where it is in the execution of some system call, in the hope that another
-// system call will make progress.
-void __vmill_yield(Task *task) {
-  DCHECK(gTask != nullptr);
-  DCHECK(gTask == task);
-  auto coro = task->async_routine;
-  DCHECK(coro != nullptr);
-  coro->Pause(task);
+void __vmill_free_coroutine(Coroutine *coro) {
+  delete coro;
 }
 
 // Called by the runtime to print out information about the running system
@@ -444,18 +452,13 @@ void __vmill_run(Task *task) {
 
   // The task is waiting for an asynchronous operation to complete.
   DCHECK(task->async_routine != nullptr);
-  if (unlikely(kTaskStatusResumable == task->status)) {
+  if (likely(kTaskStatusResumable == task->status)) {
     task->async_routine->Resume(task);
-    gTask = nullptr;
-    return;
+  } else {
+    DCHECK(kTaskStatusRunnable == task->status);
+    const auto lifted_func = gExecutor->FindLiftedFunctionForTask(task);
+    __vmill_execute_async(task, lifted_func);
   }
-
-  DCHECK(kTaskStatusRunnable == task->status);
-
-  const auto lifted_func = gExecutor->FindLiftedFunctionForTask(task);
-
-  __vmill_execute_async(task, lifted_func);
-
   gTask = nullptr;
 }
 

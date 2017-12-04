@@ -26,8 +26,11 @@
 # define STRACE_SYSCALL_NUM(nr) \
     do { \
       auto curr = __vmill_current(); \
-      __vmill_strace(ANSI_COLOR_YELLOW "%p %p %3u:" ANSI_COLOR_RESET, \
-                     curr, curr->memory, nr); \
+      __vmill_strace( \
+          ANSI_COLOR_YELLOW "%p %p %3" PRIuADDR ":" ANSI_COLOR_RESET, \
+          reinterpret_cast<void *>(curr), \
+          reinterpret_cast<void *>(curr->memory), \
+          nr); \
     } while (false)
 
 # define STRACE_ERROR(syscall, fmt, ...) \
@@ -59,3 +62,9 @@ static void __vmill_init_task(
   task->fpu_rounding_mode = __vmill_get_rounding_mode(task->state);
 }
 
+static void __vmill_fini_task(vmill::Task *task) {
+  delete task->state;
+  task->state = nullptr;
+  __vmill_free_coroutine(task->async_routine);
+  task->async_routine = nullptr;
+}

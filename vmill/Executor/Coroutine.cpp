@@ -36,7 +36,8 @@ extern void __vmill_yield_async(void *);
 
 Coroutine::Coroutine(void)
     : stack_end(&(stack[1])),
-      fpu_rounding_mode(0) {}
+      fpu_rounding_mode(0),
+      _padding0(0) {}
 
 void Coroutine::Pause(Task *task) {
   task->status = kTaskStatusResumable;

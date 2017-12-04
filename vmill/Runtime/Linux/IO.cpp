@@ -58,11 +58,12 @@ static Memory *SysRead(Memory *memory, State *state,
   size_t num_read_bytes = 0;
   auto err = DoRead(memory, fd, buf, size, &num_read_bytes);
   if (err) {
-    STRACE_ERROR(read, "Error reading %d bytes from fd=%d: %s",
+    STRACE_ERROR(read, "Error reading %" PRIuADDR " bytes from fd=%d: %s",
                  size, fd, strerror(err));
     return syscall.SetReturn(memory, state, -err);
   } else {
-    STRACE_SUCCESS(read, "fd=%d, size=%d/%d", fd, num_read_bytes, size);
+    STRACE_SUCCESS(read, "fd=%d, size=%zu/%" PRIuADDR,
+                   fd, num_read_bytes, size);
     return syscall.SetReturn(
         memory, state, static_cast<addr_t>(num_read_bytes));
   }
@@ -105,12 +106,13 @@ static Memory *SysWrite(Memory *memory, State *state,
   size_t num_written_bytes = 0;
   auto err = DoWrite(memory, fd, buf, size, &num_written_bytes);
   if (err) {
-    STRACE_ERROR(write, "Error writing %d bytes to fd=%d: %s",
+    STRACE_ERROR(write, "Error writing %" PRIuADDR " bytes to fd=%d: %s",
                  size, fd, strerror(err));
     return syscall.SetReturn(memory, state, -err);
 
   } else {
-    STRACE_SUCCESS(write, "fd=%d, size=%d/%d", fd, num_written_bytes, size);
+    STRACE_SUCCESS(write, "fd=%d, size=%zu/%" PRIuADDR,
+                   fd, num_written_bytes, size);
     return syscall.SetReturn(
         memory, state, static_cast<addr_t>(num_written_bytes));
   }
@@ -133,19 +135,20 @@ static Memory *SysReadV(Memory *memory, State *state,
   for (addr_t i = 0; i < iovcount; ++i) {
     linux_iovec vec = {};
     if (!TryReadMemory(memory, iov + sizeof(vec) * i, &vec)) {
-      STRACE_ERROR(readv, "Couldn't read %u vector element", i);
+      STRACE_ERROR(readv, "Couldn't read %" PRIuADDR " vector element", i);
       return syscall.SetReturn(memory, state, -EFAULT);
     }
 
     auto err = DoRead(memory, fd, vec.iov_base, vec.iov_len, &num_read_bytes);
     if (err) {
-      STRACE_ERROR(readv, "Couldn't read data into %u vector element", i);
+      STRACE_ERROR(
+          readv, "Couldn't read data into %" PRIuADDR " vector element", i);
       return syscall.SetReturn(memory, state, -EFAULT);
     }
   }
 
-  STRACE_SUCCESS(readv, "fd=%d, iovcount=%u, size=%d", fd, iovcount,
-                 num_read_bytes);
+  STRACE_SUCCESS(readv, "fd=%d, iovcount=%" PRIuADDR ", size=%zu",
+                 fd, iovcount, num_read_bytes);
   return syscall.SetReturn(
       memory, state, static_cast<addr_t>(num_read_bytes));
 }
@@ -167,20 +170,23 @@ static Memory *SysWriteV(Memory *memory, State *state,
   for (addr_t i = 0; i < iovcount; ++i) {
     linux_iovec vec = {};
     if (!TryReadMemory(memory, iov + sizeof(vec) * i, &vec)) {
-      STRACE_ERROR(writev, "Couldn't read %u vector element", i);
+      STRACE_ERROR(writev, "Couldn't read %" PRIuADDR " vector element", i);
       return syscall.SetReturn(memory, state, -EFAULT);
     }
 
     auto err = DoWrite(memory, fd, vec.iov_base, vec.iov_len,
                        &num_written_bytes);
     if (err) {
-      STRACE_ERROR(writev, "Couldn't write data from %u vector element", i);
+      STRACE_ERROR(
+          writev, "Couldn't write data from %" PRIuADDR " vector element", i);
       return syscall.SetReturn(memory, state, -EFAULT);
     }
   }
 
-  STRACE_SUCCESS(writev, "fd=%d, iovcount=%u, size=%d", fd, iovcount,
-                 num_written_bytes);
+  STRACE_SUCCESS(
+      writev, "fd=%d, iovcount=%" PRIuADDR ", size=%zu", fd, iovcount,
+      num_written_bytes);
+
   return syscall.SetReturn(
       memory, state, static_cast<addr_t>(num_written_bytes));
 }
@@ -259,7 +265,7 @@ static Memory *SysOpenAt(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -err);
   } else {
     STRACE_SUCCESS(openat, "dirfd=%d, path=%s, flags=%x, mode=%o, fd=%d",
-                   gPath, oflag, mode, fd);
+                   dirfd, gPath, oflag, mode, fd);
     return syscall.SetReturn(memory, state, fd);
   }
 }
@@ -309,7 +315,7 @@ static Memory *SysIoctl(Memory *memory, State *state,
                        fd, argp);
           return syscall.SetReturn(memory, state, -EFAULT);
         } else {
-          STRACE_SUCCESS(ioctl_tcgets, "fd=%d");
+          STRACE_SUCCESS(ioctl_tcgets, "fd=%d", fd);
           return syscall.SetReturn(memory, state, 0);
         }
       } else {
@@ -321,7 +327,7 @@ static Memory *SysIoctl(Memory *memory, State *state,
     case TCSETS:
       if (TryReadMemory(memory, argp, &info)) {
         if (!ioctl(fd, TCSETS, &info)) {
-          STRACE_SUCCESS(ioctl_tcsets, "fd=%d");
+          STRACE_SUCCESS(ioctl_tcsets, "fd=%d", fd);
           return syscall.SetReturn(memory, state, 0);
         } else {
           auto err = errno;
@@ -339,7 +345,7 @@ static Memory *SysIoctl(Memory *memory, State *state,
       return syscall.SetReturn(memory, state, -ENOTTY);
 
     default:
-      STRACE_ERROR(ioctl, "Unsupported cmd=%d on fd=%d", cmd, fd);
+      STRACE_ERROR(ioctl, "Unsupported cmd=%lu on fd=%d", cmd, fd);
       return syscall.SetReturn(memory, state, 0);
   }
 }

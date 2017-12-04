@@ -150,7 +150,7 @@ static Memory *SysClockGetTime(Memory *memory, State *state,
   }
 
   STRACE_SUCCESS(clock_gettime, "tv_sec=%ld, tv_nsec=%ld",
-                 compat_time.tv_sec, compat_time.tv_nsec);
+                 cur_time.tv_sec, cur_time.tv_nsec);
   return syscall.SetReturn(memory, state, 0);
 }
 

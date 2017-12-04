@@ -24,6 +24,7 @@
 extern "C" {
 
 extern vmill::Coroutine *__vmill_allocate_coroutine(void);
+extern void __vmill_free_coroutine(vmill::Coroutine *);
 
 __attribute__((format(printf, 1, 2)))
 extern void __vmill_strace(const char *format, ...);

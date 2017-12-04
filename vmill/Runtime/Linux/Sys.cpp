@@ -80,14 +80,14 @@ static Memory *SysSetHostName(Memory *memory, State *state,
   // The hostname passed to `sethostname` is a C string, and it is shorter
   // than the explicitly specified length.
   if (name_len < len) {
-    STRACE_ERROR(sethostname, "Readable name length is %d < %d bytes",
+    STRACE_ERROR(sethostname, "Readable name length is %zu < %zu bytes",
                  name_len, len);
     return syscall.SetReturn(memory, state, -ENAMETOOLONG);
   }
 
   auto ret = sethostname(gHostName, len);
   if (!ret) {
-    STRACE_SUCCESS(sethostname, "name=%s, len=%d", gHostName, len);
+    STRACE_SUCCESS(sethostname, "name=%s, len=%zu", gHostName, len);
     return syscall.SetReturn(memory, state, 0);
   } else {
     auto err = errno;

@@ -478,7 +478,8 @@ static Memory *SysGetCurrentWorkingDirectory(Memory *memory, State *state,
     if (ret != &(gPath[0])) {
       free(ret);
     }
-    STRACE_ERROR(getcwd, "Buffer size %d < %d too small", size, cwd_len + 1);
+    STRACE_ERROR(getcwd, "Buffer size %" PRIuADDR " < %zu too small",
+                 size, cwd_len + 1);
     return syscall.SetReturn(memory, state, -ERANGE);
   }
 
@@ -489,7 +490,7 @@ static Memory *SysGetCurrentWorkingDirectory(Memory *memory, State *state,
   auto len_or_err = static_cast<int>(cwd_len + 1);
 
   if (copied_len == cwd_len) {
-    STRACE_SUCCESS(getcwd, "path=%s, len=%u", ret, cwd_len);
+    STRACE_SUCCESS(getcwd, "path=%s, len=%zu", ret, cwd_len);
   } else {
     STRACE_ERROR(getcwd, "Couldn't copy path to memory");
     len_or_err = -EFAULT;
@@ -543,7 +544,7 @@ static Memory *SysReadLink(Memory *memory, State *state,
     auto err = errno;
     delete [] link_path;
     STRACE_ERROR(
-        readlink, "Could not read link of %s into buffer of size %u: %s",
+        readlink, "Could not read link of %s into buffer of size %zu: %s",
         gPath, max_size, strerror(errno));
     return syscall.SetReturn(memory, state, -err);
   }
@@ -551,7 +552,7 @@ static Memory *SysReadLink(Memory *memory, State *state,
   link_path[max_size] = '\0';
   CopyToMemory(memory, buf, link_path, max_size);
 
-  STRACE_SUCCESS(readlink, "path=%s, link=%s, len=%d", gPath, link_path, ret);
+  STRACE_SUCCESS(readlink, "path=%s, link=%s, len=%td", gPath, link_path, ret);
   delete [] link_path;
 
   return syscall.SetReturn(memory, state, ret);
@@ -599,7 +600,7 @@ static Memory *SysReadLinkAt(Memory *memory, State *state,
     auto err = errno;
     delete [] link_path;
     STRACE_ERROR(
-        readlinkat, "Could not read link of %s into buffer of size %u: %s",
+        readlinkat, "Could not read link of %s into buffer of size %zu: %s",
         gPath, max_size, strerror(errno));
     return syscall.SetReturn(memory, state, -err);
   }
@@ -607,7 +608,7 @@ static Memory *SysReadLinkAt(Memory *memory, State *state,
   link_path[max_size] = '\0';
   CopyToMemory(memory, buf, link_path, max_size);
 
-  STRACE_SUCCESS(readlinkat, "fd=%d, path=%s, link=%s, len=%d",
+  STRACE_SUCCESS(readlinkat, "fd=%d, path=%s, link=%s, len=%td",
                  fd, gPath, link_path, ret);
   delete [] link_path;
 
@@ -806,7 +807,7 @@ static Memory *SysStatFs64(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  STRACE_SUCCESS(statfs64, "file=%s f_type=%x f_bsize=%u",
+  STRACE_SUCCESS(statfs64, "file=%s f_type=%ld f_bsize=%ld",
                  gPath, info.f_type, info.f_bsize);
   return syscall.SetReturn(memory, state, 0);
 }

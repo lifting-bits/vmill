@@ -14,44 +14,47 @@
  * limitations under the License.
  */
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpadded"
+
 // 32-bit `int 0x80` system call ABI.
 class X86Int0x80SystemCall : public SystemCallABI {
  public:
   virtual ~X86Int0x80SystemCall(void) = default;
 
-  addr_t GetPC(const State *state) const override {
+  addr_t GetPC(const State *state) const final {
     return state->gpr.rip.aword;
   }
 
-  void SetPC(State *state, addr_t new_pc) const override {
+  void SetPC(State *state, addr_t new_pc) const final {
     state->gpr.rip.aword = new_pc;
   }
 
-  void SetSP(State *state, addr_t new_sp) const override {
+  void SetSP(State *state, addr_t new_sp) const final {
     state->gpr.rsp.aword = new_sp;
   }
 
-  addr_t GetReturnAddress(Memory *, addr_t ret_addr) const override {
+  addr_t GetReturnAddress(Memory *, addr_t ret_addr) const final {
     return ret_addr;
   }
 
-  addr_t GetSystemCallNum(Memory *, State *state) const override {
+  addr_t GetSystemCallNum(Memory *, State *state) const final {
     return state->gpr.rax.aword;
   }
 
  protected:
   Memory *DoSetReturn(Memory *memory, State *state,
-                    addr_t ret_val) const override {
+                    addr_t ret_val) const final {
     state->gpr.rax.aword = ret_val;
     return memory;
   }
 
-  bool CanReadArgs(Memory *, State *, int num_args) const override {
+  bool CanReadArgs(Memory *, State *, int num_args) const final {
     return num_args <= 6;
   }
 
   // See https://code.woboq.org/linux/linux/arch/x86/entry/entry_64_compat.S.html#283
-  addr_t GetArg(Memory *&memory, State *state, int i) const override {
+  addr_t GetArg(Memory *&memory, State *state, int i) const final {
     switch (i) {
       case 0:
         return state->gpr.rbx.aword;
@@ -76,20 +79,20 @@ class X86SysEnter32SystemCall : public SystemCallABI {
  public:
   virtual ~X86SysEnter32SystemCall(void) = default;
 
-  addr_t GetPC(const State *state) const override {
+  addr_t GetPC(const State *state) const final {
     return state->gpr.rip.aword;
   }
 
-  void SetPC(State *state, addr_t new_pc) const override {
+  void SetPC(State *state, addr_t new_pc) const final {
     state->gpr.rip.aword = new_pc;
   }
 
-  void SetSP(State *state, addr_t new_sp) const override {
+  void SetSP(State *state, addr_t new_sp) const final {
     state->gpr.rsp.aword = new_sp;
   }
 
   // Find the return address of this system call.
-  addr_t GetReturnAddress(Memory *memory, addr_t ret_addr) const override {
+  addr_t GetReturnAddress(Memory *memory, addr_t ret_addr) const final {
     addr_t addr = ret_addr;
     for (addr_t i = 0; i < 15; ++i) {
       uint8_t b0 = 0;
@@ -107,7 +110,7 @@ class X86SysEnter32SystemCall : public SystemCallABI {
     return addr;
   }
 
-  bool CanReadArgs(Memory *memory, State *state, int num_args) const override {
+  bool CanReadArgs(Memory *memory, State *state, int num_args) const final {
     if (num_args == 6) {
       addr_t arg6_addr = state->gpr.rbp.aword;
       return CanReadMemory(memory, arg6_addr, sizeof(addr_t));
@@ -116,19 +119,19 @@ class X86SysEnter32SystemCall : public SystemCallABI {
     }
   }
 
-  addr_t GetSystemCallNum(Memory *, State *state) const override {
+  addr_t GetSystemCallNum(Memory *, State *state) const final {
     return state->gpr.rax.aword;
   }
 
  protected:
   Memory *DoSetReturn(Memory *memory, State *state,
-                      addr_t ret_val) const override {
+                      addr_t ret_val) const final {
     state->gpr.rax.aword = ret_val;
     return memory;
   }
 
   // See https://code.woboq.org/linux/linux/arch/x86/entry/entry_64_compat.S.html#38
-  addr_t GetArg(Memory *&memory, State *state, int i) const override {
+  addr_t GetArg(Memory *&memory, State *state, int i) const final {
     switch (i) {
       case 0:
         return state->gpr.rbx.aword;
@@ -147,6 +150,9 @@ class X86SysEnter32SystemCall : public SystemCallABI {
     }
   }
 };
+
+
+#pragma clang diagnostic pop
 
 #include "vmill/Runtime/Linux/SystemCall.cpp"
 

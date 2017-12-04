@@ -54,40 +54,49 @@ class AddressSpace : public Memory {
   bool CanWrite(uint64_t addr) const;
   bool CanExecute(uint64_t addr) const;
 
+  // Get the code version associated with some program counter.
+  CodeVersion ComputeCodeVersion(PC pc);
+
+  __attribute__((hot))
   bool TryRead(uint64_t addr, void *val, size_t size);
+
+  __attribute__((hot))
   bool TryWrite(uint64_t addr, const void *val, size_t size);
 
   // Read/write a byte to memory. Returns `false` if the read or write failed.
-  bool TryRead(uint64_t addr, uint8_t *val);
-  bool TryWrite(uint64_t addr, uint8_t val);
+  __attribute__((hot)) bool TryRead(uint64_t addr, uint8_t *val);
+  __attribute__((hot)) bool TryWrite(uint64_t addr, uint8_t val);
 
   // Read/write a word to memory. Returns `false` if the read or write failed.
-  bool TryRead(uint64_t addr, uint16_t *val);
-  bool TryWrite(uint64_t addr, uint16_t val);
+  __attribute__((hot)) bool TryRead(uint64_t addr, uint16_t *val);
+  __attribute__((hot)) bool TryWrite(uint64_t addr, uint16_t val);
 
   // Read/write a dword to memory. Returns `false` if the read or write failed.
-  bool TryRead(uint64_t addr, uint32_t *val);
-  bool TryWrite(uint64_t addr, uint32_t val);
+  __attribute__((hot)) bool TryRead(uint64_t addr, uint32_t *val);
+  __attribute__((hot)) bool TryWrite(uint64_t addr, uint32_t val);
 
   // Read/write a qword to memory. Returns `false` if the read or write failed.
-  bool TryRead(uint64_t addr, uint64_t *val);
-  bool TryWrite(uint64_t addr, uint64_t val);
+  __attribute__((hot)) bool TryRead(uint64_t addr, uint64_t *val);
+  __attribute__((hot)) bool TryWrite(uint64_t addr, uint64_t val);
 
   // Read/write a float to memory. Returns `false` if the read or write failed.
-  bool TryRead(uint64_t addr, float *val);
-  bool TryWrite(uint64_t addr, float val);
+  __attribute__((hot)) bool TryRead(uint64_t addr, float *val);
+  __attribute__((hot)) bool TryWrite(uint64_t addr, float val);
 
   // Read/write a double to memory. Returns `false` if the read or write failed.
-  bool TryRead(uint64_t addr, double *val);
-  bool TryWrite(uint64_t addr, double val);
+  __attribute__((hot)) bool TryRead(uint64_t addr, double *val);
+  __attribute__((hot)) bool TryWrite(uint64_t addr, double val);
 
   // Return the virtual address of the memory backing `addr`.
-  void *ToVirtualAddress(uint64_t addr);
+  __attribute__((hot)) void *ToReadWriteVirtualAddress(uint64_t addr);
+
+  // Return the virtual address of the memory backing `addr`.
+  __attribute__((hot)) const void *ToReadOnlyVirtualAddress(uint64_t addr);
 
   // Read a byte as an executable byte. This is used for instruction decoding.
   // Returns `false` if the read failed. This function operates on the state
   // of a page, and may result in broad-reaching cache invalidations.
-  bool TryReadExecutable(PC addr, uint8_t *val);
+  __attribute__((hot)) bool TryReadExecutable(PC addr, uint8_t *val);
 
   // Change the permissions of some range of memory. This can split memory
   // maps.
@@ -112,17 +121,6 @@ class AddressSpace : public Memory {
   bool FindHole(uint64_t min, uint64_t max, uint64_t size,
                 uint64_t *hole) const;
 
-  // Have we observed a write to executable memory since our last attempt
-  // to read from executable memory?
-  bool CodeVersionIsInvalid(void) const;
-
-  // Returns a hash of all executable code. Useful for getting the current
-  // version of the code.
-  //
-  // NOTE(pag): If the code version is invalid, then this will recompute it,
-  //            thereby making it valid.
-  CodeVersion ComputeCodeVersion(void);
-
   // Mark some PC in this address space as being a known trace head. This is
   // used for helping the decoder to not repeat past work.
   void MarkAsTraceHead(PC pc);
@@ -145,12 +143,12 @@ class AddressSpace : public Memory {
 
   // Find the memory map containing `addr`. If none is found then a "null"
   // map pointer is returned, whose operations will all fail.
-  const MemoryMapPtr &FindRange(uint64_t addr);
-  const MemoryMapPtr &FindWNXRange(uint64_t addr);
+  __attribute__((hot)) const MemoryMapPtr &FindRange(uint64_t addr);
+  __attribute__((hot)) const MemoryMapPtr &FindWNXRange(uint64_t addr);
 
   // Find the range associated with a page-aligned value of `addr`.
-  const MemoryMapPtr &FindRangeAligned(uint64_t addr);
-  const MemoryMapPtr &FindWNXRangeAligned(uint64_t addr);
+  __attribute__((hot)) const MemoryMapPtr &FindRangeAligned(uint64_t addr);
+  __attribute__((hot)) const MemoryMapPtr &FindWNXRangeAligned(uint64_t addr);
 
   // Used to represent an invalid memory map.
   MemoryMapPtr invalid_min_map;
@@ -175,15 +173,6 @@ class AddressSpace : public Memory {
   // Is the address space dead? This means that all operations on it
   // will be muted.
   bool is_dead;
-
-  // Has there been a write to executable memory since the previous read from
-  // executable memory?
-  bool code_version_is_invalid;
-
-  // An identifier that links together this address space, and any ones that
-  // are cloned from it, so that we can partition code caches according to
-  // a common ancestry.
-  uint64_t code_version;
 
   // Set of lifted trace heads observed for this code version.
   std::unordered_set<uint64_t> trace_heads;

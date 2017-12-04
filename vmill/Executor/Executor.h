@@ -98,8 +98,8 @@ class Executor {
   // any remaining things in the OS.
   void (*fini_intrinsic)(void);
 
-  // Pointer to the compiled `__remill_missing_block`.
-  LiftedFunction *missing_block_intrinsic;
+  // Pointer to the compiled `__remill_error`.
+  LiftedFunction *error_intrinsic;
 };
 
 }  // namespace vmill

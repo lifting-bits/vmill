@@ -32,7 +32,7 @@ struct Task;
 // way that the runtime can "pause" its execute (while waiting on a
 // `std::future`) and then the executor can resume back into the paused
 // execution.
-class Coroutine {
+class alignas(16) Coroutine {
  public:
   Coroutine(void);
 
@@ -46,14 +46,15 @@ class Coroutine {
   void operator=(const Coroutine &&) = delete;
 
   struct alignas(16) Stack {
-    uint64_t stack[(4096 * 8) / sizeof(uint64_t)];
+    uint64_t stack[(4096 * 64) / sizeof(uint64_t)];
   };
 
   // Convenient pointer into `stack`.
   Stack * const stack_end;
 
   // Rounding mode at the time of a yield/resume.
-  int fpu_rounding_mode;
+  int32_t fpu_rounding_mode;
+  int32_t _padding0;
 
   // The stack on which the coroutine executes.
   Stack stack[1];

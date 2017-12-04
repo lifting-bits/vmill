@@ -75,8 +75,8 @@ Executor::Executor(void)
           code_cache->Lookup("__vmill_resume"))),
       fini_intrinsic(reinterpret_cast<decltype(fini_intrinsic)>(
           code_cache->Lookup("__vmill_fini"))),
-      missing_block_intrinsic(reinterpret_cast<LiftedFunction *>(
-          code_cache->Lookup("__remill_missing_block"))){
+      error_intrinsic(reinterpret_cast<LiftedFunction *>(
+          code_cache->Lookup("__remill_error"))) {
 
   CHECK(init_intrinsic != nullptr)
       << "Could not locate __vmill_init";
@@ -90,21 +90,19 @@ Executor::Executor(void)
   CHECK(fini_intrinsic != nullptr)
       << "Could not locate __vmill_fini.";
 
-  CHECK(missing_block_intrinsic != nullptr)
-      << "Could not locate __remill_missing_block";
+  CHECK(error_intrinsic != nullptr)
+      << "Could not locate __remill_error";
 }
 
 void Executor::DecodeTracesFromTask(Task *task) {
   const auto memory = task->memory;
   const auto task_pc = task->pc;
   const auto task_pc_uint = static_cast<uint64_t>(task_pc);
-  auto code_version = memory->ComputeCodeVersion();
 
   DLOG(INFO)
       << "Decoding traces starting from " << std::hex
-      << task_pc_uint << " (" << memory->ToVirtualAddress(task_pc_uint)
-      << ") for code version " << static_cast<uint64_t>(code_version)
-      << std::dec;
+      << task_pc_uint << " (" << memory->ToReadOnlyVirtualAddress(task_pc_uint)
+      << ")" << std::dec;
 
   auto seen_task_pc = false;
   auto traces = DecodeTraces(*memory, task_pc);
@@ -115,9 +113,10 @@ void Executor::DecodeTracesFromTask(Task *task) {
 
     auto trace_id = it->id;
     auto trace_pc = it->pc;
+    auto trace_code_version = it->code_version;
     seen_task_pc = seen_task_pc || trace_pc == task_pc;
 
-    LiveTraceId live_id = {trace_pc, code_version};
+    LiveTraceId live_id = {trace_pc, trace_code_version};
     auto live_trace_it = live_traces.find(live_id);
 
     // Already lifted and in our live cache.
@@ -212,16 +211,10 @@ void Executor::RunMany(void) {
 
 LiftedFunction *Executor::FindLiftedFunctionForTask(Task *task) {
   const auto memory = task->memory;
-
-  // If we're going to repeatedly execut the snapshotted program, then
-  // don't clear old versions of the hash table.
-  if (unlikely(!will_run_many && memory->CodeVersionIsInvalid())) {
-    live_traces.clear();
-  }
-
-  const PC task_pc = task->pc;
+  const auto task_pc = task->pc;
   const auto task_pc_uint = static_cast<uint64_t>(task_pc);
-  const CodeVersion code_version = memory->ComputeCodeVersion();
+
+  const auto code_version = memory->ComputeCodeVersion(task_pc);
   const LiveTraceId live_id = {task_pc, code_version};
 
   auto live_id_it = live_traces.find(live_id);
@@ -236,7 +229,7 @@ LiftedFunction *Executor::FindLiftedFunctionForTask(Task *task) {
     task->mem_access_fault.value_type = kMemoryValueTypeInstruction;
     task->mem_access_fault.access_size = 1;
     task->mem_access_fault.address = static_cast<uint64_t>(task_pc);
-    return missing_block_intrinsic;
+    return error_intrinsic;
   }
 
   DecodeTracesFromTask(task);
@@ -249,7 +242,7 @@ LiftedFunction *Executor::FindLiftedFunctionForTask(Task *task) {
 
     LogRegisterState(LOG(ERROR), task->state);
     memory->LogMaps(LOG(ERROR));
-    return missing_block_intrinsic;
+    return error_intrinsic;
   }
 
   return live_id_it->second;

@@ -130,7 +130,8 @@ static Memory *X86SystemCall(Memory *memory, State *state,
     case 323: return SysEventFd(memory, state, syscall);
     case 328: return SysEventFd2(memory, state, syscall);
     default:
-      STRACE_ERROR(unsupported, ANSI_COLOR_MAGENTA "nr=%d", syscall_num);
+      STRACE_ERROR(unsupported, ANSI_COLOR_MAGENTA "nr=%" PRIuADDR,
+                   syscall_num);
       return syscall.SetReturn(memory, state, 0);
   }
 }
@@ -202,7 +203,8 @@ static Memory *AArch64SystemCall(Memory *memory, State *state,
         memory, state, syscall);
 #endif
     default:
-      STRACE_ERROR(unsupported, "nr=%d", syscall_num);
+      STRACE_ERROR(unsupported, ANSI_COLOR_MAGENTA "nr=%" PRIuADDR,
+                   syscall_num);
       return syscall.SetReturn(memory, state, 0);
   }
 }

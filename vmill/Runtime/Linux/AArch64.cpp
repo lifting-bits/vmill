@@ -14,43 +14,46 @@
  * limitations under the License.
  */
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpadded"
+
 // 64-bit `svc` system call ABI.
 class AArch64SupervisorCall : public SystemCallABI {
  public:
   virtual ~AArch64SupervisorCall(void) = default;
 
-  addr_t GetPC(const State *state) const override {
+  addr_t GetPC(const State *state) const final {
     return state->gpr.pc.aword;
   }
 
-  void SetPC(State *state, addr_t new_pc) const override {
+  void SetPC(State *state, addr_t new_pc) const final {
     state->gpr.pc.aword = new_pc;
   }
 
-  void SetSP(State *state, addr_t new_sp) const override {
+  void SetSP(State *state, addr_t new_sp) const final {
     state->gpr.sp.aword = new_sp;
   }
 
-  addr_t GetReturnAddress(Memory *, addr_t ret_addr) const override {
+  addr_t GetReturnAddress(Memory *, addr_t ret_addr) const final {
     return ret_addr;
   }
 
-  addr_t GetSystemCallNum(Memory *, State *state) const override {
+  addr_t GetSystemCallNum(Memory *, State *state) const final {
     return state->gpr.x8.qword;
   }
 
  protected:
   Memory *DoSetReturn(Memory *memory, State *state,
-                    addr_t ret_val) const override {
+                    addr_t ret_val) const final {
     state->gpr.x0.qword = ret_val;
     return memory;
   }
 
-  bool CanReadArgs(Memory *, State *, int num_args) const override {
+  bool CanReadArgs(Memory *, State *, int num_args) const final {
     return num_args <= 6;
   }
 
-  addr_t GetArg(Memory *&memory, State *state, int i) const override {
+  addr_t GetArg(Memory *&memory, State *state, int i) const final {
     switch (i) {
       case 0:
         return state->gpr.x0.qword;
@@ -69,6 +72,8 @@ class AArch64SupervisorCall : public SystemCallABI {
     }
   }
 };
+
+#pragma clang diagnostic pop
 
 #include "vmill/Runtime/Linux/SystemCall.cpp"
 

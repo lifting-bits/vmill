@@ -30,7 +30,7 @@ class AsyncIOTool : public ProxyTool {
   // Called when lifted bitcode or the runtime needs to resolve an external
   // symbol.
   uint64_t FindSymbolForLinking(
-      const std::string &name, uint64_t resolved) override;
+      const std::string &name, uint64_t resolved) final;
 
  private:
   // Variants of functions that will spawn work in the worker pool.

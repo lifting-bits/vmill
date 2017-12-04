@@ -67,6 +67,31 @@ class ArrayMemoryAllocator {
       alloc.base = lb->second.back();
       alloc.size = lb->first;
       lb->second.pop_back();
+
+      if (alloc.size != size) {
+        CHECK(alloc.size >= size);
+
+
+        auto diff = alloc.size - size;
+        if (diff > kPageSize) {
+          LOG(INFO)
+              << "Splitting previously freed " << std::hex << alloc.size
+              << "-byte allocation for a " << size << "-byte allocation"
+              << std::dec;
+
+          Allocation split = {alloc.base, diff};
+          Free(split);
+
+          alloc.base = &(alloc.base[diff]);
+          alloc.size = size;
+        } else {
+          LOG(INFO)
+              << "Re-using a previously freed " << std::hex << alloc.size
+              << "-byte allocation for a " << size << "-byte allocation"
+              << std::dec;
+        }
+      }
+
     } else {
       alloc.base = allocator.Allocate(size, 64  /* Cache line size */);
       alloc.size = size;
@@ -98,7 +123,7 @@ class MappedRangeBase : public MappedRange {
   void InvalidateCodeVersion(void) final;
   MemoryMapPtr Copy(uint64_t clone_base, uint64_t clone_limit) final;
 
-  uint64_t code_version;
+  CodeVersion code_version;
   bool code_version_is_valid;
   Allocation data;
   MemoryMapPtr parent;
@@ -110,11 +135,11 @@ class InvalidMemoryMap : public MappedRangeBase {
   using MappedRangeBase::MappedRangeBase;
 
   virtual ~InvalidMemoryMap(void);
-  bool Read(uint64_t, uint8_t *out_val) override;
-  bool Write(uint64_t, uint8_t) override;
-  MemoryMapPtr Clone(void) override;
-  uint64_t ComputeCodeVersion(void) override;
-  bool IsValid(void) const override;
+  bool Read(uint64_t, uint8_t *out_val) final;
+  bool Write(uint64_t, uint8_t) final;
+  MemoryMapPtr Clone(void) final;
+  CodeVersion ComputeCodeVersion(void) final;
+  bool IsValid(void) const final;
 };
 
 // Implements an array-backed memory mapping that is filled with actual data
@@ -129,11 +154,12 @@ class ArrayMemoryMap : public MappedRangeBase {
 
   virtual ~ArrayMemoryMap(void);
 
-  bool Read(uint64_t address, uint8_t *out_val) override;
-  bool Write(uint64_t address, uint8_t val) override;
-  MemoryMapPtr Clone(void) override;
-  uint64_t ComputeCodeVersion(void) override;
-  void *ToVirtualAddress(uint64_t addr) override;
+  bool Read(uint64_t address, uint8_t *out_val) final;
+  bool Write(uint64_t address, uint8_t val) final;
+  MemoryMapPtr Clone(void) final;
+  CodeVersion ComputeCodeVersion(void) final;
+  void *ToReadWriteVirtualAddress(uint64_t addr) final;
+  const void *ToReadOnlyVirtualAddress(uint64_t addr) final;
 
   static ArrayMemoryAllocator allocator;
 };
@@ -144,10 +170,12 @@ class EmptyMemoryMap : public MappedRangeBase {
   using MappedRangeBase::MappedRangeBase;
 
   virtual ~EmptyMemoryMap(void);
-  bool Read(uint64_t, uint8_t *out_val) override;
-  bool Write(uint64_t address, uint8_t val) override;
-  MemoryMapPtr Clone(void) override;
-  uint64_t ComputeCodeVersion(void) override;
+  bool Read(uint64_t, uint8_t *out_val) final;
+  bool Write(uint64_t address, uint8_t val) final;
+  MemoryMapPtr Clone(void) final;
+  CodeVersion ComputeCodeVersion(void) final;
+  void *ToReadWriteVirtualAddress(uint64_t addr) final;
+  const void *ToReadOnlyVirtualAddress(uint64_t addr) final;
 };
 
 // Implements a copy-on-write range of memory.
@@ -155,12 +183,13 @@ class CopyOnWriteMemoryMap : public MappedRangeBase {
  public:
   explicit CopyOnWriteMemoryMap(MemoryMapPtr parent_);
   virtual ~CopyOnWriteMemoryMap(void);
-  bool IsValid(void) const override;
-  bool Read(uint64_t address, uint8_t *out_val) override;
-  bool Write(uint64_t address, uint8_t val) override;
-  MemoryMapPtr Clone(void) override;
-  uint64_t ComputeCodeVersion(void) override;
-  void *ToVirtualAddress(uint64_t addr) override;
+  bool IsValid(void) const final;
+  bool Read(uint64_t address, uint8_t *out_val) final;
+  bool Write(uint64_t address, uint8_t val) final;
+  MemoryMapPtr Clone(void) final;
+  CodeVersion ComputeCodeVersion(void) final;
+  void *ToReadWriteVirtualAddress(uint64_t addr) final;
+  const void *ToReadOnlyVirtualAddress(uint64_t addr) final;
 
  private:
   using MappedRangeBase::MappedRangeBase;
@@ -182,7 +211,7 @@ MappedRangeBase::MappedRangeBase(
     uint64_t base_address_, uint64_t limit_address_,
     const char *name_, uint64_t offset_)
     : MappedRange(base_address_, limit_address_, name_, offset_),
-      code_version(0),
+      code_version(static_cast<CodeVersion>(0)),
       code_version_is_valid(false),
       data{nullptr, 0},
       parent(nullptr) {}
@@ -231,8 +260,8 @@ MemoryMapPtr InvalidMemoryMap::Clone(void) {
                                             Name(), Offset());
 }
 
-uint64_t InvalidMemoryMap::ComputeCodeVersion(void) {
-  return 0;
+CodeVersion InvalidMemoryMap::ComputeCodeVersion(void) {
+  return static_cast<CodeVersion>(0);
 }
 
 bool InvalidMemoryMap::IsValid(void) const {
@@ -283,16 +312,20 @@ MemoryMapPtr ArrayMemoryMap::Clone(void) {
   return self->Clone();
 }
 
-uint64_t ArrayMemoryMap::ComputeCodeVersion(void) {
+CodeVersion ArrayMemoryMap::ComputeCodeVersion(void) {
   if (code_version_is_valid) {
     return code_version;
   }
-  code_version = Hash(data.base, Size());
+  code_version = static_cast<CodeVersion>(Hash(data.base, Size()));
   code_version_is_valid = true;
   return code_version;
 }
 
-void *ArrayMemoryMap::ToVirtualAddress(uint64_t address) {
+void *ArrayMemoryMap::ToReadWriteVirtualAddress(uint64_t address) {
+  return &(data.base[address - base_address]);
+}
+
+const void *ArrayMemoryMap::ToReadOnlyVirtualAddress(uint64_t address) {
   return &(data.base[address - base_address]);
 }
 
@@ -304,9 +337,9 @@ bool EmptyMemoryMap::Read(uint64_t, uint8_t *out_val) {
 }
 
 bool EmptyMemoryMap::Write(uint64_t address, uint8_t val) {
-  auto self = new (this) ArrayMemoryMap(BaseAddress(), LimitAddress(),
-                                        Name(), Offset());
-  return self->Write(address, val);
+  auto byte_ptr = ToReadWriteVirtualAddress(address);
+  *reinterpret_cast<uint8_t *>(byte_ptr) = val;
+  return true;
 }
 
 MemoryMapPtr EmptyMemoryMap::Clone(void) {
@@ -314,8 +347,20 @@ MemoryMapPtr EmptyMemoryMap::Clone(void) {
                                           Name(), Offset());
 }
 
-uint64_t EmptyMemoryMap::ComputeCodeVersion(void) {
-  return 0;
+CodeVersion EmptyMemoryMap::ComputeCodeVersion(void) {
+  return static_cast<CodeVersion>(0);
+}
+
+void *EmptyMemoryMap::ToReadWriteVirtualAddress(uint64_t addr) {
+  auto self = new (this) ArrayMemoryMap(BaseAddress(), LimitAddress(),
+                                        Name(), Offset());
+  return self->ToReadWriteVirtualAddress(addr);
+}
+
+static const uint8_t kZeroes[512 / 8] = {};
+
+const void *EmptyMemoryMap::ToReadOnlyVirtualAddress(uint64_t addr) {
+  return &(kZeroes[0]);
 }
 
 CopyOnWriteMemoryMap::CopyOnWriteMemoryMap(MemoryMapPtr parent_)
@@ -338,6 +383,20 @@ bool CopyOnWriteMemoryMap::Read(uint64_t address, uint8_t *out_val) {
 }
 
 bool CopyOnWriteMemoryMap::Write(uint64_t address, uint8_t val) {
+  auto byte_ptr = ToReadWriteVirtualAddress(address);
+  *reinterpret_cast<uint8_t *>(byte_ptr) = val;
+  return true;
+}
+
+MemoryMapPtr CopyOnWriteMemoryMap::Clone(void) {
+  return std::make_shared<CopyOnWriteMemoryMap>(parent);
+}
+
+CodeVersion CopyOnWriteMemoryMap::ComputeCodeVersion(void) {
+  return parent->ComputeCodeVersion();
+}
+
+void *CopyOnWriteMemoryMap::ToReadWriteVirtualAddress(uint64_t address) {
   auto parent_ptr = parent;
   auto base_addr = BaseAddress();
   auto limit_addr = LimitAddress();
@@ -349,20 +408,11 @@ bool CopyOnWriteMemoryMap::Write(uint64_t address, uint8_t val) {
   for (uint64_t index = 0; base_addr < limit_addr; ++base_addr, ++index) {
     (void) parent_ptr->Read(base_addr, &(self->data.base[index]));
   }
-
-  return self->Write(address, val);
+  return self->ToReadWriteVirtualAddress(address);
 }
 
-MemoryMapPtr CopyOnWriteMemoryMap::Clone(void) {
-  return std::make_shared<CopyOnWriteMemoryMap>(parent);
-}
-
-uint64_t CopyOnWriteMemoryMap::ComputeCodeVersion(void) {
-  return parent->ComputeCodeVersion();
-}
-
-void *CopyOnWriteMemoryMap::ToVirtualAddress(uint64_t address) {
-  return parent->ToVirtualAddress(address);
+const void *CopyOnWriteMemoryMap::ToReadOnlyVirtualAddress(uint64_t address) {
+  return parent->ToReadOnlyVirtualAddress(address);
 }
 
 }  // namespace
@@ -403,7 +453,12 @@ MappedRange::MappedRange(uint64_t base_address_, uint64_t limit_address_,
 MappedRange::~MappedRange(void) {}
 
 // Return the virtual address of the memory backing `addr`.
-void *MappedRange::ToVirtualAddress(uint64_t) {
+void *MappedRange::ToReadWriteVirtualAddress(uint64_t) {
+  return nullptr;
+}
+
+// Return the virtual address of the memory backing `addr`.
+const void *MappedRange::ToReadOnlyVirtualAddress(uint64_t) {
   return nullptr;
 }
 

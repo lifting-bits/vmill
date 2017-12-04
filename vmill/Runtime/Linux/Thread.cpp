@@ -126,9 +126,10 @@ static Memory *DoSetThreadArea(Memory *memory, State *state,
   auto task = __vmill_current();
   task->tls_slots[index - kLinuxMinIndexForTLSInGDT] = info;
 
-  STRACE_SUCCESS(set_thread_area,
-                 "Set LDT entry number %u to base address %" PRIxADDR,
-                 info.entry_number, info.base_addr);
+  STRACE_SUCCESS(
+      set_thread_area,
+      "Set LDT entry number %" PRIu32 " to base address %" PRIx32,
+      info.entry_number, info.base_addr);
   return syscall.SetReturn(memory, state, 0);
 }
 
@@ -224,7 +225,7 @@ static Memory *DoClone(Memory *memory, State *state,
 
   STRACE_SUCCESS(
       clone, "flags=%" PRIxADDR ", ptid=%" PRIxADDR ", ctid=%" PRIxADDR
-      ", child pc=%" PRIxADDR ", child sp=%" PRIxADDR ", child tid=%d",
+      ", child pc=%" PRIxADDR ", child sp=%" PRIxADDR ", child tid=%" PRId32,
       flags, ptid, ctid, ret_addr, child_stack, child->tid);
 
   // Set the return for the child.

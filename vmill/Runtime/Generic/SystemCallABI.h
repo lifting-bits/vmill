@@ -22,6 +22,9 @@
 struct Memory;
 struct State;
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpadded"
+
 // Generic wrapper around accessing arguments passed into a system call, and
 // setting the return value from the system call.
 class SystemCallABI {
@@ -144,5 +147,7 @@ class SystemCallABI {
 
   mutable bool completed;
 };
+
+#pragma clang diagnostic pop
 
 #endif  // VMILL_RUNTIME_SYSTEMCALLABI_H_

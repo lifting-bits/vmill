@@ -59,9 +59,11 @@
 #if 32 == ADDRESS_SIZE_BITS
 # define PRIdADDR PRId32
 # define PRIxADDR PRIx32
+# define PRIuADDR PRIu32
 #else
 # define PRIdADDR PRId64
 # define PRIxADDR PRIx64
+# define PRIuADDR PRIu64
 #endif
 
 #ifndef PATH_MAX
@@ -229,7 +231,6 @@ struct linux_sysinfo {
   addr_t totalhigh;
   addr_t freehigh;
   uint32_t mem_unit;
-  uint8_t _f[20 - 2*sizeof(addr_t)-sizeof(uint32_t)];
 };
 
 struct linux_rlimit {

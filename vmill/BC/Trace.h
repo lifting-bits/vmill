@@ -26,7 +26,7 @@ class Module;
 }  // namespace llvm
 namespace vmill {
 
-using TraceHashBaseType = uint32_t;
+using TraceHashBaseType = uint64_t;
 enum class TraceHash : TraceHashBaseType;
 enum class PC : uint64_t;
 enum class CodeVersion : uint64_t;

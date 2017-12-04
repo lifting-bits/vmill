@@ -36,7 +36,7 @@ static Memory *SysGetParentProcessId(Memory *memory, State *state,
 static Memory *SysGetProcessGroupId(Memory *memory, State *state,
                                     const SystemCallABI &syscall) {
   //auto id = getpgrp();
-  STRACE_SUCCESS(getpgrp, "process group id=0", kParentProcessGroupId);
+  STRACE_SUCCESS(getpgrp, "process group id=%u", kParentProcessGroupId);
   return syscall.SetReturn(memory, state, kParentProcessGroupId);
 }
 
@@ -59,7 +59,6 @@ static Memory *SysKill(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  auto task = __vmill_current();
   if (-1 == pid || 0 == pid || kProcessId == pid) {
     STRACE_ERROR(kill, "pid=%u, signal=%d, suppressed", pid, signum);
     return syscall.SetReturn(memory, state, 0);

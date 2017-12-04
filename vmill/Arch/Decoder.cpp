@@ -64,15 +64,17 @@ static void AddSuccessorsToWorkList(const remill::Instruction &inst,
     case remill::Instruction::kCategoryInvalid:
     case remill::Instruction::kCategoryError:
     case remill::Instruction::kCategoryIndirectJump:
-    case remill::Instruction::kCategoryIndirectFunctionCall:
     case remill::Instruction::kCategoryFunctionReturn:
     case remill::Instruction::kCategoryAsyncHyperCall:
       break;
 
+    case remill::Instruction::kCategoryIndirectFunctionCall:
+      work_list.insert(inst.next_pc);
+      break;
+
     case remill::Instruction::kCategoryDirectFunctionCall:
-      // NOTE(pag): These targets are added to the successor trace list, and
-      //            direct function calls are lifted using the
-      //            `__remill_function_call` intrinsic.
+      work_list.insert(inst.next_pc);
+      // NOTE(pag): The target is added to the successor trace list.
       break;
 
     case remill::Instruction::kCategoryNormal:
@@ -92,70 +94,17 @@ static void AddSuccessorsToWorkList(const remill::Instruction &inst,
   }
 }
 
-static uint64_t GetLoadedEffectiveAddress(const remill::Instruction &inst) {
-  for (const auto &op : inst.operands) {
-    // PC-relative address.
-    if (op.type == remill::Operand::kTypeAddress &&
-        op.addr.base_reg.name == "PC" &&
-        op.addr.index_reg.name.empty() &&
-        op.addr.displacement) {
-      return static_cast<uint64_t>(
-          static_cast<int64_t>(inst.pc) + op.addr.displacement);
-
-    // Absolute address.
-    } else if (op.type == remill::Operand::kTypeAddress &&
-               op.addr.base_reg.name.empty() &&
-               op.addr.index_reg.name.empty() &&
-               op.addr.displacement) {
-      return static_cast<uint64_t>(op.addr.displacement);
-    }
-  }
-  return 0;
-}
-
 // Enqueue control flow targets that will potentially represent future traces.
-static void AddSuccessorsToTraceList(const remill::Arch *arch,
-                                     AddressSpace &addr_space,
-                                     const remill::Instruction &inst,
+static void AddSuccessorsToTraceList(const remill::Instruction &inst,
                                      DecoderWorkList &work_list) {
 
   switch (inst.category) {
-//    case remill::Instruction::kCategoryIndirectFunctionCall:
-//    case remill::Instruction::kCategoryDirectFunctionCall:
-//      if (addr_space.CanExecute(inst.next_pc)) {
-//        work_list.insert(inst.next_pc);
-//      }
-//      break;
-
     case remill::Instruction::kCategoryDirectFunctionCall:
-      work_list.insert(inst.branch_taken_pc);
-      break;
-
-    // Thunks, e.g. `jmp [0xf00]`.
-    case remill::Instruction::kCategoryIndirectJump: {
-      auto thunk = GetLoadedEffectiveAddress(inst);
-      if (!thunk) {
-        return;
-      }
-
-      alignas(uint64_t) uint8_t bytes[8] = {};
-      auto addr_size_bytes = arch->address_size / 8;
-      for (uint64_t i = 0; i < addr_size_bytes; ++i) {
-        if (!addr_space.TryRead(thunk + i, &(bytes[i]))) {
-          return;
-        }
-      }
-
-      // TODO(pag): Assumes little endian.
-      uint64_t addr = reinterpret_cast<uint64_t &>(bytes[0]);
-      if (addr_space.CanRead(addr) && addr_space.CanExecute(addr)) {
-        DLOG(INFO)
-            << "Indirect jump at " << std::hex << inst.pc
-            << " looks like a thunk that invokes " << addr << std::dec;
-        work_list.insert(addr);
+      if (inst.branch_taken_pc != inst.next_pc) {
+        work_list.insert(inst.branch_taken_pc);
       }
       break;
-    }
+
     default:
       break;
   }
@@ -164,16 +113,23 @@ static void AddSuccessorsToTraceList(const remill::Arch *arch,
 // The 'version' of this trace is a hash of the instruction bytes.
 static TraceId HashTraceInstructions(const DecodedTrace &trace) {
   const auto &insts = trace.instructions;
+  TraceHashBaseType min_pc = 1;
+  TraceHashBaseType max_pc = 1;
 
-  Hasher<uint32_t> hash1(static_cast<uint32_t>(0xdeadbeef));
-  Hasher<uint32_t> hash2(static_cast<uint32_t>(insts.size()));
+  if (!trace.instructions.empty()) {
+    min_pc = static_cast<TraceHashBaseType>(
+        trace.instructions.begin()->first);
 
+    max_pc = static_cast<TraceHashBaseType>(
+        trace.instructions.rbegin()->first);
+  }
+
+  Hasher<TraceHashBaseType> hash2(min_pc * max_pc * insts.size());
   for (const auto &entry : insts) {
-    hash1.Update(entry.second.bytes.data(), entry.second.bytes.size());
     hash2.Update(entry.second.bytes.data(), entry.second.bytes.size());
   }
 
-  return {static_cast<TraceHash>(hash1.Digest()),
+  return {static_cast<TraceHash>(trace.pc),
           static_cast<TraceHash>(hash2.Digest())};
 }
 
@@ -187,7 +143,6 @@ DecodedTraceList DecodeTraces(AddressSpace &addr_space, PC start_pc) {
   DecodedTraceList traces;
 
   auto arch = remill::GetTargetArch();
-  auto code_version = addr_space.ComputeCodeVersion();
 
   DecoderWorkList trace_list;
   DecoderWorkList work_list;
@@ -200,19 +155,20 @@ DecodedTraceList DecodeTraces(AddressSpace &addr_space, PC start_pc) {
 
   while (!trace_list.empty()) {
     auto trace_it = trace_list.begin();
-    const auto trace_pc = *trace_it;
+    const auto trace_pc_uint = *trace_it;
+    const auto trace_pc = static_cast<PC>(trace_pc_uint);
     trace_list.erase(trace_it);
 
-    if (addr_space.IsMarkedTraceHead(static_cast<PC>(trace_pc))) {
+    if (addr_space.IsMarkedTraceHead(trace_pc)) {
       continue;
     }
 
-    addr_space.MarkAsTraceHead(static_cast<PC>(trace_pc));
-    work_list.insert(trace_pc);
+    addr_space.MarkAsTraceHead(trace_pc);
+    work_list.insert(trace_pc_uint);
 
     DecodedTrace trace;
-    trace.pc = static_cast<PC>(trace_pc);
-    trace.code_version = code_version;
+    trace.pc = static_cast<PC>(trace_pc_uint);
+    trace.code_version = addr_space.ComputeCodeVersion(trace_pc);
 
     while (!work_list.empty()) {
       auto entry_it = work_list.begin();
@@ -225,7 +181,9 @@ DecodedTraceList DecodeTraces(AddressSpace &addr_space, PC start_pc) {
 
       remill::Instruction inst;
       auto inst_bytes = ReadInstructionBytes(arch, addr_space, pc);
-      auto decode_successful = arch->DecodeInstruction(pc, inst_bytes, inst);
+      auto decode_successful = arch->LazyDecodeInstruction(
+          pc, inst_bytes, inst);
+
       trace.instructions[static_cast<PC>(pc)] = inst;
 
       if (!decode_successful) {
@@ -235,7 +193,7 @@ DecodedTraceList DecodeTraces(AddressSpace &addr_space, PC start_pc) {
         break;
       } else {
         AddSuccessorsToWorkList(inst, work_list);
-        AddSuccessorsToTraceList(arch, addr_space, inst, trace_list);
+        AddSuccessorsToTraceList(inst, trace_list);
       }
     }
 

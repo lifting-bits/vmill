@@ -57,12 +57,17 @@ static Memory *SysBind(Memory *memory, State *state,
   }
 
   auto ret = bind(sockfd, (addr ? &addr_val : nullptr), addrlen);
+  if (!addr_val.sa_data[0] && addr_val.sa_data[1]) {
+    addr_val.sa_data[0] = '@';  // For printing.
+  }
+
   if (-1 == ret) {
     auto err = errno;
-    STRACE_ERROR(bind, "Couldn't bind socket %d: %s", sockfd, strerror(err));
+    STRACE_ERROR(bind, "fd=%d, sa_data=%s, addrlen=%u: %s",
+                 sockfd, addr_val.sa_data, addrlen, strerror(err));
     return syscall.SetReturn(memory, state, -err);
   } else {
-    STRACE_SUCCESS(bind, "fd=%d, addr=%s, len=%s, ret=%d",
+    STRACE_SUCCESS(bind, "fd=%d, sa_data=%s, addrlen=%u, ret=%d",
                    sockfd, addr_val.sa_data, addrlen, ret);
     return syscall.SetReturn(memory, state, ret);
   }
@@ -91,19 +96,20 @@ static Memory *SysConnect(Memory *memory, State *state,
     }
   }
 
-  STRACE_ERROR(connect, "HERE!!! %" PRIxADDR, addr);
-
   auto ret = connect(sockfd, (addrlen ? &info : nullptr), addrlen);
+  if (!info.sa_data[0] && info.sa_data[1]) {
+    info.sa_data[0] = '@';  // For printing.
+  }
 
   if (-1 == ret) {
     auto err = errno;
     STRACE_ERROR(
-        connect, "fd=%d, sa_family=%d, addrlen=%u: %s",
-        sockfd, info.sa_family, addrlen, strerror(err));
+        connect, "fd=%d, sa_data=%s, addrlen=%u: %s",
+        sockfd, info.sa_data, addrlen, strerror(err));
     return syscall.SetReturn(memory, state, -err);
   } else {
-    STRACE_SUCCESS(connect, "fd=%d, sa_family=%d, addrlen=%u, ret=%d",
-                   sockfd, info.sa_family, addrlen, ret);
+    STRACE_SUCCESS(connect, "fd=%d, sa_data=%sd, addrlen=%u, ret=%d",
+                   sockfd, info.sa_data, addrlen, ret);
     return syscall.SetReturn(memory, state, ret);
   }
 }
@@ -289,6 +295,7 @@ static Memory *SysGetPeerName(Memory *memory, State *state,
     if (!TryWriteMemory(memory, addrlen_addr, addrlen)) {
       STRACE_ERROR(getpeername, "Couldn't copy sock address to memory.");
       return syscall.SetReturn(memory, state, -EFAULT);
+
     } else {
       STRACE_SUCCESS(getpeername, "sa_family=%u addrlen=%u",
                      info.sa_family, addrlen);
@@ -364,7 +371,7 @@ static Memory *DoSysSendTo(Memory *memory, State *state,
   }
 
   if (!CanReadMemory(memory, buf, n)) {
-    STRACE_ERROR(sendto, "Can't read n=%x bytes from buf=%" PRIxADDR,
+    STRACE_ERROR(sendto, "Can't read n=%zu bytes from buf=%" PRIxADDR,
                  n, buf);
     return syscall.SetReturn(memory, state, -EFAULT);
   }
@@ -377,15 +384,19 @@ static Memory *DoSysSendTo(Memory *memory, State *state,
   auto err = errno;
   delete[] buf_val;
 
+  if (!info.sa_data[0] && info.sa_data[1]) {
+    info.sa_data[0] = '@';  // For printing.
+  }
+
   if (-1 == ret) {
     STRACE_ERROR(
-        sendto, "fd=%d, n=%lu, sa_data=%s, sa_family=%124s, addrlen=%u: %s",
-        fd, n, info.sa_data, info.sa_family, addrlen, strerror(err));
+        sendto, "fd=%d, n=%lu, sa_data=%s, addrlen=%u: %s",
+        fd, n, info.sa_data, addrlen, strerror(err));
     return syscall.SetReturn(memory, state, -err);
   } else {
     STRACE_SUCCESS(
-        sendto, "fd=%d, n=%lu, sa_data=%s, sa_family=%124s, addrlen=%u",
-        fd, n, info.sa_data, info.sa_family, addrlen);
+        sendto, "fd=%d, n=%lu, sa_data=%s, addrlen=%u",
+        fd, n, info.sa_data, addrlen);
     return syscall.SetReturn(memory, state, ret);
   }
 }
@@ -920,7 +931,7 @@ static Memory *SysRecvMsg(Memory *memory, State *state,
   }
 
   STRACE_SUCCESS(
-      recvmsg, "socket=%d, flags=%x, message=%" PRIxADDR ", ret=%d",
+      recvmsg, "socket=%d, flags=%x, message=%" PRIxADDR ", ret=%ld",
       socket, flags, message, ret);
   return syscall.SetReturn(memory, state, ret);
 }
@@ -1022,6 +1033,9 @@ static Memory *SysRecvMmsg(Memory *memory, State *state,
 
 #ifdef VMILL_RUNTIME_X86
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpadded"
+
 // ABI for argument pack passed to the `socketcall` system call. This is
 // parameterized by `AddrT` because if this is a 32-bit compatibility
 // `socketcall` then all addresses and arguments must be treated as 32-bit
@@ -1036,37 +1050,37 @@ class SocketCallABI : public SystemCallABI {
 
   virtual ~SocketCallABI(void) = default;
 
-  addr_t GetPC(const State *state) const override {
+  addr_t GetPC(const State *state) const final {
     return syscall.GetPC(state);
   }
 
-  void SetPC(State *state, addr_t new_pc) const override {
+  void SetPC(State *state, addr_t new_pc) const final {
     syscall.SetPC(state, new_pc);
   }
 
-  void SetSP(State *state, addr_t new_sp) const override {
+  void SetSP(State *state, addr_t new_sp) const final {
     syscall.SetSP(state, new_sp);
   }
 
-  addr_t GetReturnAddress(Memory *, addr_t ret_addr) const override {
+  addr_t GetReturnAddress(Memory *, addr_t ret_addr) const final {
     return ret_addr;
   }
 
-  addr_t GetSystemCallNum(Memory *memory, State *state) const override {
+  addr_t GetSystemCallNum(Memory *memory, State *state) const final {
     return syscall.GetSystemCallNum(memory, state);
   }
 
   Memory *DoSetReturn(Memory *memory, State *state,
-                      addr_t ret_val) const override {
+                      addr_t ret_val) const final {
     return syscall.SetReturn(memory, state, ret_val);
   }
 
-  bool CanReadArgs(Memory *memory, State *, int num_args) const override {
+  bool CanReadArgs(Memory *memory, State *, int num_args) const final {
     return CanReadMemory(
         memory, arg_addr, static_cast<size_t>(num_args) * sizeof(AddrT));
   }
 
-  addr_t GetArg(Memory *&memory, State *state, int i) const override {
+  addr_t GetArg(Memory *&memory, State *state, int i) const final {
     return ReadMemory<AddrT>(
         memory,
         arg_addr + static_cast<addr_t>(static_cast<addr_t>(i) * sizeof(AddrT)));
@@ -1076,6 +1090,8 @@ class SocketCallABI : public SystemCallABI {
   addr_t arg_addr;
   uint32_t padding;
 };
+
+#pragma clang diagnostic pop
 
 template <typename AddrT>
 static Memory *SysSocketCall(Memory *memory, State *state,

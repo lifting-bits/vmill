@@ -99,12 +99,13 @@ struct Task {
   // Information about the first fault encountered while executing.
   struct {
     uint64_t address;
-    unsigned access_size;  // In bytes.
+    uint32_t access_size;  // In bytes.
     MemoryAccessFaultKind kind;
     MemoryValueType value_type;
   } mem_access_fault;
 
-  int fpu_rounding_mode;
+  int32_t fpu_rounding_mode;
+  int32_t _padding;
 };
 
 }  // namespace vmill

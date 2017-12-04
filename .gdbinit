@@ -49,7 +49,7 @@ define print-x86-trace-instructions
   while $__k >= 0
     get-x86-trace-entry $__k
     set $__ea = *$trace_entry
-    set $__va = $memory->ToVirtualAddress($__ea)
+    set $__va = $memory->ToReadOnlyVirtualAddress($__ea)
 
     set $__reg_eip = $trace_entry[0]
     set $__reg_eax = $trace_entry[1]

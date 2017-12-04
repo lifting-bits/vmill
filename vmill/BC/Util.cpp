@@ -137,12 +137,24 @@ void MoveFunctionIntoModule(llvm::Function *func,
   CHECK(source_module != dest_module)
       << "Cannot move function to the same module.";
 
-  CHECK(!dest_module->getFunction(func->getName()))
-      << "Function " << func->getName().str()
-      << " already exists in destination module.";
+  auto existing = dest_module->getFunction(func->getName());
+  if (existing) {
+    CHECK(existing->isDeclaration())
+        << "Function " << func->getName().str()
+        << " already exists in destination module.";
+    existing->setName("");
+    existing->setLinkage(llvm::GlobalValue::PrivateLinkage);
+    existing->setVisibility(llvm::GlobalValue::HiddenVisibility);
+  }
 
   func->removeFromParent();
   dest_module->getFunctionList().push_back(func);
+
+  if (existing) {
+    existing->replaceAllUsesWith(func);
+    existing->eraseFromParent();
+    existing = nullptr;
+  }
 
   IF_LLVM_GTE_36( ClearMetaData(func); )
 
