@@ -938,7 +938,7 @@ static Memory *SysMakeDirectory(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  auto path_len = CopyStringFromMemory(memory, path, gPath, PATH_MAX);
+  (void) CopyStringFromMemory(memory, path, gPath, PATH_MAX);
   gPath[PATH_MAX] = '\0';
 
   auto ret = mkdir(gPath, mode);
@@ -964,7 +964,7 @@ static Memory *SysMakeDirectoryAt(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  auto path_len = CopyStringFromMemory(memory, path, gPath, PATH_MAX);
+  (void) CopyStringFromMemory(memory, path, gPath, PATH_MAX);
   gPath[PATH_MAX] = '\0';
 
   auto ret = mkdirat(dirfd, gPath, mode);
@@ -989,7 +989,7 @@ static Memory *SysRemoveDirectory(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  auto path_len = CopyStringFromMemory(memory, path, gPath, PATH_MAX);
+  (void) CopyStringFromMemory(memory, path, gPath, PATH_MAX);
   gPath[PATH_MAX] = '\0';
 
   auto ret = rmdir(gPath);

@@ -279,14 +279,15 @@ static Memory *SysClose(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  errno = 0;
   auto ret = close(fd);
-  if (errno) {
-    STRACE_ERROR(close, "Error closing fd %d: %s", fd, strerror(errno));
-  } else {
-    STRACE_SUCCESS(close, "fd=%d, ret=%d", fd, ret);
+  if (-1 == ret) {
+    auto err = errno;
+    STRACE_ERROR(close, "Error closing fd %d: %s", fd, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
   }
-  return syscall.SetReturn(memory, state, ret * errno);
+
+  STRACE_SUCCESS(close, "fd=%d", fd);
+  return syscall.SetReturn(memory, state, 0);
 }
 
 // Emulate an `ioctl` system call.

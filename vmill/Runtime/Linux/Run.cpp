@@ -32,10 +32,17 @@ extern "C" void __vmill_init(void) {
 
 // Tear down the emulated Linux operating system.
 extern "C" void __vmill_fini(void) {
-  for (auto task = gTaskList; task; task = task->next) {
+  linux_task *next_task = nullptr;
+  for (auto task = gTaskList; task; task = next_task) {
+    next_task = task->next;
+    task->next = nullptr;
+    task->next_circular = nullptr;
     __vmill_fini_task(task);
     delete task;
   }
+
+  gTaskList = nullptr;
+  gLastTask = nullptr;
 }
 
 static pid_t gNextTid = kProcessId;

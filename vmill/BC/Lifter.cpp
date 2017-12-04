@@ -249,20 +249,31 @@ llvm::Function *LifterImpl::LiftTrace(const DecodedTrace &trace) {
 
   remill::CloneBlockFunctionInto(func);
 
+
+  // Hard-code the trace address into the bitcode.
+  auto func_entry_block = &(func->front());
+  auto arch = remill::GetTargetArch();
+  auto pc_ptr = remill::LoadProgramCounterRef(func_entry_block);
+  auto pc_type = llvm::Type::getIntNTy(*context_ptr, arch->address_size);
+
   // Function that will create basic blocks as needed.
   std::unordered_map<uint64_t, llvm::BasicBlock *> blocks;
-  auto GetOrCreateBlock = [func, context_ptr, &blocks] (PC block_pc) {
-    auto &block = blocks[static_cast<uint64_t>(block_pc)];
-    if (!block) {
-      block = llvm::BasicBlock::Create(*context_ptr, "", func);
-    }
-    return block;
-  };
+  auto GetOrCreateBlock = \
+      [func, context_ptr, pc_type, pc_ptr, &blocks] (PC block_pc) {
+        auto &block = blocks[static_cast<uint64_t>(block_pc)];
+        if (!block) {
+          block = llvm::BasicBlock::Create(*context_ptr, "", func);
+          (void) new llvm::StoreInst(
+              llvm::ConstantInt::get(pc_type, static_cast<uint64_t>(block_pc)),
+              pc_ptr, block);
+        }
+        return block;
+      };
 
   // Create a branch from the entrypoint of the lifted function to the basic
   // block representing the first decoded instruction.
   auto entry_block = GetOrCreateBlock(trace.pc);
-  llvm::BranchInst::Create(entry_block, &(func->front()));
+  llvm::BranchInst::Create(entry_block, func_entry_block);
 
   // Guarantee that a basic block exists, even if the first instruction
   // failed to decode.
@@ -291,12 +302,9 @@ llvm::Function *LifterImpl::LiftTrace(const DecodedTrace &trace) {
 //                     memory_ptr_ref);
 //    }
 
-    llvm::Value *ret_pc = nullptr;
+    llvm::ConstantInt *ret_pc = nullptr;
     if (inst.IsFunctionCall()) {
-      auto pc = remill::LoadProgramCounter(block);
-      llvm::IRBuilder<> ir(block);
-      ret_pc = ir.CreateAdd(
-          pc, llvm::ConstantInt::get(pc->getType(), inst.NumBytes()));
+      ret_pc = llvm::ConstantInt::get(pc_type, inst.next_pc);
     }
 
     if (remill::kLiftedInstruction != lifter.LiftIntoBlock(inst, block)) {
