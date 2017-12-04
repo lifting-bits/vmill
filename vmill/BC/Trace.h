@@ -19,8 +19,6 @@
 
 #include <cstdint>
 
-#include "vmill/Util/Hash.h"
-
 namespace llvm {
 class Module;
 }  // namespace llvm
@@ -34,18 +32,24 @@ enum class CodeVersion : uint64_t;
 // Hash of the bytes of the machine code in the trace.
 struct TraceId {
  public:
-  TraceHash hash1;
-  TraceHash hash2;
+  // Entry PC of the trace.
+  PC pc;
+
+  // Hash of all instruction bytes of the trace.
+  TraceHash hash;
 
   inline bool operator==(const TraceId &that) const {
-    return hash1 == that.hash1 && hash2 == that.hash2;
+    return pc == that.pc && hash == that.hash;
   }
 } __attribute__((packed));
 
 struct LiveTraceId {
  public:
-  PC pc;  // Entry PC of the trace.
-  CodeVersion code_version;  // Hash of all executable memory.
+  // Entry PC of the trace.
+  PC pc;
+
+  // Hash of all bytes of memory in the `MappedRange` containing this `pc`.
+  CodeVersion code_version;
 
   inline bool operator==(const LiveTraceId &that) const {
     return pc == that.pc && code_version == that.code_version;
@@ -54,7 +58,30 @@ struct LiveTraceId {
 
 }  // namespace vmill
 
-VMILL_MAKE_STD_HASH_OVERRIDE(vmill::TraceId);
-VMILL_MAKE_STD_HASH_OVERRIDE(vmill::LiveTraceId);
+namespace std {
+
+template <>
+struct hash<vmill::TraceId> {
+ public:
+  using result_type = uint64_t;
+  using argument_type = vmill::TraceId;
+  inline result_type operator()(const argument_type &val) const {
+    return static_cast<result_type>(val.hash);
+  }
+};
+
+template <>
+struct hash<vmill::LiveTraceId> {
+ public:
+  using result_type = uint64_t;
+  using argument_type = vmill::LiveTraceId;
+  inline result_type operator()(const argument_type &val) const {
+    const auto pc_uint = static_cast<uint64_t>(val.pc);
+    const auto code_version_uint = static_cast<uint64_t>(val.code_version);
+    return pc_uint ^ code_version_uint;
+  }
+};
+
+}  // namespace std
 
 #endif  // VMILL_BC_TRACE_H_

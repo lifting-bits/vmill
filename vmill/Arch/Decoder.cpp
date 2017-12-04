@@ -69,12 +69,8 @@ static void AddSuccessorsToWorkList(const remill::Instruction &inst,
       break;
 
     case remill::Instruction::kCategoryIndirectFunctionCall:
-      work_list.insert(inst.next_pc);
-      break;
-
     case remill::Instruction::kCategoryDirectFunctionCall:
       work_list.insert(inst.next_pc);
-      // NOTE(pag): The target is added to the successor trace list.
       break;
 
     case remill::Instruction::kCategoryNormal:
@@ -129,8 +125,7 @@ static TraceId HashTraceInstructions(const DecodedTrace &trace) {
     hash2.Update(entry.second.bytes.data(), entry.second.bytes.size());
   }
 
-  return {static_cast<TraceHash>(trace.pc),
-          static_cast<TraceHash>(hash2.Digest())};
+  return {trace.pc, static_cast<TraceHash>(hash2.Digest())};
 }
 
 }  // namespace

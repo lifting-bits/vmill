@@ -238,8 +238,8 @@ bool CodeCacheImpl::finalizeMemory(std::string *error_message) {
         } else {
           LOG(ERROR)
               << "Cache entry with trace id (" << std::hex
-              << static_cast<TraceHashBaseType>(base->trace_id.hash1) << ", "
-              << static_cast<TraceHashBaseType>(base->trace_id.hash2)
+              << static_cast<TraceHashBaseType>(base->trace_id.pc) << ", "
+              << static_cast<TraceHashBaseType>(base->trace_id.hash)
               << std::dec << ") and lifted code at "
               << reinterpret_cast<void *>(base->lifted_function)
               << " is not valid; the lifted code isn't inside the code cache!";
@@ -252,8 +252,8 @@ bool CodeCacheImpl::finalizeMemory(std::string *error_message) {
         LOG(ERROR)
             << "Code at " << reinterpret_cast<void *>(base->lifted_function)
             << " implementing trace with hash (" << std::hex
-            << static_cast<TraceHashBaseType>(base->trace_id.hash1) << ", "
-            << static_cast<TraceHashBaseType>(base->trace_id.hash2) << std::dec
+            << static_cast<TraceHashBaseType>(base->trace_id.pc) << ", "
+            << static_cast<TraceHashBaseType>(base->trace_id.hash) << std::dec
             << ") already implemented at "
             << reinterpret_cast<void *>(lifted_func);
       } else {

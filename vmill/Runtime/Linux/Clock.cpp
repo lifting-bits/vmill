@@ -192,4 +192,30 @@ static Memory *SysClockGetResolution(Memory *memory, State *state,
   return syscall.SetReturn(memory, state, 0);
 }
 
+static Memory *SysTime(Memory *memory, State *state,
+                       const SystemCallABI &syscall) {
+  addr_t time_addr = 0;
+
+  if (!syscall.TryGetArgs(memory, state, &time_addr)) {
+    STRACE_ERROR(time, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  auto now = time(nullptr);
+  if (-1 == now) {
+    auto err = errno;
+    STRACE_ERROR(time, "%s", strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  }
+
+  auto ret_time = static_cast<addr_t>(now);
+  if (time_addr && !TryWriteMemory(memory, time_addr, ret_time)) {
+    STRACE_ERROR(time, "Can't write time to %" PRIxADDR, time_addr);
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  STRACE_SUCCESS(time, "ret=%ld", now);
+  return syscall.SetReturn(memory, state, ret_time);
+}
+
 }  // namespace

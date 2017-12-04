@@ -405,15 +405,15 @@ void LifterImpl::LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
     std::vector<llvm::Constant *> values(2);
 
     // TraceId type.
-    types[0] = llvm::Type::getIntNTy(*context_ptr, sizeof(trace.id.hash1) * 8);
-    types[1] = types[0];
+    types[0] = llvm::Type::getInt64Ty(*context_ptr);
+    types[1] = llvm::Type::getIntNTy(*context_ptr, sizeof(trace.id.hash) * 8);
     auto trace_id_type = llvm::StructType::get(*context_ptr, types, true);
 
     values[0] = llvm::ConstantInt::get(
-        types[0], static_cast<TraceHashBaseType>(trace.id.hash1));
+        types[0], static_cast<uint64_t>(trace.id.pc));
 
     values[1] = llvm::ConstantInt::get(
-        types[1], static_cast<TraceHashBaseType>(trace.id.hash2));
+        types[1], static_cast<TraceHashBaseType>(trace.id.hash));
 
     auto trace_id_val = llvm::ConstantStruct::get(trace_id_type, values);
 

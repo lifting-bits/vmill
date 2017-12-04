@@ -928,4 +928,100 @@ static Memory *SysEventFd2(Memory *memory, State *state,
   }
 }
 
+// Emulate a `mkdir` system call.
+static Memory *SysMakeDirectory(Memory *memory, State *state,
+                                const SystemCallABI &syscall) {
+  addr_t path = 0;
+  mode_t mode = 0;
+  if (!syscall.TryGetArgs(memory, state, &path, &mode)) {
+    STRACE_ERROR(mkdir, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  auto path_len = CopyStringFromMemory(memory, path, gPath, PATH_MAX);
+  gPath[PATH_MAX] = '\0';
+
+  auto ret = mkdir(gPath, mode);
+  if (-1 == ret) {
+    auto err = errno;
+    STRACE_ERROR(mkdir, "Couldn't make path=%s, mode=%u: %s",
+                 gPath, mode, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  }
+
+  STRACE_SUCCESS(mkdir, "path=%s, mode=%u", gPath, mode);
+  return syscall.SetReturn(memory, state, 0);
+}
+
+// Emulate a `mkdirat` system call.
+static Memory *SysMakeDirectoryAt(Memory *memory, State *state,
+                                  const SystemCallABI &syscall) {
+  int dirfd = -1;
+  addr_t path = 0;
+  mode_t mode = 0;
+  if (!syscall.TryGetArgs(memory, state, &dirfd, &path, &mode)) {
+    STRACE_ERROR(mkdirat, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  auto path_len = CopyStringFromMemory(memory, path, gPath, PATH_MAX);
+  gPath[PATH_MAX] = '\0';
+
+  auto ret = mkdirat(dirfd, gPath, mode);
+  if (-1 == ret) {
+    auto err = errno;
+    STRACE_ERROR(mkdirat, "Couldn't make dirfd=%d, path=%s, mode=%u: %s",
+                 dirfd, gPath, mode, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  }
+
+  STRACE_SUCCESS(mkdirat, "dirfd=%d, path=%s, mode=%u", dirfd, gPath, mode);
+  return syscall.SetReturn(memory, state, 0);
+}
+
+
+// Emulate a `rmdir` system call.
+static Memory *SysRemoveDirectory(Memory *memory, State *state,
+                                  const SystemCallABI &syscall) {
+  addr_t path = 0;
+  if (!syscall.TryGetArgs(memory, state, &path)) {
+    STRACE_ERROR(rmdir, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  auto path_len = CopyStringFromMemory(memory, path, gPath, PATH_MAX);
+  gPath[PATH_MAX] = '\0';
+
+  auto ret = rmdir(gPath);
+  if (-1 == ret) {
+    auto err = errno;
+    STRACE_ERROR(rmdir, "Couldn't remove path=%s: %s", gPath, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  }
+
+  STRACE_SUCCESS(rmdir, "path=%s", gPath);
+  return syscall.SetReturn(memory, state, 0);
+}
+
+
+// Emulate a `dup` system call.
+static Memory *SysDup(Memory *memory, State *state,
+                      const SystemCallABI &syscall) {
+  int fd = 0;
+  if (!syscall.TryGetArgs(memory, state, &fd)) {
+    STRACE_ERROR(dup, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  auto ret = dup(fd);
+  if (-1 == ret) {
+    auto err = errno;
+    STRACE_ERROR(dup, "Couldn't duplicate fd=%d: %s", fd, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  }
+
+  STRACE_SUCCESS(dup, "fd=%d, dup fd=%d", fd, ret);
+  return syscall.SetReturn(memory, state, ret);
+}
+
 }  // namespace

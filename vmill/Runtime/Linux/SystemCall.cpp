@@ -55,10 +55,14 @@ static Memory *X86SystemCall(Memory *memory, State *state,
     case 4: return SysWrite(memory, state, syscall);
     case 5: return SysOpen(memory, state, syscall);
     case 6: return SysClose(memory, state, syscall);
+    case 13: return SysTime(memory, state, syscall);
     case 20: return SysGetProcessId(memory, state, syscall);
     case 24: return SysGetUserId(memory, state, syscall);
     case 33: return SysAccess(memory, state, syscall);
     case 37: return SysKill(memory, state, syscall);
+    case 39: return SysMakeDirectory(memory, state, syscall);
+    case 40: return SysRemoveDirectory(memory, state, syscall);
+    case 41: return SysDup(memory, state, syscall);
     case 45: return SysBrk(memory, state, syscall);
     case 47: return SysGetGroupId(memory, state, syscall);
     case 49: return SysGetEffectiveUserId(memory, state, syscall);
@@ -124,6 +128,7 @@ static Memory *X86SystemCall(Memory *memory, State *state,
     case 269: return SysFStatFs64<linux32_statfs64>(memory, state, syscall);
     case 272: return SysFAdvise<int32_t, int32_t>(memory, state, syscall);
     case 295: return SysOpenAt(memory, state, syscall);
+    case 296: return SysMakeDirectoryAt(memory, state, syscall);
     case 300: return SysFStatAt<linux32_stat64>(memory, state, syscall);
     case 305: return SysReadLinkAt(memory, state, syscall);
     case 307: return SysFAccessAt(memory, state, syscall);
