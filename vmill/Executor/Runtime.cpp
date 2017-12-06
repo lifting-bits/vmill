@@ -22,6 +22,8 @@
 #include <cstdio>
 #include <ostream>
 
+#include "remill/Arch/Name.h"
+
 #include "vmill/Arch/Arch.h"
 #include "vmill/Executor/AsyncIO.h"
 #include "vmill/Executor/Coroutine.h"
@@ -168,6 +170,48 @@ void vmill_break_on_fault(void) {
   asm volatile ("" : : : "memory");
 }
 
+#define MAKE_MEM_FAULT(access, suffix, size, fkind, vtype) \
+    void __vmill_record_ ## access ## _fault_ ## suffix(uint64_t addr) { \
+      if (likely(gTask != nullptr)) { \
+        auto &fault = gTask->mem_access_fault; \
+        if (kMemoryAccessNoFault == fault.kind) { \
+          vmill_break_on_fault(); \
+          fault.kind = fkind; \
+          fault.value_type = vtype; \
+          fault.access_size = size; \
+          fault.address = addr; \
+        } \
+      } \
+    }
+
+MAKE_MEM_FAULT(read, 8, 1, kMemoryAccessFaultOnRead,
+               kMemoryValueTypeInteger)
+MAKE_MEM_FAULT(read, 16, 2, kMemoryAccessFaultOnRead,
+               kMemoryValueTypeInteger)
+MAKE_MEM_FAULT(read, 32, 4, kMemoryAccessFaultOnRead,
+               kMemoryValueTypeInteger)
+MAKE_MEM_FAULT(read, 64, 8, kMemoryAccessFaultOnRead,
+               kMemoryValueTypeInteger)
+MAKE_MEM_FAULT(read, f32, 4, kMemoryAccessFaultOnRead,
+               kMemoryValueTypeFloatingPoint)
+MAKE_MEM_FAULT(read, f64, 8, kMemoryAccessFaultOnRead,
+               kMemoryValueTypeFloatingPoint)
+
+MAKE_MEM_FAULT(write, 8, 1, kMemoryAccessFaultOnWrite,
+               kMemoryValueTypeInteger)
+MAKE_MEM_FAULT(write, 16, 2, kMemoryAccessFaultOnWrite,
+               kMemoryValueTypeInteger)
+MAKE_MEM_FAULT(write, 32, 4, kMemoryAccessFaultOnWrite,
+               kMemoryValueTypeInteger)
+MAKE_MEM_FAULT(write, 64, 8, kMemoryAccessFaultOnWrite,
+               kMemoryValueTypeInteger)
+MAKE_MEM_FAULT(write, f32, 4, kMemoryAccessFaultOnWrite,
+               kMemoryValueTypeFloatingPoint)
+MAKE_MEM_FAULT(write, f64, 8, kMemoryAccessFaultOnWrite,
+               kMemoryValueTypeFloatingPoint)
+#undef MAKE_MEM_FAULT
+
+
 #define MAKE_MEM_READ(ret_type, read_type, suffix, read_size, vtype) \
     __attribute__((hot)) \
     ret_type __remill_read_memory_ ## suffix( \
@@ -176,27 +220,26 @@ void vmill_break_on_fault(void) {
       if (likely(memory->TryRead(addr, &ret_val))) { \
         return ret_val; \
       } else { \
-        if (likely(gTask != nullptr)) { \
-          auto &fault = gTask->mem_access_fault; \
-          if (kMemoryAccessNoFault == fault.kind) { \
-            vmill_break_on_fault(); \
-            fault.kind = kMemoryAccessFaultOnRead; \
-            fault.value_type = vtype; \
-            fault.access_size = read_size; \
-            fault.address = addr; \
-          } \
-        } \
+        __vmill_record_read_fault_ ## suffix(addr); \
         return 0; \
       } \
     }
 
+// These ones get implemented in assembly.
+#if !REMILL_ON_AMD64
 MAKE_MEM_READ(uint8_t, uint8_t, 8, 1, kMemoryValueTypeInteger)
 MAKE_MEM_READ(uint16_t, uint16_t, 16, 2, kMemoryValueTypeInteger)
 MAKE_MEM_READ(uint32_t, uint32_t, 32, 4, kMemoryValueTypeInteger)
 MAKE_MEM_READ(uint64_t, uint64_t, 64, 8, kMemoryValueTypeInteger)
+#else
+extern uint8_t __remill_read_memory_8(AddressSpace *, uint64_t);
+extern uint8_t __remill_read_memory_16(AddressSpace *, uint64_t);
+extern uint8_t __remill_read_memory_32(AddressSpace *, uint64_t);
+extern uint8_t __remill_read_memory_64(AddressSpace *, uint64_t);
+#endif  // !REMILL_ON_AMD64
+
 MAKE_MEM_READ(float, float, f32, 4, kMemoryValueTypeFloatingPoint)
 MAKE_MEM_READ(double, double, f64, 8, kMemoryValueTypeFloatingPoint)
-
 #undef MAKE_MEM_READ
 
 double __remill_read_memory_f80(
@@ -224,24 +267,44 @@ double __remill_read_memory_f80(
     AddressSpace *__remill_write_memory_ ## suffix( \
         AddressSpace *memory, uint64_t addr, input_type val) { \
       if (unlikely(!memory->TryWrite(addr, val))) { \
-        if (likely(gTask != nullptr)) { \
-          auto &fault = gTask->mem_access_fault; \
-          if (kMemoryAccessNoFault == fault.kind) { \
-            vmill_break_on_fault(); \
-            fault.kind = kMemoryAccessFaultOnWrite; \
-            fault.value_type = vtype; \
-            fault.access_size = write_size; \
-            fault.address = addr; \
-          } \
-        } \
+        __vmill_record_write_fault_ ## suffix(addr); \
       } \
       return memory; \
     }
 
+// These ones get implemented in assembly.
+#if !REMILL_ON_AMD64
 MAKE_MEM_WRITE(uint8_t, uint8_t, 8, 1, kMemoryValueTypeInteger)
 MAKE_MEM_WRITE(uint16_t, uint16_t, 16, 2, kMemoryValueTypeInteger)
 MAKE_MEM_WRITE(uint32_t, uint32_t, 32, 4, kMemoryValueTypeInteger)
 MAKE_MEM_WRITE(uint64_t, uint64_t, 64, 8, kMemoryValueTypeInteger)
+#else
+extern AddressSpace *__remill_write_memory_8(
+    AddressSpace *, uint64_t, uint8_t);
+extern AddressSpace *__remill_write_memory_16(
+    AddressSpace *, uint64_t, uint16_t);
+extern AddressSpace *__remill_write_memory_32(
+    AddressSpace *, uint64_t, uint32_t);
+extern AddressSpace *__remill_write_memory_64(
+    AddressSpace *, uint64_t, uint64_t);
+
+__attribute__((constructor))
+void __make_asm_funcs_used__(void) {
+  asm volatile (""
+      :
+      : "m"(__remill_read_memory_8),
+        "m"(__remill_read_memory_16),
+        "m"(__remill_read_memory_32),
+        "m"(__remill_read_memory_64),
+        "m"(__remill_write_memory_8),
+        "m"(__remill_write_memory_16),
+        "m"(__remill_write_memory_32),
+        "m"(__remill_write_memory_64)
+      : "memory");
+}
+
+#endif  // !REMILL_ON_AMD64
+
 MAKE_MEM_WRITE(float, float, f32, 4, kMemoryValueTypeFloatingPoint)
 MAKE_MEM_WRITE(double, double, f64, 8, kMemoryValueTypeFloatingPoint)
 

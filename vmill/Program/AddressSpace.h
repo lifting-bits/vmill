@@ -165,6 +165,9 @@ class AddressSpace : public Memory {
   // Minimum allocated address.
   uint64_t min_addr;
 
+  // Mask on addresses (e.g. to make them 32- or 64-bit).
+  const uint64_t addr_mask;
+
   enum : uint64_t {
     kRangeCacheSize = 256ULL,
     kRangeCacheMask = kRangeCacheSize - 1ULL

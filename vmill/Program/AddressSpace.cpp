@@ -47,6 +47,15 @@ static constexpr inline uint64_t RoundUpToPage(uint64_t size) {
   return (size + kPageShift) & kPageMask;
 }
 
+static uint64_t GetAddressMask(void) {
+  const auto arch = remill::GetTargetArch();
+  if (arch->address_size == 32) {
+    return 0xFFFFFFFFULL;
+  } else {
+    return ~0ULL;
+  }
+}
+
 }  // namespace
 
 AddressSpace::AddressSpace(void)
@@ -55,6 +64,7 @@ AddressSpace::AddressSpace(void)
       page_to_map(256),
       wnx_page_to_map(256),
       min_addr(std::numeric_limits<uint64_t>::max()),
+      addr_mask(GetAddressMask()),
       is_dead(false) {
   maps.push_back(invalid_min_map);
   maps.push_back(invalid_max_map);
@@ -66,7 +76,9 @@ AddressSpace::AddressSpace(const AddressSpace &parent)
       invalid_max_map(parent.invalid_max_map),
             maps(parent.maps.size()),
       page_to_map(parent.page_to_map.size()),
-      is_dead(parent.is_dead) {
+      is_dead(parent.is_dead),
+      min_addr(parent.min_addr),
+      addr_mask(parent.addr_mask) {
 
   unsigned i = 0;
   for (const auto &range : parent.maps) {
@@ -126,7 +138,8 @@ bool AddressSpace::CanExecuteAligned(uint64_t addr) const {
   return page_is_executable.count(addr);
 }
 
-bool AddressSpace::TryRead(uint64_t addr, void *val_out, size_t size) {
+bool AddressSpace::TryRead(uint64_t addr_, void *val_out, size_t size) {
+  auto addr = addr_ & addr_mask;
   auto out_stream = reinterpret_cast<uint8_t *>(val_out);
   for (auto page_addr = AlignDownToPage(addr),
             end_addr = addr + size;
@@ -145,7 +158,8 @@ bool AddressSpace::TryRead(uint64_t addr, void *val_out, size_t size) {
   return true;
 }
 
-bool AddressSpace::TryWrite(uint64_t addr, const void *val, size_t size) {
+bool AddressSpace::TryWrite(uint64_t addr_, const void *val, size_t size) {
+  auto addr = addr_ & addr_mask;
   auto in_stream = reinterpret_cast<const uint8_t *>(val);
   for (auto page_addr = AlignDownToPage(addr),
             end_addr = addr + size;
@@ -178,12 +192,14 @@ bool AddressSpace::TryWrite(uint64_t addr, const void *val, size_t size) {
 }
 
 // Read/write a byte to memory.
-bool AddressSpace::TryRead(uint64_t addr, uint8_t *val_out) {
+bool AddressSpace::TryRead(uint64_t addr_, uint8_t *val_out) {
+  const auto addr = addr_ & addr_mask;
   return FindRange(addr).Read(addr, val_out);
 }
 
 #define MAKE_TRY_READ(type) \
-    bool AddressSpace::TryRead(uint64_t addr, type *val_out) { \
+    bool AddressSpace::TryRead(uint64_t addr_, type *val_out) { \
+      const auto addr = addr_ & addr_mask; \
       auto &range = FindRange(addr); \
       auto ptr = reinterpret_cast<const type *>( \
           range.ToReadOnlyVirtualAddress(addr)); \
@@ -209,7 +225,8 @@ MAKE_TRY_READ(double)
 
 #undef MAKE_TRY_READ
 
-bool AddressSpace::TryWrite(uint64_t addr, uint8_t val) {
+bool AddressSpace::TryWrite(uint64_t addr_, uint8_t val) {
+  const auto addr = addr_ & addr_mask;
   if (likely(FindWNXRange(addr).Write(addr, val))) {
     return true;
   } else {
@@ -218,7 +235,8 @@ bool AddressSpace::TryWrite(uint64_t addr, uint8_t val) {
 }
 
 #define MAKE_TRY_WRITE(type) \
-    bool AddressSpace::TryWrite(uint64_t addr, type val) { \
+    bool AddressSpace::TryWrite(uint64_t addr_, type val) { \
+      const auto addr = addr_ & addr_mask; \
       auto &range = FindWNXRange(addr); \
       auto ptr = reinterpret_cast<type *>( \
           range.ToReadWriteVirtualAddress(addr)); \
@@ -245,18 +263,20 @@ MAKE_TRY_WRITE(double)
 #undef MAKE_TRY_WRITE
 
 // Return the virtual address of the memory backing `addr`.
-void *AddressSpace::ToReadWriteVirtualAddress(uint64_t addr) {
+void *AddressSpace::ToReadWriteVirtualAddress(uint64_t addr_) {
+  const auto addr = addr_ & addr_mask;
   return FindRange(addr).ToReadWriteVirtualAddress(addr);
 }
 
 // Return the virtual address of the memory backing `addr`.
-const void *AddressSpace::ToReadOnlyVirtualAddress(uint64_t addr) {
+const void *AddressSpace::ToReadOnlyVirtualAddress(uint64_t addr_) {
+  const auto addr = addr_ & addr_mask;
   return FindRange(addr).ToReadOnlyVirtualAddress(addr);
 }
 
 // Read a byte as an executable byte. This is used for instruction decoding.
 bool AddressSpace::TryReadExecutable(PC pc, uint8_t *val) {
-  auto addr = static_cast<uint64_t>(pc);
+  auto addr = static_cast<uint64_t>(pc) & addr_mask;
   auto page_addr = AlignDownToPage(addr);
   auto &range = FindRangeAligned(page_addr);
   return range.Read(addr, val) && CanExecuteAligned(page_addr);

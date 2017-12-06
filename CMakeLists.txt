@@ -53,6 +53,7 @@ add_library(${PROJECT_NAME} STATIC
     vmill/Arch/Arch.cpp
     vmill/Arch/X86/Log.cpp
     vmill/Arch/X86/Coroutine.S
+    vmill/Arch/X86/Runtime.S
     vmill/Arch/AArch64/Log.cpp
     vmill/BC/Compiler.cpp
     vmill/BC/Lifter.cpp

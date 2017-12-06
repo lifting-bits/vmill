@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 
+#define CAT_(a, b) a ## b
+#define CAT(a, b) CAT_(a, b)
+
 /* Note:    Apple mangles C symbol names to have a leading underscore. */
 #ifdef __APPLE__
 # define SYMBOL(x) CAT(_, x)
