@@ -54,8 +54,7 @@ AddressSpace::AddressSpace(void)
       invalid_max_map(MappedRange::CreateInvalidHigh()),
       page_to_map(256),
       wnx_page_to_map(256),
-      last_map(page_to_map.end()),
-      last_wnx_map(wnx_page_to_map.end()),
+      min_addr(std::numeric_limits<uint64_t>::max()),
       is_dead(false) {
   maps.push_back(invalid_min_map);
   maps.push_back(invalid_max_map);
@@ -93,8 +92,9 @@ bool AddressSpace::IsMarkedTraceHead(PC pc) const {
 void AddressSpace::Kill(void) {
   maps.clear();
   page_to_map.clear();
-  last_map = page_to_map.end();
   is_dead = true;
+  memset(last_map_cache, 0, sizeof(last_map_cache));
+  memset(wnx_last_map_cache, 0, sizeof(wnx_last_map_cache));
 }
 
 // Returns `true` if this address space is "dead".
@@ -133,11 +133,11 @@ bool AddressSpace::TryRead(uint64_t addr, void *val_out, size_t size) {
        page_addr < end_addr;
        page_addr += kPageSize) {
 
-    const auto &range = FindRangeAligned(page_addr);
+    auto &range = FindRangeAligned(page_addr);
     auto page_end_addr = page_addr + kPageSize;
     auto next_end_addr = std::min(end_addr, page_end_addr);
     while (addr < next_end_addr) {
-      if (!range->Read(addr++, out_stream++)) {
+      if (!range.Read(addr++, out_stream++)) {
         return false;
       }
     }
@@ -156,20 +156,20 @@ bool AddressSpace::TryWrite(uint64_t addr, const void *val, size_t size) {
       return false;
     }
 
-    const auto &range = FindRangeAligned(page_addr);
+    auto &range = FindRangeAligned(page_addr);
     if (CanExecuteAligned(page_addr)) {
 
       // TODO(pag): remove cache entries associated with this range
       // TODO(pag): Split the range?
 
-      range->InvalidateCodeVersion();
+      range.InvalidateCodeVersion();
     }
 
     auto page_end_addr = page_addr + kPageSize;
     auto next_end_addr = std::min(end_addr, page_end_addr);
 
     while (addr < next_end_addr) {
-      if (!range->Write(addr++, *in_stream++)) {
+      if (!range.Write(addr++, *in_stream++)) {
         return false;
       }
     }
@@ -179,20 +179,20 @@ bool AddressSpace::TryWrite(uint64_t addr, const void *val, size_t size) {
 
 // Read/write a byte to memory.
 bool AddressSpace::TryRead(uint64_t addr, uint8_t *val_out) {
-  return FindRange(addr)->Read(addr, val_out);
+  return FindRange(addr).Read(addr, val_out);
 }
 
 #define MAKE_TRY_READ(type) \
     bool AddressSpace::TryRead(uint64_t addr, type *val_out) { \
-      const auto &range = FindRange(addr); \
+      auto &range = FindRange(addr); \
       auto ptr = reinterpret_cast<const type *>( \
-          range->ToReadOnlyVirtualAddress(addr)); \
+          range.ToReadOnlyVirtualAddress(addr)); \
       if (unlikely(ptr == nullptr)) { \
         return false; \
       } \
       const auto end_addr = addr + sizeof(type) - 1; \
-      if (likely(range->BaseAddress() <= addr && \
-                 end_addr < range->LimitAddress())) { \
+      if (likely(range.BaseAddress() <= addr && \
+                 end_addr < range.LimitAddress())) { \
         if (likely(AlignDownToPage(addr) == AlignDownToPage(end_addr))) { \
           *val_out = *ptr; \
           return true; \
@@ -210,7 +210,7 @@ MAKE_TRY_READ(double)
 #undef MAKE_TRY_READ
 
 bool AddressSpace::TryWrite(uint64_t addr, uint8_t val) {
-  if (likely(FindWNXRange(addr)->Write(addr, val))) {
+  if (likely(FindWNXRange(addr).Write(addr, val))) {
     return true;
   } else {
     return TryWrite(addr, &val, sizeof(val));
@@ -219,13 +219,13 @@ bool AddressSpace::TryWrite(uint64_t addr, uint8_t val) {
 
 #define MAKE_TRY_WRITE(type) \
     bool AddressSpace::TryWrite(uint64_t addr, type val) { \
-      const auto &range = FindWNXRange(addr); \
+      auto &range = FindWNXRange(addr); \
       auto ptr = reinterpret_cast<type *>( \
-          range->ToReadWriteVirtualAddress(addr)); \
+          range.ToReadWriteVirtualAddress(addr)); \
       if (likely(ptr != nullptr)) { \
         const auto end_addr = addr + sizeof(type) - 1; \
-        if (likely(range->BaseAddress() <= addr && \
-                   end_addr < range->LimitAddress())) { \
+        if (likely(range.BaseAddress() <= addr && \
+                   end_addr < range.LimitAddress())) { \
           if (likely(AlignDownToPage(addr) == AlignDownToPage(end_addr))) { \
             *ptr = val; \
             return true; \
@@ -246,14 +246,12 @@ MAKE_TRY_WRITE(double)
 
 // Return the virtual address of the memory backing `addr`.
 void *AddressSpace::ToReadWriteVirtualAddress(uint64_t addr) {
-  auto &range = FindRange(addr);
-  return range->ToReadWriteVirtualAddress(addr);
+  return FindRange(addr).ToReadWriteVirtualAddress(addr);
 }
 
 // Return the virtual address of the memory backing `addr`.
 const void *AddressSpace::ToReadOnlyVirtualAddress(uint64_t addr) {
-  auto &range = FindRange(addr);
-  return range->ToReadOnlyVirtualAddress(addr);
+  return FindRange(addr).ToReadOnlyVirtualAddress(addr);
 }
 
 // Read a byte as an executable byte. This is used for instruction decoding.
@@ -261,7 +259,7 @@ bool AddressSpace::TryReadExecutable(PC pc, uint8_t *val) {
   auto addr = static_cast<uint64_t>(pc);
   auto page_addr = AlignDownToPage(addr);
   auto &range = FindRangeAligned(page_addr);
-  return range->Read(addr, val) && CanExecuteAligned(page_addr);
+  return range.Read(addr, val) && CanExecuteAligned(page_addr);
 }
 
 namespace {
@@ -505,11 +503,10 @@ bool AddressSpace::FindHole(uint64_t min, uint64_t max, uint64_t size,
 void AddressSpace::CreatePageToRangeMap(void) {
   CHECK(2 <= maps.size());
 
-  last_map = page_to_map.end();
-  last_wnx_map = wnx_page_to_map.end();
-
   page_to_map.clear();
   wnx_page_to_map.clear();
+  memset(last_map_cache, 0, sizeof(last_map_cache));
+  memset(wnx_last_map_cache, 0, sizeof(wnx_last_map_cache));
 
   auto old_read_size = page_to_map.size();
   auto old_write_size = wnx_page_to_map.size();
@@ -522,6 +519,8 @@ void AddressSpace::CreatePageToRangeMap(void) {
     return left->BaseAddress() < right->BaseAddress();
   });
 
+  min_addr = std::numeric_limits<uint64_t>::max();
+
   for (const auto &map : maps) {
     if (!map->IsValid()) {
       continue;
@@ -529,6 +528,8 @@ void AddressSpace::CreatePageToRangeMap(void) {
 
     const auto base_address = map->BaseAddress();
     const auto limit_address = map->LimitAddress();
+
+    min_addr = std::min(min_addr, base_address);
     for (auto addr = base_address; addr < limit_address; addr += kPageSize) {
 
       auto can_read = CanReadAligned(addr);
@@ -551,44 +552,70 @@ void AddressSpace::CreatePageToRangeMap(void) {
 
 // Get the code version associated with some program counter.
 CodeVersion AddressSpace::ComputeCodeVersion(PC pc) {
-  return FindRange(static_cast<uint64_t>(pc))->ComputeCodeVersion();
+  return FindRange(static_cast<uint64_t>(pc)).ComputeCodeVersion();
 }
 
-const MemoryMapPtr &AddressSpace::FindRange(uint64_t addr) {
+MappedRange &AddressSpace::FindRange(uint64_t addr) {
   return FindRangeAligned(AlignDownToPage(addr));
 }
 
-const MemoryMapPtr &AddressSpace::FindRangeAligned(uint64_t addr) {
-  auto page_addr = AlignDownToPage(addr);
-  if (likely(last_map != page_to_map.end() &&
-             page_addr == last_map->first)) {
-    return last_map->second;
+enum : uint64_t {
+  kRangeCachePageShift = 26ULL,
+};
+
+MappedRange &AddressSpace::FindRangeAligned(uint64_t page_addr) {
+  auto last_range = last_map_cache[0];
+  if (likely(last_range && last_range->Contains(page_addr))) {
+    return *last_range;
   }
 
-  last_map = page_to_map.find(page_addr);
-  if (likely(last_map != page_to_map.end())) {
-    return last_map->second;
+  const auto cache_index = ((page_addr * min_addr) >> kRangeCachePageShift) &
+                           kRangeCacheMask;
+
+  last_range = last_map_cache[cache_index];
+  if (likely(last_range && last_range->Contains(page_addr))) {
+    wnx_last_map_cache[0] = last_range;
+    return *last_range;
+  }
+
+  auto it = page_to_map.find(page_addr);
+  if (likely(it != page_to_map.end())) {
+    last_range = it->second.get();
+    last_map_cache[0] = last_range;
+    last_map_cache[cache_index] = last_range;
+    return *last_range;
   } else {
-    return invalid_min_map;
+    return *invalid_min_map.get();
   }
 }
 
-const MemoryMapPtr &AddressSpace::FindWNXRange(uint64_t addr) {
+MappedRange &AddressSpace::FindWNXRange(uint64_t addr) {
   return FindWNXRangeAligned(AlignDownToPage(addr));
 }
 
-const MemoryMapPtr &AddressSpace::FindWNXRangeAligned(uint64_t addr) {
-  auto page_addr = AlignDownToPage(addr);
-  if (likely(last_wnx_map != wnx_page_to_map.end() &&
-             page_addr == last_wnx_map->first)) {
-    return last_wnx_map->second;
+MappedRange &AddressSpace::FindWNXRangeAligned(uint64_t page_addr) {
+  auto last_range = wnx_last_map_cache[0];
+  if (likely(last_range && last_range->Contains(page_addr))) {
+    return *last_range;
   }
 
-  last_wnx_map = wnx_page_to_map.find(page_addr);
-  if (likely(last_wnx_map != wnx_page_to_map.end())) {
-    return last_wnx_map->second;
+  const auto cache_index = ((page_addr * min_addr) >> kRangeCachePageShift) &
+                           kRangeCacheMask;
+
+  last_range = wnx_last_map_cache[cache_index];
+  if (likely(last_range && last_range->Contains(page_addr))) {
+    wnx_last_map_cache[0] = last_range;
+    return *last_range;
+  }
+
+  auto it = wnx_page_to_map.find(page_addr);
+  if (likely(it != wnx_page_to_map.end())) {
+    last_range = it->second.get();
+    wnx_last_map_cache[0] = last_range;
+    wnx_last_map_cache[cache_index] = last_range;
+    return *last_range;
   } else {
-    return invalid_min_map;
+    return *invalid_min_map.get();
   }
 }
 

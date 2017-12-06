@@ -26,6 +26,7 @@ class Workspace {
  public:
   static const std::string &Dir(void);
   static const std::string &SnapshotPath(void);
+  static const std::string &IndexPath(void);
   static const std::string &MemoryDir(void);
   static const std::string &BitcodeDir(void);
   static const std::string &ToolDir(void);

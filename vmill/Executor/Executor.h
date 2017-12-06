@@ -22,6 +22,7 @@
 
 #include "vmill/BC/Trace.h"
 #include "vmill/Runtime/Task.h"
+#include "vmill/Util/FileBackedCache.h"
 
 struct ArchState;
 struct Memory;
@@ -46,6 +47,13 @@ struct InitialTaskInfo {
   AddressSpace *memory;
 };
 
+struct CachedIndexEntry {
+  TraceId trace_id;
+  LiveTraceId live_trace_id;
+};
+
+using IndexCache = FileBackedCache<CachedIndexEntry>;
+
 // Task executor. This manages things like the code cache, and can lift and
 // compile code on request.
 class Executor {
@@ -69,6 +77,9 @@ class Executor {
   std::shared_ptr<llvm::LLVMContext> context;
   std::unique_ptr<Lifter> lifter;
   std::unique_ptr<CodeCache> code_cache;
+
+  // File-backed index of all translations for all code versions.
+  std::unique_ptr<IndexCache> index;
 
   // Have we previously executed `Executor::Run`?
   bool has_run;

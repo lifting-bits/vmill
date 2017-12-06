@@ -78,6 +78,17 @@ const std::string &Workspace::SnapshotPath(void) {
   return path;
 }
 
+const std::string &Workspace::IndexPath(void) {
+  static std::string path;
+  if (path.empty()) {
+    std::stringstream ss;
+    ss << Dir() << remill::PathSeparator() << "index";
+    path = ss.str();
+    path = remill::CanonicalPath(path);
+  }
+  return path;
+}
+
 const std::string &Workspace::MemoryDir(void) {
   static std::string path;
   if (path.empty()) {

@@ -64,6 +64,7 @@ Executor::Executor(void)
     : context(new llvm::LLVMContext),
       lifter(Lifter::Create(context)),
       code_cache(CodeCache::Create(LoadTool(), context)),
+      index(IndexCache::Open(Workspace::IndexPath())),
       has_run(false),
       will_run_many(false),
       init_intrinsic(reinterpret_cast<decltype(init_intrinsic)>(
@@ -92,6 +93,19 @@ Executor::Executor(void)
 
   CHECK(error_intrinsic != nullptr)
       << "Could not locate __remill_error";
+
+  // Load the code cache index from the disk.
+  for (const auto &entry : *index) {
+    const auto &trace_id = entry.trace_id;
+    const auto &live_id = entry.live_trace_id;
+    if (auto lifted_func = code_cache->Lookup(trace_id)) {
+      live_traces[live_id] = lifted_func;
+    }
+  }
+
+  LOG(INFO)
+      << "Loaded " << live_traces.size() << " of " << index->NumEntries()
+      << " entries from the index cache.";
 }
 
 void Executor::DecodeTracesFromTask(Task *task) {
@@ -128,7 +142,9 @@ void Executor::DecodeTracesFromTask(Task *task) {
     // Already lifted, but not in our live cache.
     auto lifted_func = code_cache->Lookup(trace_id);
     if (lifted_func) {
+      index->Append({trace_id, live_id});
       live_traces[live_id] = lifted_func;
+
       traces.erase(it);
       continue;
     }

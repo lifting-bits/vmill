@@ -20,6 +20,8 @@
 #include <cstdint>
 #include <memory>
 
+#include "vmill/Util/Compiler.h"
+
 namespace vmill {
 
 enum class CodeVersion : uint64_t;
@@ -40,31 +42,32 @@ class MappedRange {
 
   virtual bool IsValid(void) const = 0;
 
-  inline uint64_t BaseAddress(void) const {
+  ALWAYS_INLINE uint64_t BaseAddress(void) const {
     return base_address;
   }
 
-  inline uint64_t LimitAddress(void) const {
+  ALWAYS_INLINE uint64_t LimitAddress(void) const {
     return limit_address;
   }
 
-  inline const char *Name(void) const {
+  ALWAYS_INLINE const char *Name(void) const {
     return name;
   }
 
-  inline uint64_t Offset(void) const {
+  ALWAYS_INLINE uint64_t Offset(void) const {
     return offset;
   }
 
-  inline uint64_t Size(void) const {
+  ALWAYS_INLINE uint64_t Size(void) const {
     return limit_address - base_address;
   }
 
-  inline bool Contains(uint64_t address) const {
+  ALWAYS_INLINE bool Contains(uint64_t address) const {
     return base_address <= address && address < limit_address;
   }
 
-  static bool LessThan(const MemoryMapPtr &left, const MemoryMapPtr &right) {
+  ALWAYS_INLINE bool LessThan(const MemoryMapPtr &left,
+                              const MemoryMapPtr &right) {
     return left->BaseAddress() < right->BaseAddress();
   }
 

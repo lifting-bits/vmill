@@ -143,12 +143,12 @@ class AddressSpace : public Memory {
 
   // Find the memory map containing `addr`. If none is found then a "null"
   // map pointer is returned, whose operations will all fail.
-  __attribute__((hot)) const MemoryMapPtr &FindRange(uint64_t addr);
-  __attribute__((hot)) const MemoryMapPtr &FindWNXRange(uint64_t addr);
+  __attribute__((hot)) MappedRange &FindRange(uint64_t addr);
+  __attribute__((hot)) MappedRange &FindWNXRange(uint64_t addr);
 
   // Find the range associated with a page-aligned value of `addr`.
-  __attribute__((hot)) const MemoryMapPtr &FindRangeAligned(uint64_t addr);
-  __attribute__((hot)) const MemoryMapPtr &FindWNXRangeAligned(uint64_t addr);
+  __attribute__((hot)) MappedRange &FindRangeAligned(uint64_t addr);
+  __attribute__((hot)) MappedRange &FindWNXRangeAligned(uint64_t addr);
 
   // Used to represent an invalid memory map.
   MemoryMapPtr invalid_min_map;
@@ -162,8 +162,16 @@ class AddressSpace : public Memory {
   PageCache page_to_map;
   PageCache wnx_page_to_map;
 
-  PageCache::iterator last_map;
-  PageCache::iterator last_wnx_map;
+  // Minimum allocated address.
+  uint64_t min_addr;
+
+  enum : uint64_t {
+    kRangeCacheSize = 256ULL,
+    kRangeCacheMask = kRangeCacheSize - 1ULL
+  };
+
+  MappedRange *last_map_cache[kRangeCacheSize];
+  MappedRange *wnx_last_map_cache[kRangeCacheSize];
 
   // Sets of pages that are readable, writable, and executable.
   std::unordered_set<uint64_t> page_is_readable;
