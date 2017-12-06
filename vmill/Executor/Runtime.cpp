@@ -278,7 +278,11 @@ void __vmill_set_location(PC pc, vmill::TaskStopLocation loc) {
       break;
 
     default:
-      break;
+      return;
+  }
+
+  if (auto fp = GetOpenStraceOutputFile()) {
+    fflush(fp);
   }
 }
 

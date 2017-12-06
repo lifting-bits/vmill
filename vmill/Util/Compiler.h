@@ -21,4 +21,6 @@
 
 #define USED(x) __asm__ __volatile__("" : : "m"(x) : "memory")
 
+#define ALWAYS_INLINE __attribute__((always_inline)) inline
+
 #endif  // VMILL_UTIL_COMPILER_H_

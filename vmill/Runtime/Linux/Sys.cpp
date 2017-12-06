@@ -21,12 +21,15 @@ static Memory *SysExit(Memory *memory, State *state,
   int exit_code = EXIT_SUCCESS;
   if (!syscall.TryGetArgs(memory, state, &exit_code)) {
     STRACE_ERROR(exit, "Couldn't get args");
-    return syscall.SetReturn(memory, state, -EFAULT);
+    memory = syscall.SetReturn(memory, state, -EFAULT);
   } else {
     STRACE_SUCCESS(exit, "status=%d", exit_code);
-    __vmill_set_location(0, vmill::kTaskStoppedAtExit);
-    return memory;
   }
+
+  auto task = __vmill_current();
+  __vmill_set_location(static_cast<addr_t>(task->pc),
+                       vmill::kTaskStoppedAtExit);
+  return memory;
 }
 
 //// Emulate an `gethostname` system call.
