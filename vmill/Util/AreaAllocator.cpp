@@ -78,7 +78,8 @@ AreaAllocator::AreaAllocator(AreaAllocationPerms perms,
       limit(nullptr),
       bump(nullptr),
       prot(PROT_READ | PROT_WRITE | (is_executable ? PROT_EXEC : 0)),
-      flags(MAP_PRIVATE | MAP_ANONYMOUS | (preferred_base ? MAP_FIXED : 0)) {
+      flags(MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE |
+            (preferred_base ? MAP_FIXED : 0)) {
 
   if (preferred_base_) {
     if (static_cast<uintptr_t>(static_cast<uint32_t>(preferred_base_)) ==
@@ -114,6 +115,10 @@ uint8_t *AreaAllocator::Allocate(size_t size, size_t align) {
         << "Cannot map memory at preferred base of " << preferred_base
         << "; got " << ret << " instead";
 
+#ifdef MADV_HUGEPAGE
+    madvise(ret, alloc_size, MADV_HUGEPAGE);
+#endif
+
     base = reinterpret_cast<uint8_t *>(ret);
     bump = base;
     limit = base + alloc_size;
@@ -140,6 +145,10 @@ uint8_t *AreaAllocator::Allocate(size_t size, size_t align) {
     auto err = errno;
     LOG_IF(FATAL, MAP_FAILED == ret)
         << "Cannot map memory for allocator: " << strerror(err);
+
+#ifdef MADV_HUGEPAGE
+    madvise(ret, alloc_size, MADV_HUGEPAGE);
+#endif
 
     auto ret_bytes = reinterpret_cast<uint8_t *>(ret);
     LOG_IF(FATAL, ret_bytes != limit)

@@ -54,6 +54,7 @@ static void __vmill_init_task(
   task->state = new State;
   task->pc = pc;
   task->status = vmill::kTaskStatusRunnable;
+  task->status_on_resume = vmill::kTaskStatusRunnable;
   task->location = vmill::kTaskNotYetStarted;
   task->memory = memory;
   task->async_routine = __vmill_allocate_coroutine();

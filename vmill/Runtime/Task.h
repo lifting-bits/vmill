@@ -88,6 +88,7 @@ struct Task {
 
   // Status information.
   TaskStatus status;
+  TaskStatus status_on_resume;
 
   // Where was this task last?
   TaskStopLocation location;

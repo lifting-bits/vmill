@@ -40,13 +40,14 @@ Coroutine::Coroutine(void)
       _padding0(0) {}
 
 void Coroutine::Pause(Task *task) {
+  task->status_on_resume = task->status;
   task->status = kTaskStatusResumable;
   fpu_rounding_mode = std::fegetround();
   __vmill_yield_async(stack_end);
 }
 
 void Coroutine::Resume(Task *task) {
-  task->status = kTaskStatusRunnable;
+  task->status = task->status_on_resume;
   std::fesetround(fpu_rounding_mode);
   __vmill_yield_async(stack_end);
 }
