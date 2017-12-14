@@ -92,12 +92,27 @@ struct linux32_iovec {
   uint32_t iov_len;
 };
 
+struct linux64_iovec {
+  addr64_t iov_base;
+  uint64_t iov_len;
+};
+
 struct linux32_msghdr {
   addr32_t msg_name;  // `void *`.
   uint32_t msg_namelen;
   addr32_t msg_iov;  // `struct linux32_iovec *`.
   uint32_t msg_iovlen;
   addr32_t msg_control;  // `void *`.
+  uint32_t msg_controllen;
+  int32_t msg_flags;
+};
+
+struct linux64_msghdr {
+  addr64_t msg_name;  // `void *`.
+  uint32_t msg_namelen;
+  addr64_t msg_iov;  // `struct linux32_iovec *`.
+  uint32_t msg_iovlen;
+  addr64_t msg_control;  // `void *`.
   uint32_t msg_controllen;
   int32_t msg_flags;
 };
@@ -111,16 +126,6 @@ struct linux32_cmsghdr {
   uint32_t cmsg_len;
   int32_t cmsg_level;
   int32_t cmsg_type;
-};
-
-struct linux64_msghdr {
-  addr64_t msg_name;  // `void *`.
-  uint32_t msg_namelen;
-  addr64_t msg_iov;
-  uint64_t msg_iovlen;
-  addr64_t msg_control;
-  uint64_t msg_controllen;
-  int32_t msg_flags;
 };
 
 struct linux64_mmsghdr {
@@ -137,6 +142,11 @@ struct linux64_cmsghdr {
 struct linux32_timespec {
   uint32_t tv_sec;
   uint32_t tv_nsec;
+};
+
+struct linux64_timespec {
+  uint64_t tv_sec;
+  uint64_t tv_nsec;
 };
 
 struct linux32_timeval {
@@ -169,6 +179,30 @@ struct linux32_stat {
 
 static_assert(sizeof(linux32_stat) == 88,
               "Invalid packing of `struct linux32_stat`.");
+
+struct stat x;
+
+struct linux64_stat {
+  uint64_t st_dev;
+  uint64_t st_ino;
+  uint64_t st_nlink;
+  uint32_t st_mode;
+  uint32_t st_uid;
+  uint32_t st_gid;
+  uint32_t __pad0;
+  uint64_t st_rdev;
+  int64_t st_size;
+  int64_t st_blksize;
+  int64_t st_blocks;
+  struct linux64_timespec st_atim;
+  struct linux64_timespec st_mtim;
+  struct linux64_timespec st_ctim;
+  int64_t __glibc_reserved[3];
+} __attribute__((packed));
+
+static_assert(sizeof(linux64_stat) == 144,
+              "Invalid packing of `struct linux64_stat`.");
+
 
 struct linux32_stat64 {
   uint64_t st_dev;

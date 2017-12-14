@@ -228,14 +228,12 @@ static void LoadPageRangeFromFile(AddressSpace *addr_space,
 
   auto fd = open(path.c_str(), O_RDONLY);
 
-  // Read bytes from the file, and copy them one-by-one into the address
-  // space.
-  constexpr size_t buff_size = 4096 * 8;
-  auto buff = new uint8_t[buff_size];
-
+  // Read bytes from the file into the address space.
   uint64_t base_addr = static_cast<uint64_t>(range.base());
+
   while (range_size) {
-    auto amount_read_ = read(fd, buff, buff_size);
+    auto buff = addr_space->ToReadWriteVirtualAddress(base_addr);
+    auto amount_read_ = read(fd, buff, range_size);
     if (-1 == amount_read_) {
       CHECK(!range_size)
           << "Failed to read all page range data from " << path;
@@ -243,16 +241,9 @@ static void LoadPageRangeFromFile(AddressSpace *addr_space,
     }
 
     auto amount_read = static_cast<uint64_t>(amount_read_);
-    CHECK(addr_space->TryWrite(base_addr, buff, amount_read))
-        << "Unable to copy " << amount_read << " bytes from "
-        << path << " into address space at address "
-        << std::hex << base_addr << std::dec;
-
     base_addr += amount_read;
     range_size -= amount_read;
   }
-
-  delete[] buff;
 
   close(fd);
 }

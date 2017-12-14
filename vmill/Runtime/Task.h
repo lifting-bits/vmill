@@ -43,7 +43,7 @@ enum TaskStatus : uint64_t {
   kTaskStatusExited,
 };
 
-enum TaskStopLocation {
+enum TaskStopLocation : uint64_t {
   kTaskNotYetStarted,
   kTaskStoppedAtSnapshotEntryPoint,
   kTaskStoppedAtJumpTarget,
@@ -52,6 +52,7 @@ enum TaskStopLocation {
   kTaskStoppedAtError,
   kTaskStoppedAfterHyperCall,
   kTaskStoppedBeforeUnhandledHyperCall,
+  kTaskStoppedAtUnsupportedInstruction,
   kTaskStoppedAtExit
 };
 

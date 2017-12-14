@@ -30,6 +30,7 @@
 #include "vmill/Arch/Decoder.h"
 #include "vmill/BC/Lifter.h"
 #include "vmill/BC/Util.h"
+#include "vmill/Etc/ThreadPool/ThreadPool.h"
 #include "vmill/Executor/AsyncIO.h"
 #include "vmill/Executor/CodeCache.h"
 #include "vmill/Executor/Coroutine.h"
@@ -42,11 +43,26 @@
 DECLARE_uint64(num_io_threads);
 DECLARE_string(tool);
 
+DEFINE_uint64(num_lift_threads, 1,
+              "Number of threads that can be used for lifting.");
+
 namespace vmill {
 
 thread_local Executor *gExecutor = nullptr;
+extern thread_local Task *gTask;
 
 namespace {
+
+// Thread pool for processing code lifting requests.
+static std::unique_ptr<ThreadPool> gLiftPool;
+
+// Returns the thread pool, and potentially lazily initializes it.
+static const std::unique_ptr<ThreadPool> &GetLiftThreadPool(void) {
+  if (unlikely(!gLiftPool)) {
+    gLiftPool.reset(new ThreadPool(1));
+  }
+  return gLiftPool;
+}
 
 // Load the instrumentation tool that we'll be running.
 static std::unique_ptr<Tool> LoadTool(void) {
@@ -154,7 +170,36 @@ void Executor::DecodeTracesFromTask(Task *task) {
       << "Decoded trace list does not include originally requested PC "
       << std::hex << task_pc_uint;
 
-  LiftDecodedTraces(traces);
+  auto coro = task->async_routine;
+  if (!FLAGS_num_lift_threads || !coro ||
+      !coro->ExecutingNow() || gTask != task) {
+    LiftDecodedTraces(traces);
+    return;
+  }
+
+  auto &pool = GetLiftThreadPool();
+
+  std::future<void> future = pool->Submit([&] () {
+    LiftDecodedTraces(traces);
+  });
+
+  coro->Pause(task);
+
+  auto done = false;
+  do {
+    switch (future.wait_for(std::chrono::milliseconds(2))) {
+      case std::future_status::deferred:
+        future.wait();
+        done = true;
+        break;
+      case std::future_status::ready:
+        done = true;
+        break;
+      case std::future_status::timeout:
+        coro->Pause(task);
+        break;
+    }
+  } while (!done);
 }
 
 void Executor::LiftDecodedTraces(const DecodedTraceList &traces) {

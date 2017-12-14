@@ -334,6 +334,7 @@ void __vmill_set_location(PC pc, vmill::TaskStopLocation loc) {
   switch (loc) {
     case kTaskStoppedAtError:
     case kTaskStoppedBeforeUnhandledHyperCall:
+    case kTaskStoppedAtUnsupportedInstruction:
       gTask->status = kTaskStatusError;
       break;
     case kTaskStoppedAtExit:
@@ -518,9 +519,10 @@ void __vmill_run(Task *task) {
   gTask = task;
 
   // The task is waiting for an asynchronous operation to complete.
-  DCHECK(task->async_routine != nullptr);
+  const auto coro = task->async_routine;
+  DCHECK(coro != nullptr);
   if (likely(kTaskStatusResumable == task->status)) {
-    task->async_routine->Resume(task);
+    coro->Resume(task);
   } else {
     DCHECK(kTaskStatusRunnable == task->status);
     const auto lifted_func = gExecutor->FindLiftedFunctionForTask(task);

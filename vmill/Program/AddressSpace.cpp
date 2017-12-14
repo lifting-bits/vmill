@@ -30,6 +30,14 @@
 #include "vmill/Util/Compiler.h"
 #include "vmill/Util/Hash.h"
 
+
+
+// static FILE *OpenReadAddrs(void) {
+//   return fopen("/tmp/read_addrs", "w");
+// }
+
+// static FILE * read_addrs = nullptr;
+
 namespace vmill {
 namespace {
 
@@ -76,9 +84,10 @@ AddressSpace::AddressSpace(const AddressSpace &parent)
       invalid_max_map(parent.invalid_max_map),
             maps(parent.maps.size()),
       page_to_map(parent.page_to_map.size()),
-      is_dead(parent.is_dead),
+      wnx_page_to_map(parent.wnx_page_to_map.size()),
       min_addr(parent.min_addr),
-      addr_mask(parent.addr_mask) {
+      addr_mask(parent.addr_mask),
+      is_dead(parent.is_dead) {
 
   unsigned i = 0;
   for (const auto &range : parent.maps) {
@@ -276,6 +285,9 @@ const void *AddressSpace::ToReadOnlyVirtualAddress(uint64_t addr_) {
 
 // Read a byte as an executable byte. This is used for instruction decoding.
 bool AddressSpace::TryReadExecutable(PC pc, uint8_t *val) {
+  // if (!read_addrs) {
+  //   read_addrs = OpenReadAddrs();
+  // }
   auto addr = static_cast<uint64_t>(pc) & addr_mask;
   auto page_addr = AlignDownToPage(addr);
   auto &range = FindRangeAligned(page_addr);
@@ -584,24 +596,26 @@ enum : uint64_t {
 };
 
 MappedRange &AddressSpace::FindRangeAligned(uint64_t page_addr) {
-  auto last_range = last_map_cache[0];
+  // if (read_addrs) {
+  //   fprintf(read_addrs, "%lx,", page_addr >> 12);
+  // }
+  auto last_range = last_map_cache[kRangeCacheSize];
   if (likely(last_range && last_range->Contains(page_addr))) {
     return *last_range;
   }
 
-  const auto cache_index = ((page_addr * min_addr) >> kRangeCachePageShift) &
-                           kRangeCacheMask;
+  const auto cache_index = (page_addr >> 12) & kRangeCacheMask;
 
   last_range = last_map_cache[cache_index];
   if (likely(last_range && last_range->Contains(page_addr))) {
-    wnx_last_map_cache[0] = last_range;
+    last_map_cache[kRangeCacheSize] = last_range;
     return *last_range;
   }
 
   auto it = page_to_map.find(page_addr);
   if (likely(it != page_to_map.end())) {
     last_range = it->second.get();
-    last_map_cache[0] = last_range;
+    last_map_cache[kRangeCacheSize] = last_range;
     last_map_cache[cache_index] = last_range;
     return *last_range;
   } else {
@@ -614,24 +628,23 @@ MappedRange &AddressSpace::FindWNXRange(uint64_t addr) {
 }
 
 MappedRange &AddressSpace::FindWNXRangeAligned(uint64_t page_addr) {
-  auto last_range = wnx_last_map_cache[0];
+  auto last_range = wnx_last_map_cache[kRangeCacheSize];
   if (likely(last_range && last_range->Contains(page_addr))) {
     return *last_range;
   }
 
-  const auto cache_index = ((page_addr * min_addr) >> kRangeCachePageShift) &
-                           kRangeCacheMask;
+  const auto cache_index = (page_addr >> 12) & kRangeCacheMask;
 
   last_range = wnx_last_map_cache[cache_index];
   if (likely(last_range && last_range->Contains(page_addr))) {
-    wnx_last_map_cache[0] = last_range;
+    wnx_last_map_cache[kRangeCacheSize] = last_range;
     return *last_range;
   }
 
   auto it = wnx_page_to_map.find(page_addr);
   if (likely(it != wnx_page_to_map.end())) {
     last_range = it->second.get();
-    wnx_last_map_cache[0] = last_range;
+    wnx_last_map_cache[kRangeCacheSize] = last_range;
     wnx_last_map_cache[cache_index] = last_range;
     return *last_range;
   } else {

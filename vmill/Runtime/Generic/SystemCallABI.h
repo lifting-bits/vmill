@@ -43,7 +43,8 @@ class SystemCallABI {
   }
 
   // Find the return address of this system call.
-  virtual addr_t GetReturnAddress(Memory *memory, addr_t ret_addr) const = 0;
+  virtual addr_t GetReturnAddress(Memory *memory, State *state,
+                                  addr_t ret_addr) const = 0;
 
   template <typename T1>
   inline bool TryGetArgs(Memory *memory, State *state,

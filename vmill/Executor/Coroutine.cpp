@@ -14,9 +14,16 @@
  * limitations under the License.
  */
 
+#include <gflags/gflags.h>
+#include <glog/logging.h>
+
 #include <cfenv>
 
 #include "vmill/Executor/Coroutine.h"
+#include "vmill/Runtime/Task.h"
+
+DEFINE_uint64(coroutine_stack_size, 1UL << 20,
+              "Size in bytes for coroutine stacks. Default is 1 MiB.");
 
 namespace vmill {
 
@@ -34,20 +41,30 @@ extern void __vmill_yield_async(void *);
 
 }  // extern "C"
 
+ZoneAllocator Coroutine::gAllocator(kAreaRW, kAreaCoroutineStacks);
+
 Coroutine::Coroutine(void)
-    : stack_end(&(stack[1])),
+    : stack_end(nullptr),
       fpu_rounding_mode(0),
-      _padding0(0) {}
+      on_stack(0),
+      stack(gAllocator.Allocate(FLAGS_coroutine_stack_size)) {
+
+  // TODO(pag): Add redzone to the coroutine stack.
+  stack_end = stack.base + FLAGS_coroutine_stack_size;
+}
 
 void Coroutine::Pause(Task *task) {
   task->status_on_resume = task->status;
-  task->status = kTaskStatusResumable;
+  if (kTaskStatusRunnable == task->status) {
+    task->status = kTaskStatusResumable;
+  }
   fpu_rounding_mode = std::fegetround();
   __vmill_yield_async(stack_end);
 }
 
 void Coroutine::Resume(Task *task) {
   task->status = task->status_on_resume;
+  DCHECK(task->status_on_resume == kTaskStatusRunnable);
   std::fesetround(fpu_rounding_mode);
   __vmill_yield_async(stack_end);
 }

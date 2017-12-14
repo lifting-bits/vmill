@@ -72,10 +72,18 @@ SYMBOL(__vmill_execute_async):
     // RSI -> LiftedFunction *
 
     mov rdx, [rdi + 24] // RDX -> Coroutine *
+
+    // Increment the on-stack counter.
+    inc dword ptr [rdx + 12]
+    push rdx
+
     mov rdx, [rdx]      // RDX -> Stack *
 
     // Align to an 8-byte boundary. (1)
     lea rdx, [rdx - 120]
+
+    // Copy the coroutine pointer into the stack for later.
+    pop qword ptr [rdx + 48]
 
     // Save the callee-saved registers for `__vmill_pause_async`, or for this
     // function to restore if it doesn't pause.
@@ -95,13 +103,17 @@ SYMBOL(__vmill_execute_async):
     pop rsp                         // Swap stacks.
 
     // Restore the callee-saved registers. These were saved by us, or by
-    //
+    // `__vmill_yield_async`.
     mov rbx, [rdx + 0]
     mov rbp, [rdx + 8]
     mov r12, [rdx + 16]
     mov r13, [rdx + 24]
     mov r14, [rdx + 32]
     mov r15, [rdx + 40]
+
+    // Decrement the `on_stack` counter.
+    mov rdx, [rdx + 48]
+    dec dword ptr [rdx + 12]
 
     ret
 .Lend2:

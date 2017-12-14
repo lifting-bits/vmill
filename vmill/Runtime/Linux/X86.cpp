@@ -17,10 +17,9 @@
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wpadded"
 
-// 32-bit `int 0x80` system call ABI.
-class X86Int0x80SystemCall : public SystemCallABI {
+class X86BaseSystemCall : public SystemCallABI {
  public:
-  virtual ~X86Int0x80SystemCall(void) = default;
+  virtual ~X86BaseSystemCall(void) {}
 
   addr_t GetPC(const State *state) const final {
     return state->gpr.rip.aword;
@@ -34,17 +33,23 @@ class X86Int0x80SystemCall : public SystemCallABI {
     state->gpr.rsp.aword = new_sp;
   }
 
-  addr_t GetReturnAddress(Memory *, addr_t ret_addr) const final {
-    return ret_addr;
-  }
-
   addr_t GetSystemCallNum(Memory *, State *state) const final {
     return state->gpr.rax.aword;
+  }
+};
+
+// 32-bit `int 0x80` system call ABI.
+class X86Int0x80SystemCall : public X86BaseSystemCall {
+ public:
+  virtual ~X86Int0x80SystemCall(void) = default;
+
+  addr_t GetReturnAddress(Memory *, State *, addr_t ret_addr) const final {
+    return ret_addr;
   }
 
  protected:
   Memory *DoSetReturn(Memory *memory, State *state,
-                    addr_t ret_val) const final {
+                      addr_t ret_val) const final {
     state->gpr.rax.aword = ret_val;
     return memory;
   }
@@ -75,24 +80,13 @@ class X86Int0x80SystemCall : public SystemCallABI {
 };
 
 // 32-bit `sysenter` ABI.
-class X86SysEnter32SystemCall : public SystemCallABI {
+class X86SysEnter32SystemCall : public X86BaseSystemCall {
  public:
   virtual ~X86SysEnter32SystemCall(void) = default;
 
-  addr_t GetPC(const State *state) const final {
-    return state->gpr.rip.aword;
-  }
-
-  void SetPC(State *state, addr_t new_pc) const final {
-    state->gpr.rip.aword = new_pc;
-  }
-
-  void SetSP(State *state, addr_t new_sp) const final {
-    state->gpr.rsp.aword = new_sp;
-  }
-
   // Find the return address of this system call.
-  addr_t GetReturnAddress(Memory *memory, addr_t ret_addr) const final {
+  addr_t GetReturnAddress(Memory *memory, State *,
+                          addr_t ret_addr) const final {
     addr_t addr = ret_addr;
     for (addr_t i = 0; i < 15; ++i) {
       uint8_t b0 = 0;
@@ -117,10 +111,6 @@ class X86SysEnter32SystemCall : public SystemCallABI {
     } else {
       return num_args < 6;
     }
-  }
-
-  addr_t GetSystemCallNum(Memory *, State *state) const final {
-    return state->gpr.rax.aword;
   }
 
  protected:
@@ -151,6 +141,46 @@ class X86SysEnter32SystemCall : public SystemCallABI {
   }
 };
 
+// 64-bit `syscall` system call ABI.
+class Amd64SyscallSystemCall : public X86BaseSystemCall {
+ public:
+  virtual ~Amd64SyscallSystemCall(void) = default;
+
+  addr_t GetReturnAddress(Memory *, State *, addr_t ret_addr) const final {
+    return ret_addr;
+  }
+
+ protected:
+  Memory *DoSetReturn(Memory *memory, State *state,
+                      addr_t ret_val) const final {
+    state->gpr.rax.aword = ret_val;
+    return memory;
+  }
+
+  bool CanReadArgs(Memory *, State *, int num_args) const final {
+    return num_args <= 6;
+  }
+
+  // See https://code.woboq.org/linux/linux/arch/x86/entry/entry_64.S.html#106
+  addr_t GetArg(Memory *&memory, State *state, int i) const final {
+    switch (i) {
+      case 0:
+        return state->gpr.rdi.aword;
+      case 1:
+        return state->gpr.rsi.aword;
+      case 2:
+        return state->gpr.rdx.aword;
+      case 3:
+        return state->gpr.r10.aword;
+      case 4:
+        return state->gpr.r8.aword;
+      case 5:
+        return state->gpr.r9.aword;
+      default:
+        return 0;
+    }
+  }
+};
 
 #pragma clang diagnostic pop
 
@@ -162,12 +192,13 @@ Memory *__remill_async_hyper_call(
     State &state, addr_t ret_addr, Memory *memory) {
 
   switch (state.hyper_call) {
+#if 32 == ADDRESS_SIZE_BITS
     case AsyncHyperCall::kX86SysEnter: {
       X86SysEnter32SystemCall syscall;
       auto user_stack = state.gpr.rsp.aword;
       memory = X86SystemCall(memory, &state, syscall);
       if (syscall.Completed()) {
-        ret_addr = syscall.GetReturnAddress(memory, ret_addr);
+        ret_addr = syscall.GetReturnAddress(memory, &state, ret_addr);
         state.gpr.rip.aword = ret_addr;
         state.gpr.rsp.aword = user_stack;
         __vmill_set_location(ret_addr, vmill::kTaskStoppedAfterHyperCall);
@@ -180,13 +211,27 @@ Memory *__remill_async_hyper_call(
         X86Int0x80SystemCall syscall;
         memory = X86SystemCall(memory, &state, syscall);
         if (syscall.Completed()) {
-          ret_addr = syscall.GetReturnAddress(memory, ret_addr);
+          ret_addr = syscall.GetReturnAddress(memory, &state, ret_addr);
           state.gpr.rip.aword = ret_addr;
           __vmill_set_location(ret_addr, vmill::kTaskStoppedAfterHyperCall);
         }
       }
       break;
+#endif
 
+#if 64 == ADDRESS_SIZE_BITS
+    case AsyncHyperCall::kX86SysCall: {
+      Amd64SyscallSystemCall syscall;
+      memory = AMD64SystemCall(memory, &state, syscall);
+      if (syscall.Completed()) {
+        ret_addr = syscall.GetReturnAddress(memory, &state, ret_addr);
+        state.gpr.rip.aword = ret_addr;
+        state.gpr.rcx.aword = ret_addr;
+        __vmill_set_location(ret_addr, vmill::kTaskStoppedAfterHyperCall);
+      }
+      break;
+    }
+#endif
     default:
       __vmill_set_location(
           ret_addr, vmill::kTaskStoppedBeforeUnhandledHyperCall);
@@ -252,26 +297,37 @@ Memory *__remill_sync_hyper_call(
       break;
 
 #if defined(__x86_64__) || defined(__i386__) || defined(_M_X86)
-    case SyncHyperCall::kX86CPUID:
-      STRACE_SUCCESS(sync_hyper_call, "kX86CPUID eax=%x ebx=%x ecx=%x edx=%x",
-                     eax, ebx, ecx, edx);
+    case SyncHyperCall::kX86CPUID: {
+
       state.gpr.rax.aword = 0;
       state.gpr.rbx.aword = 0;
       state.gpr.rcx.aword = 0;
       state.gpr.rdx.aword = 0;
-
+/*
       asm volatile(
           "cpuid"
-          : "=a"(state.gpr.rax.dword),
-            "=b"(state.gpr.rbx.dword),
-            "=c"(state.gpr.rcx.dword),
-            "=d"(state.gpr.rdx.dword)
+          : "=a"(state.gpr.rax.aword),
+            "=b"(state.gpr.rbx.aword),
+            "=c"(state.gpr.rcx.aword),
+            "=d"(state.gpr.rdx.aword)
           : "a"(eax),
             "b"(ebx),
             "c"(ecx),
             "d"(edx)
+          : "%rax", "%rbx", "%rcx", "%rdx", "memory"
       );
+
+      STRACE_SUCCESS(sync_hyper_call,
+                     "kX86CPUID eax=%x ecx=%x -> eax=%x ebx=%x ecx=%x edx=%x",
+                     eax, ecx, state.gpr.rax.dword, state.gpr.rbx.dword,
+                     state.gpr.rcx.dword, state.gpr.rdx.dword);
+*/
+
+      STRACE_ERROR(
+          sync_hyper_call, "kX86CPUID eax=%x ecx=%x -> eax=0 ebx=0 ecx=0 edx=0",
+          eax, ecx);
       break;
+    }
 
     case SyncHyperCall::kX86ReadTSC:
       state.gpr.rax.aword = 0;
@@ -299,6 +355,18 @@ Memory *__remill_sync_hyper_call(
                      state.gpr.rax.dword, state.gpr.rcx.dword,
                      state.gpr.rdx.dword);
       break;
+
+    case SyncHyperCall::kX86EmulateInstruction:
+    case SyncHyperCall::kAMD64EmulateInstruction: {
+      STRACE_ERROR(sync_hyper_call, "Unsupported instruction at %" PRIxADDR,
+                   state.gpr.rip.aword);
+      __vmill_set_location(state.gpr.rip.aword,
+                           vmill::kTaskStoppedAtUnsupportedInstruction);
+      __vmill_yield(task);
+      __builtin_unreachable();
+      break;
+    }
+
 #endif  // defined(__x86_64__) || defined(__i386__) || defined(_M_X86)
 
     default:

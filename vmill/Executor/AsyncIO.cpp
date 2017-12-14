@@ -29,6 +29,7 @@
 #include "vmill/Etc/ThreadPool/ThreadPool.h"
 #include "vmill/Executor/AsyncIO.h"
 #include "vmill/Executor/Coroutine.h"
+#include "vmill/Runtime/Task.h"
 #include "vmill/Util/Compiler.h"
 
 DEFINE_uint64(num_io_threads, 0, "Number of I/O threads.");
@@ -40,14 +41,14 @@ extern thread_local Task *gTask;
 namespace {
 
 // Thread pool that processes blocking system calls.
-static std::unique_ptr<ThreadPool> gPool;
+static std::unique_ptr<ThreadPool> gIOPool;
 
 // Returns the thread pool, and potentially lazily initializes it.
-static const std::unique_ptr<ThreadPool> &GetThreadPool(void) {
-  if (unlikely(!gPool)) {
-    gPool.reset(new ThreadPool(FLAGS_num_io_threads));
+static const std::unique_ptr<ThreadPool> &GetIOThreadPool(void) {
+  if (unlikely(!gIOPool)) {
+    gIOPool.reset(new ThreadPool(FLAGS_num_io_threads));
   }
-  return gPool;
+  return gIOPool;
 }
 
 // Wraps around a blocking system call (passed as the first argument to get
@@ -93,7 +94,7 @@ static uint64_t AsyncWrapper_(Ret (*)(Args...), uintptr_t target) {
     // with the value.
     static Ret run_func(Args... args) {
       auto coro = gTask->async_routine;
-      auto &pool = GetThreadPool();
+      auto &pool = GetIOThreadPool();
       std::future<OutVal> future = pool->Submit(run_func_async, gTask, args...);
       auto done = false;
       do {

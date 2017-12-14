@@ -19,7 +19,7 @@
 #ifndef VMILL_EXECUTOR_COROUTINE_H_
 #define VMILL_EXECUTOR_COROUTINE_H_
 
-#include "vmill/Runtime/Task.h"
+#include "vmill/Util/ZoneAllocator.h"
 
 struct ArchState;
 struct Memory;
@@ -39,25 +39,28 @@ class alignas(16) Coroutine {
   void Pause(Task *task);
   void Resume(Task *task);
 
+  inline bool ExecutingNow(void) const {
+    return 0 < on_stack;
+  }
+
  private:
   Coroutine(const Coroutine &) = delete;
   Coroutine(const Coroutine &&) = delete;
   void operator=(const Coroutine &) = delete;
   void operator=(const Coroutine &&) = delete;
 
-  struct alignas(16) Stack {
-    uint64_t stack[(4096 * 64) / sizeof(uint64_t)];
-  };
-
   // Convenient pointer into `stack`.
-  Stack * const stack_end;
+  uint8_t *stack_end;
 
   // Rounding mode at the time of a yield/resume.
   int32_t fpu_rounding_mode;
-  int32_t _padding0;
 
-  // The stack on which the coroutine executes.
-  Stack stack[1];
+  // Are we current executing on the coroutine stack?
+  uint32_t on_stack;
+
+  ZoneAllocation stack;
+
+  static ZoneAllocator gAllocator;
 };
 
 }  // namespace vmill

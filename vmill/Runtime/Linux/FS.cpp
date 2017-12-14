@@ -108,6 +108,31 @@ static Memory *SysFAccessAt(Memory *memory, State *state,
   }
 }
 
+// Emulate an `lseek` system call.
+static Memory *SysLseek(Memory *memory, State *state,
+                        const SystemCallABI &syscall) {
+  int fd = -1;
+  addr_t offset = 0;
+  int whence = 0;
+
+  if (!syscall.TryGetArgs(memory, state, &fd, &offset, &whence)) {
+    STRACE_ERROR(lseek, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  auto offset64 = static_cast<off64_t>(offset);
+  auto new_offset64 = lseek64(fd, offset64, whence);
+  if (static_cast<off64_t>(-1) == new_offset64) {
+    auto err = errno;
+    STRACE_ERROR(lseek, "fd=%d, offset=%ld, whence=%d: %s",
+                 fd, offset64, whence, strerror(err));
+    return syscall.SetReturn(memory, state, -err);
+  }
+
+  STRACE_SUCCESS(lseek, "fd=%d, offset=%ld, whence=%d, new offset=%ld",
+                 fd, offset64, whence, new_offset64);
+  return syscall.SetReturn(memory, state, new_offset64);
+}
 
 // Emulate an `llseek` system call.
 static Memory *SysLlseek(Memory *memory, State *state,
@@ -149,6 +174,10 @@ static Memory *SysLlseek(Memory *memory, State *state,
 
 static void SetInodeNumber(const struct stat &info, linux32_stat *info32) {
   info32->st_ino = info.st_ino;
+}
+
+static void SetInodeNumber(const struct stat &info, linux64_stat *info64) {
+  info64->st_ino = info.st_ino;
 }
 
 static void SetInodeNumber(const struct stat &info, linux32_stat64 *info32) {

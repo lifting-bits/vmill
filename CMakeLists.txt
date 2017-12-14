@@ -69,6 +69,7 @@ add_library(${PROJECT_NAME} STATIC
     vmill/Util/AreaAllocator.cpp
     vmill/Util/Hash.cpp
     vmill/Util/Timer.cpp
+    vmill/Util/ZoneAllocator.cpp
     vmill/Workspace/Tool.cpp
     vmill/Workspace/Workspace.cpp
     vmill/Etc/ThreadPool/ThreadPool.cpp

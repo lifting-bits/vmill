@@ -27,10 +27,11 @@ enum AreaAllocationPerms {
 };
 
 enum AreaPreferences : uint64_t {
-  kAreaCodeCacheCode = 0x80000000ULL,  // 2 GiB.
-  kAreaCodeCacheData = 0xC0000000ULL,  // 3 GiB.
-  kAreaCodeCacheIndex = 0x100000000000ULL,
-  kAreaAddressSpace = 0x200000000000ULL
+  kAreaCodeCacheCode    = 0x80000000ULL,  // 2 GiB.
+  kAreaCodeCacheData    = 0xC0000000ULL,  // 3 GiB.
+  kAreaCodeCacheIndex   = 0x10000000000ULL,
+  kAreaAddressSpace     = 0x20000000000ULL,
+  kAreaCoroutineStacks  = 0x30000000000ULL
 };
 
 // Bump-pointer allocator for a contiguous region of memory.

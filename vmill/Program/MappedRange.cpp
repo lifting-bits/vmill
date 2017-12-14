@@ -25,7 +25,7 @@
 #include <vector>
 
 #include "vmill/Program/MappedRange.h"
-#include "vmill/Util/AreaAllocator.h"
+#include "vmill/Util/ZoneAllocator.h"
 #include "vmill/Util/Compiler.h"
 #include "vmill/Util/Hash.h"
 
@@ -44,75 +44,6 @@ class EmptyMemoryMap;
 class CopyOnWriteMemoryMap;
 class InvalidMemoryMap;
 
-struct Allocation {
-  uint8_t *base;
-  size_t size;
-
-  inline void Reset(void) {
-    base = nullptr;
-    size = 0;
-  }
-};
-
-class ArrayMemoryAllocator {
- public:
-  ArrayMemoryAllocator(void)
-      : allocator(kAreaRW, kAreaAddressSpace) {}
-
-  Allocation Allocate(size_t size) {
-
-    Allocation alloc = {};
-    auto lb = free_list.lower_bound(size);
-    if (lb != free_list.end() && !lb->second.empty()) {
-      alloc.base = lb->second.back();
-      alloc.size = lb->first;
-      lb->second.pop_back();
-
-      if (alloc.size != size) {
-        CHECK(alloc.size >= size);
-
-
-        auto diff = alloc.size - size;
-        if (diff > kPageSize) {
-          LOG(INFO)
-              << "Splitting previously freed " << std::hex << alloc.size
-              << "-byte allocation for a " << size << "-byte allocation"
-              << std::dec;
-
-          Allocation split = {alloc.base, diff};
-          Free(split);
-
-          alloc.base = &(alloc.base[diff]);
-          alloc.size = size;
-        } else {
-          LOG(INFO)
-              << "Re-using a previously freed " << std::hex << alloc.size
-              << "-byte allocation for a " << size << "-byte allocation"
-              << std::dec;
-        }
-      }
-
-    } else {
-      alloc.base = allocator.Allocate(size, 64  /* Cache line size */);
-      alloc.size = size;
-    }
-
-    memset(alloc.base, 0, size);
-    return alloc;
-  }
-
-  void Free(Allocation &alloc) {
-    if (alloc.base) {
-      free_list[alloc.size].push_back(alloc.base);
-      alloc.Reset();
-    }
-  }
-
-  AreaAllocator allocator;
-  std::map<size_t, std::vector<uint8_t *>> free_list;
-};
-
-
 // Basic information about some region of mapped memory within an address space.
 class MappedRangeBase : public MappedRange {
  public:
@@ -125,7 +56,7 @@ class MappedRangeBase : public MappedRange {
 
   CodeVersion code_version;
   bool code_version_is_valid;
-  Allocation data;
+  ZoneAllocation data;
   MemoryMapPtr parent;
 };
 
@@ -161,7 +92,7 @@ class ArrayMemoryMap : public MappedRangeBase {
   void *ToReadWriteVirtualAddress(uint64_t addr) final;
   const void *ToReadOnlyVirtualAddress(uint64_t addr) final;
 
-  static ArrayMemoryAllocator allocator;
+  static ZoneAllocator gAllocator;
 };
 
 // Implements an empty range of memory that is filled with zeroes.
@@ -268,7 +199,7 @@ bool InvalidMemoryMap::IsValid(void) const {
   return false;
 }
 
-ArrayMemoryAllocator ArrayMemoryMap::allocator;
+ZoneAllocator ArrayMemoryMap::gAllocator(kAreaRW, kAreaAddressSpace);
 
 // Allocate memory for some data. This will redzone the allocation with
 // two unreadable/unwritable pages around the allocation.
@@ -279,7 +210,7 @@ ArrayMemoryMap::ArrayMemoryMap(uint64_t base_address_, uint64_t limit_address_,
   CHECK(Size() == (Size() / kPageSize) * kPageSize)
       << "Invalid memory map size.";
 
-  data = allocator.Allocate(Size());
+  data = gAllocator.Allocate(Size());
 }
 
 ArrayMemoryMap::ArrayMemoryMap(ArrayMemoryMap *steal)
@@ -290,7 +221,7 @@ ArrayMemoryMap::ArrayMemoryMap(ArrayMemoryMap *steal)
 }
 
 ArrayMemoryMap::~ArrayMemoryMap(void) {
-  allocator.Free(data);
+  gAllocator.Free(data);
 }
 
 bool ArrayMemoryMap::Read(uint64_t address, uint8_t *out_val) {

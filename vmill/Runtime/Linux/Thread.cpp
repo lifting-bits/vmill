@@ -19,6 +19,8 @@
 #endif
 
 #include <sched.h>
+#include <asm/prctl.h>
+#include <sys/prctl.h>
 
 #ifndef CLONE_NEWCGROUP
 # define CLONE_NEWCGROUP 0
@@ -195,7 +197,8 @@ static Memory *DoClone(Memory *memory, State *state,
 
   // Get the return address of this system call, which is the resume point for
   // the child thread.
-  addr_t ret_addr = syscall.GetReturnAddress(memory, syscall.GetPC(state));
+  addr_t ret_addr = syscall.GetReturnAddress(
+      memory, state, syscall.GetPC(state));
 
   linux_task *parent = __vmill_current();
   linux_task *child = __vmill_create_task(
@@ -290,5 +293,70 @@ static Memory *SysCloneB(Memory *memory, State *state,
   return DoClone(memory, state, syscall, child_stack,
                  flags, ptid, newtls, ctid);
 }
+
+#if 64 == VMILL_RUNTIME_X86
+// Emulate the `arch_prctl` system call on x86, ARMv8.
+static Memory *SysArchPrctl(Memory *memory, State *state,
+                            const SystemCallABI &syscall) {
+  int code = 0;
+  addr_t addr = 0;
+  if (!syscall.TryGetArgs(memory, state, &code, &addr)) {
+    STRACE_ERROR(arch_prctl, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  switch (code) {
+    case ARCH_SET_FS:
+      if (!__vmill_can_read_byte(memory, addr)) {
+        STRACE_ERROR(
+            arch_prctl, "Invalid addr=%" PRIxADDR " for ARCH_SET_FS", addr);
+        return syscall.SetReturn(memory, state, -EPERM);
+      } else {
+        state->addr.fs_base.aword = addr;
+        STRACE_SUCCESS(arch_prctl, "Set FS base to addr=%" PRIxADDR, addr);
+        return syscall.SetReturn(memory, state, 0);
+      }
+
+    case ARCH_SET_GS:
+      if (!__vmill_can_read_byte(memory, addr)) {
+        STRACE_ERROR(
+            arch_prctl, "Invalid addr=%" PRIxADDR " for ARCH_SET_GS", addr);
+        return syscall.SetReturn(memory, state, -EPERM);
+      } else {
+        state->addr.gs_base.aword = addr;
+        STRACE_SUCCESS(arch_prctl, "Set GS base to addr=%" PRIxADDR, addr);
+        return syscall.SetReturn(memory, state, 0);
+      }
+
+    case ARCH_GET_FS:
+      if (!TryWriteMemory(memory, addr, state->addr.fs_base.aword)) {
+        STRACE_ERROR(
+            arch_prctl, "Can't write FS base to addr=%" PRIxADDR, addr);
+        return syscall.SetReturn(memory, state, -EFAULT);
+      } else {
+        STRACE_SUCCESS(
+            arch_prctl, "Set FS base to [addr=%" PRIxADDR "]=%" PRIxADDR,
+            addr, state->addr.fs_base.aword);
+        return syscall.SetReturn(memory, state, 0);
+      }
+
+    case ARCH_GET_GS:
+      if (!TryWriteMemory(memory, addr, state->addr.gs_base.aword)) {
+        STRACE_ERROR(
+            arch_prctl, "Can't write GS base to addr=%" PRIxADDR, addr);
+        return syscall.SetReturn(memory, state, -EFAULT);
+      } else {
+        STRACE_SUCCESS(
+            arch_prctl, "Set GS base to [addr=%" PRIxADDR "]=%" PRIxADDR,
+            addr, state->addr.gs_base.aword);
+        return syscall.SetReturn(memory, state, 0);
+      }
+
+    default:
+      STRACE_ERROR(arch_prctl, "Invalid code=%d", code);
+      return syscall.SetReturn(memory, state, -EINVAL);
+  }
+}
+#endif  // 64 == VMILL_RUNTIME_X86
 
 }  // namespace

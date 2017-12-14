@@ -112,7 +112,8 @@ Compiler::Compiler(const std::shared_ptr<llvm::LLVMContext> &context_)
 
   machine = std::unique_ptr<llvm::TargetMachine>(target->createTargetMachine(
       host_triple, cpu, GetNativeFeatureString(), options,
-      llvm::Reloc::PIC_, llvm::CodeModel::JITDefault,
+      llvm::Reloc::PIC_,
+      llvm::CodeModel::Kernel,  // Code+data in high 2 GiB.
       CodeGenOptLevel()));
 
   CHECK(machine)

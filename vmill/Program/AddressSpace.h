@@ -173,8 +173,8 @@ class AddressSpace : public Memory {
     kRangeCacheMask = kRangeCacheSize - 1ULL
   };
 
-  MappedRange *last_map_cache[kRangeCacheSize];
-  MappedRange *wnx_last_map_cache[kRangeCacheSize];
+  MappedRange *last_map_cache[kRangeCacheSize + 1];
+  MappedRange *wnx_last_map_cache[kRangeCacheSize + 1];
 
   // Sets of pages that are readable, writable, and executable.
   std::unordered_set<uint64_t> page_is_readable;

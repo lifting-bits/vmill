@@ -1062,8 +1062,9 @@ class SocketCallABI : public SystemCallABI {
     syscall.SetSP(state, new_sp);
   }
 
-  addr_t GetReturnAddress(Memory *, addr_t ret_addr) const final {
-    return ret_addr;
+  addr_t GetReturnAddress(Memory *memory, State *state,
+                          addr_t ret_addr) const final {
+    return syscall.GetReturnAddress(memory, state, ret_addr);
   }
 
   addr_t GetSystemCallNum(Memory *memory, State *state) const final {

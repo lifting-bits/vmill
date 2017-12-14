@@ -34,7 +34,7 @@ class AArch64SupervisorCall : public SystemCallABI {
     state->gpr.sp.aword = new_sp;
   }
 
-  addr_t GetReturnAddress(Memory *, addr_t ret_addr) const final {
+  addr_t GetReturnAddress(Memory *, State *, addr_t ret_addr) const final {
     return ret_addr;
   }
 
@@ -87,7 +87,7 @@ Memory *__remill_async_hyper_call(
       AArch64SupervisorCall syscall;
       memory = AArch64SystemCall(memory, &state, syscall);
       if (syscall.Completed()) {
-        ret_addr = syscall.GetReturnAddress(memory, ret_addr);
+        ret_addr = syscall.GetReturnAddress(memory, &state, ret_addr);
         state.gpr.pc.aword = ret_addr;
         __vmill_set_location(ret_addr, vmill::kTaskStoppedAfterHyperCall);
       }
