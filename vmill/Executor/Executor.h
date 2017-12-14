@@ -21,11 +21,14 @@
 #include <unordered_map>
 
 #include "vmill/BC/Trace.h"
+#include "vmill/Etc/ThreadPool/ThreadPool.h"
 #include "vmill/Runtime/Task.h"
 #include "vmill/Util/FileBackedCache.h"
 
 struct ArchState;
 struct Memory;
+
+class ThreadPool;
 
 namespace llvm {
 class LLVMContext;
@@ -71,11 +74,8 @@ class Executor {
   __attribute__((noinline))
   void DecodeTracesFromTask(Task *task);
 
-  __attribute__((noinline))
-  void LiftDecodedTraces(const DecodedTraceList &traces);
-
   std::shared_ptr<llvm::LLVMContext> context;
-  std::unique_ptr<Lifter> lifter;
+  std::unique_ptr<ThreadPool> lifters;
   std::unique_ptr<CodeCache> code_cache;
 
   // File-backed index of all translations for all code versions.

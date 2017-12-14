@@ -30,7 +30,6 @@
 #include "vmill/Arch/Decoder.h"
 #include "vmill/BC/Lifter.h"
 #include "vmill/BC/Util.h"
-#include "vmill/Etc/ThreadPool/ThreadPool.h"
 #include "vmill/Executor/AsyncIO.h"
 #include "vmill/Executor/CodeCache.h"
 #include "vmill/Executor/Coroutine.h"
@@ -53,15 +52,16 @@ extern thread_local Task *gTask;
 
 namespace {
 
-// Thread pool for processing code lifting requests.
-static std::unique_ptr<ThreadPool> gLiftPool;
+// Thread-specific lifters for supporting asynchronous lifting.
+static thread_local std::unique_ptr<Lifter> gLifter;
 
-// Returns the thread pool, and potentially lazily initializes it.
-static const std::unique_ptr<ThreadPool> &GetLiftThreadPool(void) {
-  if (unlikely(!gLiftPool)) {
-    gLiftPool.reset(new ThreadPool(1));
+// Returns a thread-specific lifter object.
+static const std::unique_ptr<Lifter> &GetLifter(
+    const std::shared_ptr<llvm::LLVMContext> &context) {
+  if (unlikely(!gLifter)) {
+    Lifter::Create(context).swap(gLifter);
   }
-  return gLiftPool;
+  return gLifter;
 }
 
 // Load the instrumentation tool that we'll be running.
@@ -78,7 +78,7 @@ static std::unique_ptr<Tool> LoadTool(void) {
 
 Executor::Executor(void)
     : context(new llvm::LLVMContext),
-      lifter(Lifter::Create(context)),
+      lifters(new ThreadPool(std::max<size_t>(1, FLAGS_num_lift_threads))),
       code_cache(CodeCache::Create(LoadTool(), context)),
       index(IndexCache::Open(Workspace::IndexPath())),
       has_run(false),
@@ -170,40 +170,35 @@ void Executor::DecodeTracesFromTask(Task *task) {
       << "Decoded trace list does not include originally requested PC "
       << std::hex << task_pc_uint;
 
+  std::future<std::unique_ptr<llvm::Module>> future_module = lifters->Submit(
+      [this, &traces] (void) {
+        auto &lifter = GetLifter(context);
+        return lifter->Lift(traces);
+      });
+
   auto coro = task->async_routine;
-  if (!FLAGS_num_lift_threads || !coro ||
-      !coro->ExecutingNow() || gTask != task) {
-    LiftDecodedTraces(traces);
-    return;
+  if (!coro || !coro->ExecutingNow() || gTask != task) {
+    future_module.wait();
+  } else {
+    coro->Pause(task);
+    auto done = false;
+    do {
+      switch (future_module.wait_for(std::chrono::milliseconds(2))) {
+        case std::future_status::deferred:
+          future_module.wait();
+          done = true;
+          break;
+        case std::future_status::ready:
+          done = true;
+          break;
+        case std::future_status::timeout:
+          coro->Pause(task);
+          break;
+      }
+    } while (!done);
   }
 
-  auto &pool = GetLiftThreadPool();
-
-  std::future<void> future = pool->Submit([&] () {
-    LiftDecodedTraces(traces);
-  });
-
-  coro->Pause(task);
-
-  auto done = false;
-  do {
-    switch (future.wait_for(std::chrono::milliseconds(2))) {
-      case std::future_status::deferred:
-        future.wait();
-        done = true;
-        break;
-      case std::future_status::ready:
-        done = true;
-        break;
-      case std::future_status::timeout:
-        coro->Pause(task);
-        break;
-    }
-  } while (!done);
-}
-
-void Executor::LiftDecodedTraces(const DecodedTraceList &traces) {
-  auto module = lifter->Lift(traces);
+  auto module = future_module.get();
   if (!module) {
     return;
   }
