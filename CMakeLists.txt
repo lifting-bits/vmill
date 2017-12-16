@@ -62,6 +62,7 @@ add_library(${PROJECT_NAME} STATIC
     vmill/Executor/CodeCache.cpp
     vmill/Executor/Coroutine.cpp
     vmill/Executor/Executor.cpp
+    vmill/Executor/Memory.cpp
     vmill/Executor/Runtime.cpp
     vmill/Program/AddressSpace.cpp
     vmill/Program/MappedRange.cpp
@@ -72,6 +73,7 @@ add_library(${PROJECT_NAME} STATIC
     vmill/Util/ZoneAllocator.cpp
     vmill/Workspace/Tool.cpp
     vmill/Workspace/Workspace.cpp
+    vmill/Etc/liballoc/liballoc.c
     vmill/Etc/ThreadPool/ThreadPool.cpp
     vmill/Etc/xxHash/xxhash.c
 )

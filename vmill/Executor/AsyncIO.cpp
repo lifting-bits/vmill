@@ -34,6 +34,14 @@
 
 DEFINE_uint64(num_io_threads, 0, "Number of I/O threads.");
 
+#ifdef __APPLE__
+# define TO_STR_(x) #x
+# define TO_STR(x) TO_STR_(x)
+# define SYM(a) TO_STR(_ ## a)
+#else
+# define SYM(a) #a
+#endif
+
 namespace vmill {
 
 extern thread_local Task *gTask;
@@ -123,26 +131,27 @@ static uint64_t AsyncWrapper_(Ret (*)(Args...), uintptr_t target) {
 
 #define AsyncWrapper(func_name) \
   AsyncWrapper_<struct async_ ## func_name>( \
-    func_name, this->ProxyTool::FindSymbolForLinking(\
-                   #func_name, reinterpret_cast<uintptr_t>(func_name)))
+    func_name, \
+    this->ProxyTool::FindSymbolForLinking( \
+        SYM(func_name), reinterpret_cast<uintptr_t>(func_name)))
 
 }  // namespace
 
 AsyncIOTool::AsyncIOTool(std::unique_ptr<Tool> tool_)
     : ProxyTool(std::move(tool_)) {
 
-  async_funcs["read"] = AsyncWrapper(read);
-  async_funcs["write"] = AsyncWrapper(write);
-  async_funcs["connect"] = AsyncWrapper(connect);
-  async_funcs["recvfrom"] = AsyncWrapper(recvfrom);
-  async_funcs["sendto"] = AsyncWrapper(sendto);
-  async_funcs["sendmsg"] = AsyncWrapper(sendmsg);
-  async_funcs["recvmsg"] = AsyncWrapper(recvmsg);
-  async_funcs["poll"] = AsyncWrapper(poll);
-  async_funcs["select"] = AsyncWrapper(select);
-  async_funcs["getaddrinfo"] = AsyncWrapper(getaddrinfo);
-  async_funcs["getnameinfo"] = AsyncWrapper(getnameinfo);
-  async_funcs["sleep"] = AsyncWrapper(sleep);
+  async_funcs[SYM(read)] = AsyncWrapper(read);
+  async_funcs[SYM(write)] = AsyncWrapper(write);
+  async_funcs[SYM(connect)] = AsyncWrapper(connect);
+  async_funcs[SYM(recvfrom)] = AsyncWrapper(recvfrom);
+  async_funcs[SYM(sendto)] = AsyncWrapper(sendto);
+  async_funcs[SYM(sendmsg)] = AsyncWrapper(sendmsg);
+  async_funcs[SYM(recvmsg)] = AsyncWrapper(recvmsg);
+  async_funcs[SYM(poll)] = AsyncWrapper(poll);
+  async_funcs[SYM(select)] = AsyncWrapper(select);
+  async_funcs[SYM(getaddrinfo)] = AsyncWrapper(getaddrinfo);
+  async_funcs[SYM(getnameinfo)] = AsyncWrapper(getnameinfo);
+  async_funcs[SYM(sleep)] = AsyncWrapper(sleep);
 }
 
 // Called when lifted bitcode or the runtime needs to resolve an external

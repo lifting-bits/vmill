@@ -34,6 +34,7 @@
 #include "vmill/Executor/CodeCache.h"
 #include "vmill/Executor/Coroutine.h"
 #include "vmill/Executor/Executor.h"
+#include "vmill/Executor/Memory.h"
 #include "vmill/Program/AddressSpace.h"
 #include "vmill/Util/Compiler.h"
 #include "vmill/Workspace/Tool.h"
@@ -68,10 +69,10 @@ static const std::unique_ptr<Lifter> &GetLifter(
 static std::unique_ptr<Tool> LoadTool(void) {
   auto tool = Tool::Load(FLAGS_tool);
   if (FLAGS_num_io_threads) {
-    return std::unique_ptr<Tool>(new AsyncIOTool(std::move(tool)));
-  } else {
-    return tool;
+    tool = std::unique_ptr<Tool>(new AsyncIOTool(std::move(tool)));
   }
+  tool = std::unique_ptr<Tool>(new MemoryManagerTool(std::move(tool)));
+  return tool;
 }
 
 }  // namespace

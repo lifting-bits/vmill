@@ -28,8 +28,9 @@ enum : size_t {
 }  // namespace
 
 ZoneAllocator::ZoneAllocator(AreaAllocationPerms perms,
-                             uintptr_t preferred_base)
-    : allocator(perms, preferred_base) {}
+                             uintptr_t preferred_base,
+                             size_t page_size)
+    : allocator(perms, preferred_base, page_size) {}
 
 ZoneAllocation ZoneAllocator::Allocate(size_t size) {
   ZoneAllocation alloc = {};

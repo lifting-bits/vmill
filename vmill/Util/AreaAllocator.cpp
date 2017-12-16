@@ -40,10 +40,6 @@
 namespace vmill {
 namespace {
 
-enum : size_t {
-  k2MiB = 2097152ULL
-};
-
 const uint8_t kBreakPointBytes[] = {
 #if REMILL_ON_AMD64 || REMILL_ON_X86
     0xCC  // `INT3`.
@@ -62,16 +58,12 @@ static void FillWithBreakPoints(uint8_t *base, uint8_t *limit) {
   }
 }
 
-// TODO(pag): Eventually support querying for the system huge page size.
-static size_t GetPageSize(void) {
-  return k2MiB;
-}
-
 }  // namespace
 
 AreaAllocator::AreaAllocator(AreaAllocationPerms perms,
-                             uintptr_t preferred_base_)
-    : page_size(GetPageSize()),
+                             uintptr_t preferred_base_,
+                             size_t page_size_)
+    : page_size(page_size_),
       preferred_base(reinterpret_cast<void *>(preferred_base_)),
       is_executable(kAreaRWX == perms),
       base(nullptr),

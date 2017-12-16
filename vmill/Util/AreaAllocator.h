@@ -31,13 +31,19 @@ enum AreaPreferences : uint64_t {
   kAreaCodeCacheData    = 0xC0000000ULL,  // 3 GiB.
   kAreaCodeCacheIndex   = 0x10000000000ULL,
   kAreaAddressSpace     = 0x20000000000ULL,
-  kAreaCoroutineStacks  = 0x30000000000ULL
+  kAreaCoroutineStacks  = 0x30000000000ULL,
+  kAreaRuntimeHeap      = 0x40000000000ULL,
+};
+
+enum : size_t {
+  k2MiB = 2097152ULL
 };
 
 // Bump-pointer allocator for a contiguous region of memory.
 class AreaAllocator {
  public:
-  AreaAllocator(AreaAllocationPerms perms, uintptr_t preferred_base_=0);
+  AreaAllocator(AreaAllocationPerms perms, uintptr_t preferred_base_=0,
+                size_t page_size_=k2MiB);
   ~AreaAllocator(void);
 
   uint8_t *Allocate(size_t size, size_t align=0);

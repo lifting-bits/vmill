@@ -37,7 +37,8 @@ struct ZoneAllocation {
 class ZoneAllocator {
  public:
   ZoneAllocator(AreaAllocationPerms perms,
-                uintptr_t preferred_base_=0);
+                uintptr_t preferred_base=0,
+                size_t page_size=k2MiB);
 
   ZoneAllocation Allocate(size_t size);
 
