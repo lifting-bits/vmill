@@ -21,7 +21,7 @@
 #include <string>
 #include <type_traits>
 
-#include "vmill/Etc/xxHash/xxhash.h"
+#include "third_party/xxHash/xxhash.h"
 
 namespace vmill {
 namespace detail {

@@ -1,6 +1,6 @@
 // Copyright (c) 2012 Jakob Progsch, Václav Zeman
 
-#include "vmill/Etc/ThreadPool/ThreadPool.h"
+#include "third_party/ThreadPool/ThreadPool.h"
 
 // the constructor just launches some amount of workers
 ThreadPool::ThreadPool(size_t threads)

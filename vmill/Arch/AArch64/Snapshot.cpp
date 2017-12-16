@@ -33,7 +33,7 @@
 
 #include "remill/Arch/Arch.h"
 
-#include "../../vmill/Program/Snapshot.h"
+#include "vmill/Program/Snapshot.h"
 
 #define ADDRESS_SIZE_BITS 64
 #include "remill/Arch/AArch64/Runtime/State.h"

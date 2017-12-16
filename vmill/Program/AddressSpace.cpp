@@ -25,11 +25,11 @@
 #include "remill/Arch/Arch.h"
 #include "remill/OS/OS.h"
 
-#include "vmill/Etc/xxHash/xxhash.h"
 #include "vmill/Program/AddressSpace.h"
 #include "vmill/Util/Compiler.h"
 #include "vmill/Util/Hash.h"
 
+#include "third_party/xxHash/xxhash.h"
 
 
 // static FILE *OpenReadAddrs(void) {

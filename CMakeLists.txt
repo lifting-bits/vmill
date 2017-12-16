@@ -73,9 +73,9 @@ add_library(${PROJECT_NAME} STATIC
     vmill/Util/ZoneAllocator.cpp
     vmill/Workspace/Tool.cpp
     vmill/Workspace/Workspace.cpp
-    vmill/Etc/liballoc/liballoc.c
-    vmill/Etc/ThreadPool/ThreadPool.cpp
-    vmill/Etc/xxHash/xxhash.c
+    third_party/liballoc/liballoc.c
+    third_party/ThreadPool/ThreadPool.cpp
+    third_party/xxHash/xxhash.c
 )
 
 set_property(TARGET ${PROJECT_NAME} PROPERTY POSITION_INDEPENDENT_CODE ON)
@@ -90,6 +90,39 @@ set(VMILL_INCLUDEDIRECTORIES ${PROJECT_INCLUDEDIRECTORIES})
 
 add_subdirectory(vmill/Runtime)
 
-add_subdirectory(tools/snapshot)
-add_subdirectory(tools/execute)
-#add_subdirectory(tools/microx)
+set(VMILL_EXECUTE vmill-execute-${REMILL_LLVM_VERSION})
+
+add_executable(${VMILL_EXECUTE}
+    Execute.cpp
+)
+
+target_link_libraries(${VMILL_EXECUTE} PRIVATE vmill ${PROJECT_LIBRARIES})
+target_include_directories(${VMILL_EXECUTE} SYSTEM PUBLIC ${PROJECT_INCLUDEDIRECTORIES})
+target_compile_definitions(${VMILL_EXECUTE} PUBLIC ${PROJECT_DEFINITIONS})
+set_target_properties(${VMILL_EXECUTE} PROPERTIES COMPILE_FLAGS ${PROJECT_CXXFLAGS})
+
+install(
+    TARGETS ${VMILL_EXECUTE}
+    RUNTIME DESTINATION bin
+    LIBRARY DESTINATION lib
+)
+
+
+set(VMILL_SNAPSHOT vmill-snapshot-${REMILL_LLVM_VERSION})
+
+add_executable(${VMILL_SNAPSHOT}
+    Snapshot.cpp
+    vmill/Arch/X86/Snapshot.cpp
+    vmill/Arch/AArch64/Snapshot.cpp
+)
+
+target_link_libraries(${VMILL_SNAPSHOT} PRIVATE vmill ${PROJECT_LIBRARIES})
+target_include_directories(${VMILL_SNAPSHOT} SYSTEM PUBLIC ${PROJECT_INCLUDEDIRECTORIES})
+target_compile_definitions(${VMILL_SNAPSHOT} PUBLIC ${PROJECT_DEFINITIONS})
+set_target_properties(${VMILL_SNAPSHOT} PROPERTIES COMPILE_FLAGS ${PROJECT_CXXFLAGS})
+
+install(
+    TARGETS ${VMILL_SNAPSHOT}
+    RUNTIME DESTINATION bin
+    LIBRARY DESTINATION lib
+)

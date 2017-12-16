@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
-#include "vmill/Etc/liballoc/liballoc.h"
 #include "vmill/Executor/Memory.h"
 #include "vmill/Util/ZoneAllocator.h"
+
+#include "third_party/liballoc/liballoc.h"
 
 #ifdef __APPLE__
 # define TO_STR_(x) #x

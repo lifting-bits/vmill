@@ -27,7 +27,7 @@
 
 #include "remill/Arch/Arch.h"
 
-#include "../../vmill/Program/Snapshot.h"
+#include "vmill/Program/Snapshot.h"
 
 #define HAS_FEATURE_AVX 1
 #define HAS_FEATURE_AVX512 1

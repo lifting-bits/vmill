@@ -21,9 +21,10 @@
 #include <unordered_map>
 
 #include "vmill/BC/Trace.h"
-#include "vmill/Etc/ThreadPool/ThreadPool.h"
 #include "vmill/Runtime/Task.h"
 #include "vmill/Util/FileBackedCache.h"
+
+#include "third_party/ThreadPool/ThreadPool.h"
 
 struct ArchState;
 struct Memory;

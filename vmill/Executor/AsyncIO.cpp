@@ -26,11 +26,12 @@
 #include <sys/socket.h>
 #include <unordered_map>
 
-#include "vmill/Etc/ThreadPool/ThreadPool.h"
 #include "vmill/Executor/AsyncIO.h"
 #include "vmill/Executor/Coroutine.h"
 #include "vmill/Runtime/Task.h"
 #include "vmill/Util/Compiler.h"
+
+#include "third_party/ThreadPool/ThreadPool.h"
 
 DEFINE_uint64(num_io_threads, 0, "Number of I/O threads.");
 
