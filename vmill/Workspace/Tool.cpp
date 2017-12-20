@@ -21,6 +21,8 @@
 #include "remill/OS/FileSystem.h"
 #include "vmill/Workspace/Tool.h"
 
+#include "tools/taint/TaintTracker.h"
+
 namespace vmill {
 
 Tool::Tool(void) {}
@@ -33,9 +35,20 @@ uint64_t Tool::FindSymbolForLinking(const std::string &, uint64_t resolved) {
   return resolved;
 }
 
+bool Tool::InstrumentRuntime(llvm::Module *) {
+  return false;
+}
+
+bool Tool::InstrumentTrace(llvm::Function *, uint64_t) {
+  return false;
+}
+
 std::unique_ptr<Tool> Tool::Load(const std::string &name_or_path) {
   if (name_or_path == "null") {
     return std::unique_ptr<Tool>(new NullTool);
+
+  } else if (name_or_path == "taint") {
+    return std::unique_ptr<Tool>(new TaintTrackerTool(1));
 
   } else if (remill::FileExists(name_or_path)) {
     LOG(FATAL)
@@ -60,6 +73,16 @@ ProxyTool::~ProxyTool(void) {}
 uint64_t ProxyTool::FindSymbolForLinking(
     const std::string &name, uint64_t resolved) {
   return tool->FindSymbolForLinking(name, resolved);
+}
+
+// Instrument the runtime module.
+bool ProxyTool::InstrumentRuntime(llvm::Module *module) {
+  return tool->InstrumentRuntime(module);
+}
+
+// Instrument a lifted function/trace.
+bool ProxyTool::InstrumentTrace(llvm::Function *func, uint64_t pc) {
+  return tool->InstrumentTrace(func, pc);
 }
 
 }  // namespace vmill

@@ -214,8 +214,6 @@ void Executor::DecodeTracesFromTask(Task *task) {
   auto file_name = ss.str();
   remill::StoreModuleToFile(module.get(), file_name);
 
-  // TODO(pag): Instrument module.
-
   code_cache->AddModuleToCache(module);
 
   // Add the now lifted traces into the live trace cache.

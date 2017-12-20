@@ -55,24 +55,33 @@ add_library(${PROJECT_NAME} STATIC
     vmill/Arch/X86/Coroutine.S
     vmill/Arch/X86/Runtime.S
     vmill/Arch/AArch64/Log.cpp
+    
     vmill/BC/Compiler.cpp
     vmill/BC/Lifter.cpp
+    vmill/BC/Optimize.cpp
     vmill/BC/Util.cpp
+    
     vmill/Executor/AsyncIO.cpp
     vmill/Executor/CodeCache.cpp
     vmill/Executor/Coroutine.cpp
     vmill/Executor/Executor.cpp
     vmill/Executor/Memory.cpp
     vmill/Executor/Runtime.cpp
+    
     vmill/Program/AddressSpace.cpp
     vmill/Program/MappedRange.cpp
     vmill/Program/Snapshot.cpp
+    
     vmill/Util/AreaAllocator.cpp
     vmill/Util/Hash.cpp
     vmill/Util/Timer.cpp
     vmill/Util/ZoneAllocator.cpp
+    
     vmill/Workspace/Tool.cpp
     vmill/Workspace/Workspace.cpp
+    
+    tools/taint/TaintTracker.cpp
+    
     third_party/liballoc/liballoc.c
     third_party/ThreadPool/ThreadPool.cpp
     third_party/xxHash/xxhash.c

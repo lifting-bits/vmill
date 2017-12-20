@@ -25,6 +25,9 @@
 #include <unordered_map>
 
 #include <llvm/ExecutionEngine/JITEventListener.h>
+#include <llvm/IR/Constant.h>
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Object/ObjectFile.h>
 #include <llvm/Support/MemoryBuffer.h>
@@ -36,6 +39,7 @@
 #include "remill/OS/FileSystem.h"
 
 #include "vmill/BC/Compiler.h"
+#include "vmill/BC/Optimize.h"
 #include "vmill/Executor/CodeCache.h"
 #include "vmill/Program/AddressSpace.h"
 #include "vmill/Util/AreaAllocator.h"
@@ -140,6 +144,9 @@ class CodeCacheImpl : public CodeCache,
 
  private:
   CodeCacheImpl(void) = delete;
+
+  void ReoptimizeModule(const std::unique_ptr<llvm::Module> &module);
+  void InstrumentTraces(const std::unique_ptr<llvm::Module> &module);
 
   const std::unique_ptr<Tool> tool;
 
@@ -297,13 +304,22 @@ void CodeCacheImpl::LoadRuntimeLibrary(void) {
   if (!remill::FileExists(pending_source_file)) {
     auto bitcode_path = Workspace::RuntimeBitcodePath();
     DLOG(INFO)
-        << "Loading runtime library bitcode " << bitcode_path;
+        << "Loading runtime library bitcode from " << bitcode_path;
 
     std::unique_ptr<llvm::Module> runtime(remill::LoadModuleFromFile(
         context.get(), bitcode_path));
 
     DLOG(INFO)
-        << "JIT-compiling runtime library bitcode " << bitcode_path;
+        << "Instrumenting runtime library";
+
+    if (tool->InstrumentRuntime(runtime.get())) {
+      DLOG(INFO)
+          << "Optimizing instrumented runtime";
+      ReoptimizeModule(runtime);
+    }
+
+    DLOG(INFO)
+        << "JIT-compiling runtime library bitcode";
     compiler.CompileModuleToFile(*runtime, pending_source_file);
   }
 
@@ -407,9 +423,71 @@ static std::string ModuleTailName(const std::unique_ptr<llvm::Module> &module) {
   return name;
 }
 
+// Reoptimize the module `module` after it has been instrumented by a tool.
+void CodeCacheImpl::ReoptimizeModule(
+    const std::unique_ptr<llvm::Module> &module) {
+  llvm::Module::iterator func_it;
+  llvm::Module::iterator func_it_end;
+
+  auto init = false;
+  auto func_generator = [&] (void) -> llvm::Function * {
+    if (!init) {
+      func_it = module->begin();
+      func_it_end = module->end();
+      init = true;
+    }
+    if (func_it == func_it_end) {
+      return nullptr;
+    } else {
+      return &*func_it++;
+    }
+  };
+
+  OptimizeModule(module.get(), func_generator);
+}
+
+// Tell the tool to instrument each lifted function.
+void CodeCacheImpl::InstrumentTraces(
+    const std::unique_ptr<llvm::Module> &module) {
+
+  std::vector<llvm::Function *> funcs;
+  funcs.reserve(module->getFunctionList().size());
+
+  for (auto &func : *module) {
+    if (!func.isDeclaration()) {
+      funcs.push_back(&func);
+    }
+  }
+
+  auto changed = false;
+  auto md_id = context->getMDKindID("PC");
+  for (auto func : funcs) {
+    auto node = func->getMetadata(md_id);
+    if (!node) {
+      continue;
+    }
+
+    auto pc_ci = llvm::mdconst::extract<llvm::ConstantInt>(node->getOperand(0));
+    if (!pc_ci) {
+      LOG(FATAL)
+          << "Couldn't extract PC metadata from lifted trace function";
+    } else {
+      auto pc = pc_ci->getZExtValue();
+      changed = tool->InstrumentTrace(func, pc) || changed;
+    }
+  }
+
+  if (changed) {
+    ReoptimizeModule(module);
+  }
+}
+
 // Load a JIT-compiled library.
 void CodeCacheImpl::AddModuleToCache(
     const std::unique_ptr<llvm::Module> &module) {
+
+  InstrumentTraces(module);
+
   std::stringstream lib_ss;
   lib_ss << Workspace::LibraryDir() << remill::PathSeparator()
          << ModuleTailName(module) << ".obj";

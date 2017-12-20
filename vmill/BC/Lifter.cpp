@@ -30,13 +30,10 @@
 #include <llvm/ADT/Triple.h>
 
 #include <llvm/IR/Function.h>
-#include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
 
-#include <llvm/Transforms/IPO.h>
-#include <llvm/Transforms/IPO/PassManagerBuilder.h>
-#include <llvm/Transforms/Scalar.h>
 #include <llvm/Transforms/Utils/Local.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 #include <llvm/Transforms/Utils/ValueMapper.h>
@@ -44,7 +41,6 @@
 #include "remill/Arch/Arch.h"
 #include "remill/Arch/Name.h"
 #include "remill/BC/ABI.h"
-#include "remill/BC/Compat/TargetLibraryInfo.h"
 #include "remill/BC/IntrinsicTable.h"
 #include "remill/BC/Lifter.h"
 #include "remill/BC/Util.h"
@@ -53,6 +49,7 @@
 
 #include "vmill/Arch/Decoder.h"
 #include "vmill/BC/Lifter.h"
+#include "vmill/BC/Optimize.h"
 #include "vmill/BC/Trace.h"
 #include "vmill/BC/Util.h"
 
@@ -102,6 +99,9 @@ class LifterImpl : public Lifter {
   // on the host architecture.
   remill::InstructionLifter lifter;
 
+  // Metadata ID for program counters.
+  unsigned pc_metadata_id;
+
  private:
   LifterImpl(void) = delete;
 };
@@ -111,7 +111,8 @@ LifterImpl::LifterImpl(const std::shared_ptr<llvm::LLVMContext> &context_)
       context(context_),
       semantics(remill::LoadTargetSemantics(context.get())),
       intrinsics(semantics.get()),
-      lifter(remill::AddressType(semantics.get()), &intrinsics) {
+      lifter(remill::AddressType(semantics.get()), &intrinsics),
+      pc_metadata_id(context->getMDKindID("PC")) {
 
   auto target_arch = remill::GetTargetArch();
 
@@ -141,36 +142,19 @@ static void RunO3(const FuncToTraceMap &funcs) {
   }
   auto module = funcs.begin()->first->getParent();
 
-  llvm::legacy::FunctionPassManager func_manager(module);
-  llvm::legacy::PassManager module_manager;
+  auto func_it = funcs.begin();
+  auto func_it_end = funcs.end();
 
-  auto TLI = new llvm::TargetLibraryInfoImpl(
-      llvm::Triple(module->getTargetTriple()));
+  auto generator = [&func_it, func_it_end] (void) -> llvm::Function * {
+    if (func_it == func_it_end) {
+      return nullptr;
+    } else {
+      auto entry = *func_it++;
+      return entry.first;
+    }
+  };
 
-  TLI->disableAllFunctions();  // `-fno-builtin`.
-
-  llvm::PassManagerBuilder builder;
-  builder.OptLevel = 3;
-  builder.SizeLevel = 0;
-  builder.Inliner = llvm::createFunctionInliningPass(
-      std::numeric_limits<int>::max());
-  builder.LibraryInfo = TLI;  // Deleted by `llvm::~PassManagerBuilder`.
-  builder.DisableUnrollLoops = false;  // Unroll loops!
-  builder.DisableUnitAtATime = false;
-  builder.RerollLoops = false;
-  builder.SLPVectorize = false;
-  builder.LoopVectorize = false;
-  IF_LLVM_GTE_36(builder.VerifyInput = true;)
-  IF_LLVM_GTE_36(builder.VerifyOutput = true;)
-
-  builder.populateFunctionPassManager(func_manager);
-  builder.populateModulePassManager(module_manager);
-  func_manager.doInitialization();
-  for (auto &entry : funcs) {
-    func_manager.run(*(entry.first));
-  }
-  func_manager.doFinalization();
-  module_manager.run(*module);
+  OptimizeModule(module, generator);
 }
 
 std::unique_ptr<llvm::Module> LifterImpl::Lift(
@@ -395,6 +379,17 @@ llvm::Function *LifterImpl::LiftTrace(const DecodedTrace &trace) {
   return func;
 }
 
+// Create the metadata node from a constant integer representing the trace
+// entry PC.
+static llvm::MDNode *CreatePCAnnotation(llvm::Constant *pc) {
+#if LLVM_VERSION_NUMBER >= LLVM_VERSION(3, 6)
+  auto addr_md = llvm::ValueAsMetadata::get(pc);
+  return llvm::MDNode::get(pc->getContext(), addr_md);
+#else
+  return llvm::MDNode::get(pc->getContext(), pc);
+#endif
+}
+
 void LifterImpl::LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
                                       llvm::Module *module) {
 
@@ -417,8 +412,10 @@ void LifterImpl::LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
     types[1] = llvm::Type::getIntNTy(*context_ptr, sizeof(trace.id.hash) * 8);
     auto trace_id_type = llvm::StructType::get(*context_ptr, types, true);
 
-    values[0] = llvm::ConstantInt::get(
+    auto pc = llvm::ConstantInt::get(
         types[0], static_cast<uint64_t>(trace.id.pc));
+    func->setMetadata(pc_metadata_id, CreatePCAnnotation(pc));
+    values[0] = pc;
 
     values[1] = llvm::ConstantInt::get(
         types[1], static_cast<TraceHashBaseType>(trace.id.hash));

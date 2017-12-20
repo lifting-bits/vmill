@@ -20,6 +20,12 @@
 #include <string>
 #include <memory>
 
+namespace llvm {
+
+class Module;
+class Function;
+
+}  // namespace llvm
 namespace vmill {
 
 class Tool {
@@ -33,6 +39,12 @@ class Tool {
   // symbol.
   virtual uint64_t FindSymbolForLinking(
       const std::string &name, uint64_t resolved);
+
+  // Instrument the runtime module.
+  virtual bool InstrumentRuntime(llvm::Module *module);
+
+  // Instrument a lifted function/trace.
+  virtual bool InstrumentTrace(llvm::Function *func, uint64_t pc);
 
  protected:
   Tool(void);
@@ -53,6 +65,12 @@ class ProxyTool : public Tool {
   // symbol.
   uint64_t FindSymbolForLinking(
       const std::string &name, uint64_t resolved) override;
+
+  // Instrument the runtime module.
+  bool InstrumentRuntime(llvm::Module *module) override;
+
+  // Instrument a lifted function/trace.
+  bool InstrumentTrace(llvm::Function *func, uint64_t pc) override;
 
  protected:
   const std::unique_ptr<Tool> tool;
