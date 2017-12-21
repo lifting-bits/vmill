@@ -34,8 +34,9 @@
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
 
-#include <llvm/Transforms/Utils/Local.h>
 #include <llvm/Transforms/Utils/Cloning.h>
+#include <llvm/Transforms/Utils/Local.h>
+#include <llvm/Transforms/Utils/ModuleUtils.h>
 #include <llvm/Transforms/Utils/ValueMapper.h>
 
 #include "remill/Arch/Arch.h"
@@ -397,6 +398,10 @@ void LifterImpl::LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
 
   auto context_ptr = context.get();
 
+  auto int8_ptr_type  = llvm::Type::getInt8PtrTy(module->getContext());
+
+  std::vector<llvm::Constant *> used_list;
+
   // Move the optimized functions into the target module, and add in code
   // cache index entries.
   for (const auto &entry : lifted_funcs) {
@@ -412,13 +417,13 @@ void LifterImpl::LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
     types[1] = llvm::Type::getIntNTy(*context_ptr, sizeof(trace.id.hash) * 8);
     auto trace_id_type = llvm::StructType::get(*context_ptr, types, true);
 
-    auto pc = llvm::ConstantInt::get(
-        types[0], static_cast<uint64_t>(trace.id.pc));
+    auto pc_uint = static_cast<uint64_t>(trace.id.pc);
+    auto pc = llvm::ConstantInt::get(types[0], pc_uint);
     func->setMetadata(pc_metadata_id, CreatePCAnnotation(pc));
     values[0] = pc;
 
-    values[1] = llvm::ConstantInt::get(
-        types[1], static_cast<TraceHashBaseType>(trace.id.hash));
+    auto hash_uint = static_cast<TraceHashBaseType>(trace.id.hash);
+    values[1] = llvm::ConstantInt::get(types[1], hash_uint);
 
     auto trace_id_val = llvm::ConstantStruct::get(trace_id_type, values);
 
@@ -435,21 +440,36 @@ void LifterImpl::LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
         << "Lifted function " << func->getName().str()
         << " was declared but not defined.";
 
+    // Things in the use list must have named.
+    std::stringstream ss;
+    ss << std::hex << pc_uint << "_" << hash_uint;
+    auto name = ss.str();
+
     // Add an entry into the `.translations` section for this block. These
     // entries will end up being contiguous in memory.
     auto var = new llvm::GlobalVariable(
-        *module, trace_entry_type, true, llvm::GlobalValue::ExternalLinkage,
-        trace_entry_val);
+        *module, trace_entry_type, true, llvm::GlobalValue::PrivateLinkage,
+        trace_entry_val, name);
     var->setSection(".translations");
     var->setAlignment(8);
+
+    used_list.push_back(llvm::ConstantExpr::getBitCast(var, int8_ptr_type));
   }
 
+  // Kill off all the function names.
   for (const auto &entry : lifted_funcs) {
     auto func = entry.first;
     func->setName("");  // Kill its name.
     func->setLinkage(llvm::GlobalValue::PrivateLinkage);
     func->setVisibility(llvm::GlobalValue::DefaultVisibility);
   }
+
+  // Mark all the translations as used.
+  auto used_type = llvm::ArrayType::get(int8_ptr_type, used_list.size());
+  auto used = new llvm::GlobalVariable(
+      *module, used_type, false, llvm::GlobalValue::AppendingLinkage,
+      llvm::ConstantArray::get(used_type, used_list), "llvm.used");
+  used->setSection("llvm.metadata");
 }
 
 }  // namespace
