@@ -144,7 +144,7 @@ void MoveFunctionIntoModule(llvm::Function *func,
         << " already exists in destination module.";
     existing->setName("");
     existing->setLinkage(llvm::GlobalValue::PrivateLinkage);
-    existing->setVisibility(llvm::GlobalValue::HiddenVisibility);
+    existing->setVisibility(llvm::GlobalValue::DefaultVisibility);
   }
 
   func->removeFromParent();

@@ -448,7 +448,7 @@ void LifterImpl::LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
     auto func = entry.first;
     func->setName("");  // Kill its name.
     func->setLinkage(llvm::GlobalValue::PrivateLinkage);
-    func->setVisibility(llvm::GlobalValue::HiddenVisibility);
+    func->setVisibility(llvm::GlobalValue::DefaultVisibility);
   }
 }
 
