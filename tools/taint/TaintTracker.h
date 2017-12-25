@@ -47,6 +47,7 @@ class SelectInst;
 class StoreInst;
 class SwitchInst;
 class Value;
+class Use;
 }  // namespace llvm
 namespace vmill {
 
@@ -75,27 +76,49 @@ class TaintTrackerTool : public Tool,
 
   // Get a taint function that is "pure".
   template <typename... ArgTypes>
-  llvm::Constant *GetPureFunc(llvm::Type *ret_type, const std::string &name,
-                              ArgTypes... arg_types) {
-    std::vector<llvm::Type *> params = {arg_types...};
-    auto func_type = llvm::FunctionType::get(ret_type, params, false);
-    auto func_ = module->getOrInsertFunction(name, func_type);
-    if (auto func = llvm::dyn_cast<llvm::Function>(func_)) {
-      func->addFnAttr(llvm::Attribute::ReadNone);
-    }
-    return func_;
+  inline llvm::Constant *GetPureFunc(llvm::Type *ret_type,
+                                     const std::string &name,
+                                     ArgTypes... types) {
+    std::vector<llvm::Type *> arg_types = {types...};
+    return GetPureFunc(ret_type, name, arg_types);
   }
 
   // Get a taint function.
   template <typename... ArgTypes>
-  llvm::Constant *GetFunc(llvm::Type *ret_type, const std::string &name,
-                          ArgTypes... arg_types) {
-    std::vector<llvm::Type *> params = {arg_types...};
-    auto func_type = llvm::FunctionType::get(ret_type, params, false);
-    return module->getOrInsertFunction(name, func_type);
+  inline llvm::Constant *GetFunc(llvm::Type *ret_type,
+                                 const std::string &name,
+                                 ArgTypes... types) {
+    std::vector<llvm::Type *> arg_types = {types...};
+    return GetFunc(ret_type, name, arg_types);
   }
 
-  void UnfoldConstantExpressions(llvm::Instruction *inst);
+  // Get a taint function.
+  llvm::Constant *GetFunc(llvm::Type *ret_type,
+                          const std::string &name,
+                          const std::vector<llvm::Type *> &arg_types);
+
+
+  // Get a pure taint function, i.e. one that neither reads nor writes to
+  // memory.
+  llvm::Constant *GetPureFunc(llvm::Type *ret_type,
+                              const std::string &name,
+                              const std::vector<llvm::Type *> &arg_types);
+
+  // Call one of the taint propagation functions.
+  template <typename... ArgTypes>
+  inline llvm::Value *CallFunc(llvm::IRBuilder<> &ir, llvm::Constant *func,
+                               ArgTypes... args) {
+    std::vector<llvm::Value *> params = {args...};
+    return CallFunc(ir, func, params);
+  }
+
+  // Call one of the taint propagation functions.
+  llvm::Value *CallFunc(llvm::IRBuilder<> &ir, llvm::Constant *func,
+                        std::vector<llvm::Value *> &params);
+
+  int UnfoldConstantExpressions(llvm::Instruction *inst,
+                                llvm::Use &use);
+  int UnfoldConstantExpressions(llvm::Instruction *inst);
   void ExpandGEP(llvm::GetElementPtrInst *inst);
 
   void VisitRuntimeFunction(void);
@@ -108,21 +131,23 @@ class TaintTrackerTool : public Tool,
   // Overrides from the `llvm::InstVisitor`.
   void visitAllocaInst(llvm::AllocaInst &inst);
   void visitLoadInst(llvm::LoadInst &inst);
-  void visitStoreInst(llvm::StoreInst  &inst);
-  void visitCallInst(llvm::CallInst  &inst);
+  void visitStoreInst(llvm::StoreInst &inst);
+  void visitIntrinsicInst(llvm::IntrinsicInst &inst);
+  void visitGetElementPtrInst(llvm::GetElementPtrInst &inst);
+  void visitCallInst(llvm::CallInst &inst);
   void visitReturnInst(llvm::ReturnInst  &inst);
   void visitPHINode(llvm::PHINode  &inst);
-  void visitSelectInst(llvm::SelectInst  &inst);
-  void visitBranchInst(llvm::BranchInst  &inst);
-  void visitIndirectBrInst(llvm::IndirectBrInst  &inst);
-  void visitSwitchInst(llvm::SwitchInst  &inst);
-  void visitCastInst(llvm::CastInst  &inst);
-  void visitBinaryOperator(llvm::BinaryOperator  &inst);
+  void visitSelectInst(llvm::SelectInst &inst);
+  void visitBranchInst(llvm::BranchInst &inst);
+  void visitIndirectBrInst(llvm::IndirectBrInst &inst);
+  void visitSwitchInst(llvm::SwitchInst &inst);
+  void visitCastInst(llvm::CastInst &inst);
+  void visitBinaryOperator(llvm::BinaryOperator &inst);
+  void visitCmpInst(llvm::CmpInst &inst);
 
   void visitMemSetInst(llvm::MemSetInst &inst);
   void visitMemCpyInst(llvm::MemCpyInst &inst);
   void visitMemMoveInst(llvm::MemMoveInst &inst);
-  void visitMemTransferInst(llvm::MemTransferInst &inst);
 
  private:
   llvm::Value *LoadTaint(llvm::IRBuilder<> &ir, llvm::Value *val);
@@ -131,7 +156,9 @@ class TaintTrackerTool : public Tool,
   llvm::Type *void_type;
   llvm::IntegerType *taint_type;
   llvm::IntegerType *intptr_type;
+  llvm::IntegerType *int32_type;
 
+  llvm::BasicBlock *taint_block;
   llvm::Function *func;
   llvm::Module *module;
   llvm::LLVMContext *context;

@@ -18,6 +18,8 @@
 
 #include <string>
 #include <sstream>
+#include <unordered_set>
+#include <vector>
 
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DataLayout.h>
@@ -55,6 +57,8 @@ TaintTrackerTool::TaintTrackerTool(size_t num_bits_)
       void_type(nullptr),
       taint_type(nullptr),
       intptr_type(nullptr),
+      int32_type(nullptr),
+      taint_block(nullptr),
       func(nullptr),
       module(nullptr),
       context(nullptr) {}
@@ -80,6 +84,7 @@ bool TaintTrackerTool::InstrumentRuntime(llvm::Module *module_) {
   context = &(module->getContext());
   void_type = llvm::Type::getVoidTy(*context);
   taint_type = llvm::Type::getIntNTy(*context, num_bits);
+  int32_type = llvm::Type::getInt32Ty(*context);
 
   llvm::DataLayout dl(module);
   intptr_type = llvm::Type::getIntNTy(*context, dl.getPointerSizeInBits());
@@ -106,6 +111,7 @@ bool TaintTrackerTool::InstrumentTrace(llvm::Function *func_, uint64_t pc) {
     context = &(module->getContext());
     void_type = llvm::Type::getVoidTy(*context);
     taint_type = llvm::Type::getIntNTy(*context, num_bits);
+    int32_type = llvm::Type::getInt32Ty(*context);
 
     llvm::DataLayout dl(module);
     intptr_type = llvm::Type::getIntNTy(*context, dl.getPointerSizeInBits());
@@ -125,23 +131,60 @@ void TaintTrackerTool::VisitLiftedFunction(void) {
   VisitFunction(func);
 }
 
+// Get a taint function.
+llvm::Constant *TaintTrackerTool::GetFunc(
+    llvm::Type *ret_type, const std::string &name,
+    const std::vector<llvm::Type *> &arg_types) {
+  auto func_type = llvm::FunctionType::get(ret_type, arg_types, false);
+  return module->getOrInsertFunction(name, func_type);
+}
+
+// Get a pure taint function, i.e. one that neither reads nor writes to
+// memory.
+llvm::Constant *TaintTrackerTool::GetPureFunc(
+    llvm::Type *ret_type, const std::string &name,
+    const std::vector<llvm::Type *> &arg_types) {
+  auto func_ = GetFunc(ret_type, name, arg_types);
+//  if (auto func = llvm::dyn_cast<llvm::Function>(func_)) {
+//    func->addFnAttr(llvm::Attribute::ReadNone);
+//  }
+  return func_;
+}
+
+// Call one of the taint propagation functions.
+llvm::Value *TaintTrackerTool::CallFunc(
+    llvm::IRBuilder<> &ir, llvm::Constant *func,
+    std::vector<llvm::Value *> &params) {
+  return ir.CreateCall(func, params);
+}
+
+int TaintTrackerTool::UnfoldConstantExpressions(llvm::Instruction *inst,
+                                                llvm::Use &use) {
+  auto val = use.get();
+  if (auto ce = llvm::dyn_cast<llvm::ConstantExpr>(val)) {
+    auto ce_inst = ce->getAsInstruction();
+    ce_inst->insertBefore(inst);
+    auto ret = UnfoldConstantExpressions(ce_inst);
+    use.set(ce_inst);
+    return ret + 1;
+  } else {
+    return 0;
+  }
+}
+
 // Unfold constant expressions into instructions so that we can accumulate
 // the taint information of the constants.
-void TaintTrackerTool::UnfoldConstantExpressions(llvm::Instruction *inst) {
-  for (llvm::Use &op : inst->operands()) {
-    auto val = op.get();
-    if (auto ce = llvm::dyn_cast<llvm::ConstantExpr>(val)) {
-      auto ce_inst = ce->getAsInstruction();
-      ce_inst->insertBefore(inst);
-      op.set(ce_inst);
-
-      UnfoldConstantExpressions(ce_inst);
-
-      if (!ce->hasNUsesOrMore(1)) {
-        ce->destroyConstant();
-      }
+int TaintTrackerTool::UnfoldConstantExpressions(llvm::Instruction *inst) {
+  int ret = 0;
+  for (auto &use : inst->operands()) {
+    ret += UnfoldConstantExpressions(inst, use);
+  }
+  if (auto call = llvm::dyn_cast<llvm::CallInst>(inst)) {
+    for (auto &use : call->arg_operands()) {
+      ret += UnfoldConstantExpressions(inst, use);
     }
   }
+  return ret;
 }
 
 // Expand a GetElementPtrInst into several other instructions.
@@ -149,15 +192,30 @@ void TaintTrackerTool::ExpandGEP(llvm::GetElementPtrInst *inst) {
   llvm::DataLayout dl(module);
   llvm::APInt offset(64, 0, true);
   llvm::IRBuilder<> ir(inst);
-  auto addr = ir.CreatePtrToInt(inst->getPointerOperand(), intptr_type);
+
+  llvm::Value *addr = nullptr;
+  llvm::Value *ptr = nullptr;
+
+  auto base = inst->getPointerOperand()->stripPointerCasts();
+
+  // Try to do some basic folding here.
+  if (auto inttoptr = llvm::dyn_cast<llvm::IntToPtrInst>(base)) {
+    addr = inttoptr->getOperand(0);
+  } else {
+    addr = ir.Insert(new llvm::PtrToIntInst(base, intptr_type));
+  }
 
   // Convenient case, the indexes of this GEP are all constant integers.
   if (inst->accumulateConstantOffset(dl, offset)) {
     auto offset_int = offset.getSExtValue();
     auto offset_uint = static_cast<uint64_t>(offset_int);
     if (offset_uint) {
-      addr = ir.CreateAdd(
-          addr, llvm::ConstantInt::get(intptr_type, offset_uint, true));
+      addr = ir.Insert(llvm::BinaryOperator::CreateAdd(
+          addr, llvm::ConstantInt::get(intptr_type, offset_uint, true)));
+      ptr = ir.Insert(new llvm::IntToPtrInst(addr, inst->getType()));
+
+    } else {
+      ptr = ir.Insert(new llvm::BitCastInst(base, inst->getType()));
     }
 
   // Inconvenient, split this GEP out into smaller operations which can then
@@ -191,11 +249,15 @@ void TaintTrackerTool::ExpandGEP(llvm::GetElementPtrInst *inst) {
           ir.CreateMul(
               index, llvm::ConstantInt::get(intptr_type, type_size, false)));
     }
+    ptr = ir.CreateIntToPtr(addr, inst->getType());
   }
 
-  auto ptr = ir.CreateIntToPtr(addr, inst->getType());
+  if (!llvm::isa<llvm::Instruction>(ptr)) {
+    LOG(FATAL)
+        << "Replacing " << remill::LLVMThingToString(inst)
+        << " with " << remill::LLVMThingToString(ptr);
+  }
   inst->replaceAllUsesWith(ptr);
-  inst->eraseFromParent();
 }
 
 void TaintTrackerTool::VisitFunction(llvm::Function *func) {
@@ -203,11 +265,9 @@ void TaintTrackerTool::VisitFunction(llvm::Function *func) {
   CHECK(!func->isDeclaration());
 
   std::vector<llvm::Instruction *> insts;
-
   auto &context = func->getContext();
   auto entry_block = &(func->getEntryBlock());
-  auto taint_block = llvm::BasicBlock::Create(context, "taints",
-                                              func, entry_block);
+  taint_block = llvm::BasicBlock::Create(context, "taints", func, entry_block);
   auto int32_type = llvm::Type::getInt32Ty(context);
   auto arg_taint_func = GetFunc(taint_type, "__taint_load_arg", int32_type);
 
@@ -216,63 +276,88 @@ void TaintTrackerTool::VisitFunction(llvm::Function *func) {
 
   func_taints.clear();
 
+  auto untainted = llvm::Constant::getNullValue(taint_type);
+
   // Create taint locations for each function argument.
   unsigned arg_index = 0;
   for (auto &arg : func->args()) {
     auto arg_taint = ir.CreateAlloca(taint_type);
+    ir.CreateStore(untainted, arg_taint);
+
     auto arg_num = llvm::ConstantInt::get(int32_type, arg_index++);
     func_taints[&arg] = arg_taint;
     ir.CreateStore(
-        ir.CreateCall(arg_taint_func, {arg_num}),
+        CallFunc(ir, arg_taint_func, arg_num),
         arg_taint);
-  }
+  };
 
   std::vector<llvm::GetElementPtrInst *> geps;
+  int num_rounds = 0;
 
-  for (auto &block : *func) {
-    if (&block == taint_block) {
-      continue;
+  for (auto changed = true; changed; ++num_rounds) {
+    changed = false;
+
+    if (num_rounds > 100) {
+      func->dump();
+      CHECK(false) << num_rounds;
     }
 
-    geps.clear();
+    for (auto &block : *func) {
+      if (&block == taint_block) {
+        continue;
+      }
 
-    for (auto &inst : block) {
+      insts.clear();
+      for (auto &inst : block) {
+        insts.push_back(&inst);
+      }
 
       // Unfold any constant expressions in the operand list of an instruction
-      // into individual instructions that can be taint tracked.
-      UnfoldConstantExpressions(&inst);
-
-      if (auto gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(&inst)) {
-        geps.push_back(gep_inst);
+      // into individual instructions that can be taint tracked. This might
+      // introduce GEPs.
+      for (auto inst : insts) {
+        if (0 < UnfoldConstantExpressions(inst)) {
+          changed = true;
+        }
       }
-    }
 
-    // Expand GEP index lists into a bunch of individual instructions that
-    // can be tainted.
-    for (auto gep : geps) {
-      ExpandGEP(gep);
-    }
+      // Expand GEPs into either bitcasts or equivalent addressing artihmetic
+      // instructions.
+      geps.clear();
+      for (auto &inst : block) {
+        if (auto gep = llvm::dyn_cast<llvm::GetElementPtrInst>(&inst)) {
+          geps.push_back(gep);
+        }
+      }
 
-    // We have now fully "expanded" out instructions in this block.
-    for (auto &inst : block) {
-      func_taints[&inst] = ir.CreateAlloca(taint_type);
-      insts.push_back(&inst);
+      // Expand GEP index lists into a bunch of individual instructions that
+      // can be tainted.
+      for (auto gep : geps) {
+        ExpandGEP(gep);
+        gep->eraseFromParent();
+        changed = true;
+      }
     }
   }
 
   ir.CreateBr(entry_block);
 
+  insts.clear();
+
+  for (auto &block : *func) {
+    if (&block != taint_block) {
+      for (auto &inst : block) {
+        CHECK(!llvm::isa<llvm::GetElementPtrInst>(inst));
+
+        func_taints[&inst] = ir.CreateAlloca(taint_type);
+        insts.push_back(&inst);
+      }
+    }
+  }
+
   for (auto inst : insts) {
     visit(inst);
   }
-//
-//  func->dump();
-
-//  for (auto inst : insts) {
-//    if (!inst->getParent()) {
-//      delete inst;
-//    }
-//  }
 }
 
 // Load the taint associated with some value.
@@ -282,7 +367,11 @@ llvm::Value *TaintTrackerTool::LoadTaint(llvm::IRBuilder<> &ir,
   // The taint of an instruction is stored in an `alloca`.
   if (auto inst = llvm::dyn_cast<llvm::Instruction>(val)) {
     CHECK(inst->getParent()->getParent() == ir.GetInsertBlock()->getParent());
-    return ir.CreateLoad(func_taints[inst]);
+    auto &taint_alloca = func_taints[inst];
+    if (!taint_alloca) {
+
+    }
+    return ir.CreateLoad(taint_alloca);
 
   // Argument to the current function.
   } else if (auto arg = llvm::dyn_cast<llvm::Argument>(val)) {
@@ -298,7 +387,7 @@ llvm::Value *TaintTrackerTool::LoadTaint(llvm::IRBuilder<> &ir,
     ss << "__taint_const_" << remill::LLVMThingToString(val->getType());
     auto name = ss.str();
     auto taint_func = GetPureFunc(taint_type, name, val->getType());
-    return ir.CreateCall(taint_func, {val});
+    return CallFunc(ir, taint_func, val);
 
   // The taint of a global variable is the `__taint_global(addr, size)`, where
   // `addr` is the address of the global variable, and `size` is the size in
@@ -310,50 +399,59 @@ llvm::Value *TaintTrackerTool::LoadTaint(llvm::IRBuilder<> &ir,
     auto taint_func = GetPureFunc(taint_type, "__taint_global",
                                   intptr_type, intptr_type);
     auto val_type = gv->getType()->getElementType();
+    return CallFunc(
+        ir, taint_func, ir.CreatePtrToInt(gv, intptr_type),
+        llvm::ConstantInt::get(intptr_type, dl.getTypeAllocSize(val_type)));
+  }
 
-    std::vector<llvm::Value *> args = {
-        ir.CreatePtrToInt(gv, intptr_type),
-        llvm::ConstantInt::get(intptr_type, dl.getTypeAllocSize(val_type))
-    };
-    return ir.CreateCall(taint_func, args);
+  auto not_tainted = llvm::Constant::getNullValue(taint_type);
 
   // Functions don't really need to be tainted, they can't be changed or
   // indexed into.
-  } else if (llvm::isa<llvm::Function>(val)) {
-    return llvm::Constant::getNullValue(taint_type);
+  if (llvm::isa<llvm::Function>(val)) {
+    return not_tainted;
+
+  // Probably from the runtime.
+  } else if (llvm::isa<llvm::UndefValue>(val)) {
+    return not_tainted;
 
   // Some kind of constant.
   } else if (auto cv = llvm::dyn_cast<llvm::Constant>(val)) {
     if (cv->isNullValue()) {
-      return llvm::Constant::getNullValue(taint_type);
+      return not_tainted;
     }
 
-    if (auto ce = llvm::dyn_cast<llvm::ConstantExpr>(val)) {
-      if (llvm::Instruction::PtrToInt == ce->getOpcode()) {
-        if (auto gv = llvm::dyn_cast<llvm::GlobalVariable>(ce->getOperand(0))) {
-          llvm::DataLayout dl(module);
-          auto taint_func = GetPureFunc(taint_type, "__taint_global",
-                                        intptr_type, intptr_type);
-          auto val_type = gv->getType()->getElementType();
+    auto ce = llvm::dyn_cast<llvm::ConstantExpr>(val);
+    if (!ce) {
+      LOG(ERROR)
+          << "Can't load taint for constant " << remill::LLVMThingToString(cv);
+      return not_tainted;
+    }
 
-          std::vector<llvm::Value *> args = {
-              ir.CreatePtrToInt(gv, intptr_type),
-              llvm::ConstantInt::get(intptr_type, dl.getTypeAllocSize(val_type))
-          };
-          return ir.CreateCall(taint_func, args);
-        }
+    // If it's a global, basted to an integer, then lets use that and
+    // treat is like we treat other such taints.
+    if (llvm::Instruction::PtrToInt == ce->getOpcode() ||
+        llvm::Instruction::IntToPtr == ce->getOpcode()) {
+      auto base = ce->getOperand(0)->stripPointerCasts();
+      return LoadTaint(ir, base);
+
+    // Hopefully it's a zero-index GEP.
+    } else if (llvm::Instruction::GetElementPtr == ce->getOpcode()) {
+      auto base = ce->stripPointerCasts();
+      if (base != ce) {
+        return LoadTaint(ir, base);
       }
     }
 
     LOG(ERROR)
         << "Can't load taint for constant " << remill::LLVMThingToString(cv);
-    return llvm::Constant::getNullValue(taint_type);
+    return not_tainted;
 
   // Something else, not sure what.
   } else {
     LOG(ERROR)
         << "Can't load taint for " << remill::LLVMThingToString(val);
-    return llvm::Constant::getNullValue(taint_type);
+    return not_tainted;
   }
 }
 
@@ -361,21 +459,18 @@ llvm::Value *TaintTrackerTool::LoadTaint(llvm::IRBuilder<> &ir,
 // the *address* of the stack-allocated data, not the data itself. The
 // taints on the data are handled by load/store and shadow memory.
 void TaintTrackerTool::visitAllocaInst(llvm::AllocaInst &inst) {
+  llvm::IRBuilder<> ir(&*++inst.getIterator());
   llvm::DataLayout dl(module);
   std::stringstream ss;
   auto name = ss.str();
   auto taint_func = GetPureFunc(taint_type, "__taint_local",
                                 intptr_type, intptr_type);
   auto val_type = inst.getType()->getElementType();
-
-  llvm::IRBuilder<> ir(&*++inst.getIterator());
-
-  std::vector<llvm::Value *> args = {
-      ir.CreatePtrToInt(&inst, intptr_type),
-      llvm::ConstantInt::get(intptr_type, dl.getTypeAllocSize(val_type))
-  };
-
-  ir.CreateStore(ir.CreateCall(taint_func, args), func_taints[&inst]);
+  auto alloca_size = dl.getTypeAllocSize(val_type);
+  auto alloca_taint = CallFunc(
+      ir, taint_func, ir.CreatePtrToInt(&inst, intptr_type),
+      llvm::ConstantInt::get(intptr_type, alloca_size));
+  ir.CreateStore(alloca_taint, func_taints[&inst]);
 }
 
 void TaintTrackerTool::visitLoadInst(llvm::LoadInst &inst) {
@@ -383,10 +478,12 @@ void TaintTrackerTool::visitLoadInst(llvm::LoadInst &inst) {
   std::stringstream ss;
   ss << "__taint_load_" << dl.getTypeAllocSizeInBits(inst.getType());
   auto name = ss.str();
-  auto func = GetPureFunc(taint_type, name, intptr_type);
+  auto func = GetPureFunc(taint_type, name, taint_type, intptr_type);
   llvm::IRBuilder<> ir(&inst);
-  auto addr = ir.CreatePtrToInt(inst.getPointerOperand(), intptr_type);
-  auto taint = ir.CreateCall(func, {addr});
+  auto addr = inst.getPointerOperand();
+  auto addr_taint = LoadTaint(ir, addr);
+  auto taint = CallFunc(ir, func, addr_taint,
+                        ir.CreatePtrToInt(addr, intptr_type));
   ir.CreateStore(taint, func_taints[&inst]);
 }
 
@@ -397,13 +494,14 @@ void TaintTrackerTool::visitStoreInst(llvm::StoreInst &inst) {
   auto stored_type = stored_val->getType();
   ss << "__taint_store_" << dl.getTypeAllocSizeInBits(stored_type);
   auto name = ss.str();
-  auto func = GetFunc(void_type, name, taint_type, intptr_type);
+  auto func = GetFunc(void_type, name, taint_type, intptr_type, taint_type);
 
   llvm::IRBuilder<> ir(&inst);
-  auto addr = ir.CreatePtrToInt(inst.getPointerOperand(), intptr_type);
+  auto addr = inst.getPointerOperand();
+  auto addr_taint = LoadTaint(ir, addr);
   auto taint = LoadTaint(ir, stored_val);
-  std::vector<llvm::Value *> args = {taint, addr};
-  (void) ir.CreateCall(func, args);
+  (void) CallFunc(ir, func, addr_taint, ir.CreatePtrToInt(addr, intptr_type),
+                  taint);
 }
 
 void TaintTrackerTool::visitCastInst(llvm::CastInst &inst) {
@@ -419,7 +517,16 @@ void TaintTrackerTool::visitCastInst(llvm::CastInst &inst) {
     case llvm::Instruction::FPToUI:
     case llvm::Instruction::FPToSI:
     case llvm::Instruction::UIToFP:
-    case llvm::Instruction::SIToFP:
+    case llvm::Instruction::SIToFP: {
+      std::stringstream ss;
+      ss << "__taint_" << inst.getOpcodeName() << "_"
+         << remill::LLVMThingToString(inst.getType());
+      auto name = ss.str();
+      auto func = GetPureFunc(taint_type, name, taint_type);
+      auto conv_taint = CallFunc(ir, func, taint);
+      ir.CreateStore(conv_taint, func_taints[&inst]);
+      break;
+    }
 
     // Size shouldn't change.
     case llvm::Instruction::IntToPtr:
@@ -441,7 +548,7 @@ void TaintTrackerTool::visitBinaryOperator(llvm::BinaryOperator &inst) {
   llvm::DataLayout dl(module);
   std::stringstream ss;
 
-  ss << "__taint_binary_" << inst.getOpcodeName() << "_"
+  ss << "__taint_" << inst.getOpcodeName() << "_"
      << remill::LLVMThingToString(inst.getType());
 
   auto name = ss.str();
@@ -453,51 +560,271 @@ void TaintTrackerTool::visitBinaryOperator(llvm::BinaryOperator &inst) {
   auto lhs_taint = LoadTaint(ir, lhs);
   auto rhs_taint = lhs == rhs ? lhs_taint : LoadTaint(ir, rhs);
   std::vector<llvm::Value *> args = {lhs_taint, rhs_taint};
-  ir.CreateStore(ir.CreateCall(func, args), func_taints[&inst]);
+  ir.CreateStore(CallFunc(ir, func, lhs_taint, rhs_taint), func_taints[&inst]);
+}
+
+namespace {
+
+static const char *GetPredicateName(llvm::CmpInst &inst) {
+  switch (inst.getPredicate()) {
+    case llvm::FCmpInst::FCMP_FALSE: return "false";
+    case llvm::FCmpInst::FCMP_OEQ: return "oeq";
+    case llvm::FCmpInst::FCMP_OGT: return "ogt";
+    case llvm::FCmpInst::FCMP_OGE: return "oge";
+    case llvm::FCmpInst::FCMP_OLT: return "olt";
+    case llvm::FCmpInst::FCMP_OLE: return "ole";
+    case llvm::FCmpInst::FCMP_ONE: return "one";
+    case llvm::FCmpInst::FCMP_ORD: return "ord";
+    case llvm::FCmpInst::FCMP_UNO: return "uno";
+    case llvm::FCmpInst::FCMP_UEQ: return "ueq";
+    case llvm::FCmpInst::FCMP_UGT: return "ugt";
+    case llvm::FCmpInst::FCMP_UGE: return "uge";
+    case llvm::FCmpInst::FCMP_ULT: return "ult";
+    case llvm::FCmpInst::FCMP_ULE: return "ule";
+    case llvm::FCmpInst::FCMP_UNE: return "une";
+    case llvm::FCmpInst::FCMP_TRUE: return "true";
+    case llvm::ICmpInst::ICMP_EQ: return "eq";
+    case llvm::ICmpInst::ICMP_NE: return "ne";
+    case llvm::ICmpInst::ICMP_SGT: return "sgt";
+    case llvm::ICmpInst::ICMP_SGE: return "sge";
+    case llvm::ICmpInst::ICMP_SLT: return "slt";
+    case llvm::ICmpInst::ICMP_SLE: return "sle";
+    case llvm::ICmpInst::ICMP_UGT: return "ugt";
+    case llvm::ICmpInst::ICMP_UGE: return "uge";
+    case llvm::ICmpInst::ICMP_ULT: return "ult";
+    case llvm::ICmpInst::ICMP_ULE: return "ule";
+    default: return "unknown";
+  }
+}
+
+}  // namespace
+
+void TaintTrackerTool::visitCmpInst(llvm::CmpInst &inst) {
+  llvm::DataLayout dl(module);
+  std::stringstream ss;
+
+  ss << "__taint_" << inst.getOpcodeName() << "_" << GetPredicateName(inst)
+     << remill::LLVMThingToString(inst.getType());
+
+  auto name = ss.str();
+  auto func = GetPureFunc(taint_type, name, taint_type, taint_type);
+
+  llvm::IRBuilder<> ir(&inst);
+  auto lhs = inst.getOperand(0);
+  auto rhs = inst.getOperand(1);
+  auto lhs_taint = LoadTaint(ir, lhs);
+  auto rhs_taint = lhs == rhs ? lhs_taint : LoadTaint(ir, rhs);
+  ir.CreateStore(CallFunc(ir, func, lhs_taint, rhs_taint), func_taints[&inst]);
+}
+
+void TaintTrackerTool::visitGetElementPtrInst(llvm::GetElementPtrInst &inst) {
+  llvm::DataLayout dl(module);
+  llvm::APInt offset(64, 0, true);
+  llvm::IRBuilder<> ir(&inst);
+
+  auto base = inst.getPointerOperand()->stripPointerCasts();
+  llvm::Value *taint = llvm::Constant::getNullValue(taint_type);
+
+  // Convenient case, the indexes of this GEP are all constant integers.
+  if (inst.accumulateConstantOffset(dl, offset)) {
+    if (offset.getZExtValue()) {
+      LOG(ERROR)
+          << "Cannot taint GEP instruction: "
+          << remill::LLVMThingToString(&inst);
+
+    } else {
+      taint = LoadTaint(ir, base);
+    }
+
+  // Inconvenient, split this GEP out into smaller operations which can then
+  // be individually taint-tracked.
+  } else {
+    LOG(ERROR)
+        << "Cannot taint GEP instruction: " << remill::LLVMThingToString(&inst);
+  }
+
+  ir.CreateStore(taint, func_taints[&inst]);
+}
+
+void TaintTrackerTool::visitIntrinsicInst(llvm::IntrinsicInst &inst) {
+  std::vector<llvm::Value *> args;
+  std::vector<llvm::Type *> arg_types;
+  llvm::IRBuilder<> ir(&inst);
+  for (unsigned i = 0; i < inst.getNumArgOperands(); ++i) {
+    auto arg = inst.getArgOperand(i);
+    auto taint_arg = LoadTaint(ir, arg);
+    args.push_back(taint_arg);
+    arg_types.push_back(taint_type);
+  }
+
+  std::stringstream ss;
+  ss << "__taint_" << llvm::Intrinsic::getName(inst.getIntrinsicID());
+  auto name = ss.str();
+
+  if (inst.getType() == void_type) {
+    auto taint_func = GetFunc(void_type, name, arg_types);
+    (void) CallFunc(ir, taint_func, args);
+  } else {
+    auto taint_func = GetPureFunc(taint_type, name, arg_types);
+    auto taint = CallFunc(ir, taint_func, args);
+    ir.CreateStore(taint, func_taints[&inst]);
+  }
 }
 
 void TaintTrackerTool::visitCallInst(llvm::CallInst &inst) {
+  auto called_val = inst.getCalledValue();
+  auto func_ptr_type = called_val->getType();
+  auto called_func_type = llvm::dyn_cast<llvm::FunctionType>(
+      llvm::dyn_cast<llvm::PointerType>(func_ptr_type)->getElementType());
 
+  llvm::IRBuilder<> ir(&inst);
+
+  // Don't try to pass taints for varargs functions or to inline assembly.
+  if (llvm::isa<llvm::InlineAsm>(called_val) ||
+      called_func_type->isVarArg()) {
+    ir.CreateStore(llvm::Constant::getNullValue(taint_type),
+                   func_taints[&inst]);
+    return;
+  }
+
+  auto taint_func = GetFunc(void_type, "__taint_store_arg", int32_type,
+                            taint_type);
+
+  unsigned i = 0;
+  for (auto &arg : inst.arg_operands()) {
+    CallFunc(ir, taint_func, llvm::ConstantInt::get(int32_type, i++),
+             LoadTaint(ir, arg.get()));
+  }
+
+  if (func->getReturnType() != void_type) {
+    taint_func = GetFunc(taint_type, "__taint_load_ret");
+    ir.SetInsertPoint(&*++(inst.getIterator()));
+    ir.CreateStore(CallFunc(ir, taint_func), func_taints[&inst]);
+  }
 }
 
 void TaintTrackerTool::visitReturnInst(llvm::ReturnInst &inst) {
-
+  if (auto val = inst.getReturnValue()) {
+    auto taint_func = GetFunc(void_type, "__taint_store_ret", taint_type);
+    llvm::IRBuilder<> ir(&inst);
+    CallFunc(ir, taint_func, LoadTaint(ir, val));
+  }
 }
 
+// Forwards the taints from the source block to the phi node.
 void TaintTrackerTool::visitPHINode(llvm::PHINode &inst) {
-
+  for (auto &op : inst.operands()) {
+    auto block = inst.getIncomingBlock(op);
+    auto val = op.get();
+    llvm::IRBuilder<> ir(block->getTerminator());
+    ir.CreateStore(LoadTaint(ir, val), func_taints[&inst]);
+  }
 }
 
 void TaintTrackerTool::visitSelectInst(llvm::SelectInst &inst) {
-
+  auto cond = inst.getCondition();
+  auto cond_type = cond->getType();
+  if (llvm::isa<llvm::VectorType>(cond_type)) {
+    LOG(ERROR)
+        << "Taint tracking of vector-based selects is not yet supported.";
+    return;
+  }
+  llvm::IRBuilder<> ir(&inst);
+  auto taint_func = GetPureFunc(taint_type, "__taint_select",
+                                cond_type, taint_type, taint_type, taint_type);
+  auto select_taint = CallFunc(ir, taint_func, cond, LoadTaint(ir, cond),
+                               LoadTaint(ir, inst.getTrueValue()),
+                               LoadTaint(ir, inst.getFalseValue()));
+  ir.CreateStore(select_taint, func_taints[&inst]);
 }
 
 void TaintTrackerTool::visitBranchInst(llvm::BranchInst &inst) {
+  if (inst.isUnconditional()) {
+    return;
+  }
 
+  auto cond = inst.getCondition();
+  auto bool_type = llvm::Type::getInt1Ty(*context);
+  CHECK(bool_type == cond->getType());
+  auto taint_func = GetFunc(void_type, "__taint_branch_cond",
+                            taint_type, bool_type);
+  llvm::IRBuilder<> ir(&inst);
+  (void) CallFunc(ir, taint_func, LoadTaint(ir, cond), cond);
 }
 
 void TaintTrackerTool::visitIndirectBrInst(llvm::IndirectBrInst &inst) {
-
+  LOG(ERROR)
+      << "Indirect branches not yet handled: "
+      << remill::LLVMThingToString(&inst);
 }
 
 void TaintTrackerTool::visitSwitchInst(llvm::SwitchInst &inst) {
-
+  auto cond = inst.getCondition();
+  auto taint_func = GetFunc(void_type, "__taint_switch_cond",
+                            taint_type, intptr_type);
+  llvm::IRBuilder<> ir(&inst);
+  (void) CallFunc(ir, taint_func, LoadTaint(ir, cond),
+                  ir.CreateZExt(cond, intptr_type));
 }
 
 void TaintTrackerTool::visitMemSetInst(llvm::MemSetInst &inst) {
+  llvm::IRBuilder<> ir(&inst);
+  auto taint_addr = LoadTaint(ir, inst.getDest());
+  auto taint_length = LoadTaint(ir, inst.getLength());
+  auto taint_val = LoadTaint(ir, inst.getValue());
 
+  auto addr = ir.CreatePtrToInt(inst.getDest(), intptr_type);
+  auto length = ir.CreateZExt(inst.getLength(), intptr_type);
+  auto val = ir.CreateZExt(inst.getValue(), intptr_type);
+
+  auto taint_func = GetFunc(
+      void_type, "__taint_memset",
+      taint_type, intptr_type,  // Destination address.
+      taint_type, intptr_type,  // Value.
+      taint_type, intptr_type); // Destination size.
+
+  (void) CallFunc(ir, taint_func, taint_addr, addr,
+                  taint_val, val, taint_length, length);
 }
 
 void TaintTrackerTool::visitMemCpyInst(llvm::MemCpyInst &inst) {
+  llvm::IRBuilder<> ir(&inst);
+  auto taint_dest_addr = LoadTaint(ir, inst.getDest());
+  auto taint_src_addr = LoadTaint(ir, inst.getSource());
+  auto taint_length = LoadTaint(ir, inst.getLength());
 
+  auto dest_addr = ir.CreatePtrToInt(inst.getDest(), intptr_type);
+  auto src_addr = ir.CreatePtrToInt(inst.getSource(), intptr_type);
+  auto length = ir.CreateZExt(inst.getLength(), intptr_type);
+
+  auto taint_func = GetFunc(
+      void_type, "__taint_memcpy",
+      taint_type, intptr_type,  // Destination address.
+      taint_type, intptr_type,  // Source address.
+      taint_type, intptr_type); // Destination size.
+
+  (void) CallFunc(ir, taint_func, taint_dest_addr, dest_addr,
+                  taint_src_addr, src_addr, taint_length, length);
 }
 
 void TaintTrackerTool::visitMemMoveInst(llvm::MemMoveInst &inst) {
+  llvm::IRBuilder<> ir(&inst);
+  auto taint_dest_addr = LoadTaint(ir, inst.getDest());
+  auto taint_src_addr = LoadTaint(ir, inst.getSource());
+  auto taint_length = LoadTaint(ir, inst.getLength());
 
-}
+  auto dest_addr = ir.CreatePtrToInt(inst.getDest(), intptr_type);
+  auto src_addr = ir.CreatePtrToInt(inst.getSource(), intptr_type);
+  auto length = ir.CreateZExt(inst.getLength(), intptr_type);
 
-void TaintTrackerTool::visitMemTransferInst(llvm::MemTransferInst &inst) {
+  auto taint_func = GetFunc(
+      void_type, "__taint_memmove",
+      taint_type, intptr_type,  // Destination address.
+      taint_type, intptr_type,  // Source address.
+      taint_type, intptr_type); // Destination size.
 
+  (void) CallFunc(ir, taint_func, taint_dest_addr, dest_addr,
+                  taint_src_addr, src_addr, taint_length, length);
 }
 
 }  // namespace vmill

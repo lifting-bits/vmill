@@ -22,7 +22,7 @@
 #include "vmill/Executor/Coroutine.h"
 #include "vmill/Runtime/Task.h"
 
-DEFINE_uint64(coroutine_stack_size, 1UL << 20,
+DEFINE_uint64(coroutine_stack_size, 8UL << 20,
               "Size in bytes for coroutine stacks. Default is 1 MiB.");
 
 namespace vmill {
