@@ -54,6 +54,7 @@ add_library(${PROJECT_NAME} STATIC
     vmill/Arch/X86/Log.cpp
     vmill/Arch/X86/Coroutine.S
     vmill/Arch/X86/Runtime.S
+    vmill/Arch/X86/Signal.S
     vmill/Arch/AArch64/Log.cpp
     
     vmill/BC/Compiler.cpp
@@ -70,6 +71,7 @@ add_library(${PROJECT_NAME} STATIC
     
     vmill/Program/AddressSpace.cpp
     vmill/Program/MappedRange.cpp
+    vmill/Program/ShadowMemory.cpp
     vmill/Program/Snapshot.cpp
     
     vmill/Util/AreaAllocator.cpp

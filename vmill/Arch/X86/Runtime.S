@@ -16,17 +16,8 @@
 
 #if defined(__x86_64__)
 
-#define CAT_(a, b) a ## b
-#define CAT(a, b) CAT_(a, b)
+#include "vmill/Arch/X86/Util.S"
 
-/* Note:    Apple mangles C symbol names to have a leading underscore. */
-#ifdef __APPLE__
-# define SYMBOL(x) CAT(_, x)
-#else
-# define SYMBOL(x) x
-#endif
-
-    .intel_syntax noprefix ;
     .text
 
     .extern SYMBOL(__vmill_record_read_fault_8)

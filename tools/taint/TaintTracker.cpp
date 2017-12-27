@@ -145,9 +145,9 @@ llvm::Constant *TaintTrackerTool::GetPureFunc(
     llvm::Type *ret_type, const std::string &name,
     const std::vector<llvm::Type *> &arg_types) {
   auto func_ = GetFunc(ret_type, name, arg_types);
-//  if (auto func = llvm::dyn_cast<llvm::Function>(func_)) {
-//    func->addFnAttr(llvm::Attribute::ReadNone);
-//  }
+  if (auto func = llvm::dyn_cast<llvm::Function>(func_)) {
+    func->addFnAttr(llvm::Attribute::ReadNone);
+  }
   return func_;
 }
 
@@ -252,11 +252,6 @@ void TaintTrackerTool::ExpandGEP(llvm::GetElementPtrInst *inst) {
     ptr = ir.CreateIntToPtr(addr, inst->getType());
   }
 
-  if (!llvm::isa<llvm::Instruction>(ptr)) {
-    LOG(FATAL)
-        << "Replacing " << remill::LLVMThingToString(inst)
-        << " with " << remill::LLVMThingToString(ptr);
-  }
   inst->replaceAllUsesWith(ptr);
 }
 
@@ -297,11 +292,6 @@ void TaintTrackerTool::VisitFunction(llvm::Function *func) {
   for (auto changed = true; changed; ++num_rounds) {
     changed = false;
 
-    if (num_rounds > 100) {
-      func->dump();
-      CHECK(false) << num_rounds;
-    }
-
     for (auto &block : *func) {
       if (&block == taint_block) {
         continue;
@@ -340,8 +330,6 @@ void TaintTrackerTool::VisitFunction(llvm::Function *func) {
     }
   }
 
-  ir.CreateBr(entry_block);
-
   insts.clear();
 
   for (auto &block : *func) {
@@ -354,6 +342,8 @@ void TaintTrackerTool::VisitFunction(llvm::Function *func) {
       }
     }
   }
+
+  ir.CreateBr(entry_block);
 
   for (auto inst : insts) {
     visit(inst);
@@ -673,15 +663,11 @@ void TaintTrackerTool::visitIntrinsicInst(llvm::IntrinsicInst &inst) {
 
 void TaintTrackerTool::visitCallInst(llvm::CallInst &inst) {
   auto called_val = inst.getCalledValue();
-  auto func_ptr_type = called_val->getType();
-  auto called_func_type = llvm::dyn_cast<llvm::FunctionType>(
-      llvm::dyn_cast<llvm::PointerType>(func_ptr_type)->getElementType());
 
   llvm::IRBuilder<> ir(&inst);
 
   // Don't try to pass taints for varargs functions or to inline assembly.
-  if (llvm::isa<llvm::InlineAsm>(called_val) ||
-      called_func_type->isVarArg()) {
+  if (llvm::isa<llvm::InlineAsm>(called_val)) {
     ir.CreateStore(llvm::Constant::getNullValue(taint_type),
                    func_taints[&inst]);
     return;
@@ -765,6 +751,24 @@ void TaintTrackerTool::visitSwitchInst(llvm::SwitchInst &inst) {
   llvm::IRBuilder<> ir(&inst);
   (void) CallFunc(ir, taint_func, LoadTaint(ir, cond),
                   ir.CreateZExt(cond, intptr_type));
+}
+
+void TaintTrackerTool::visitExtractElementInst(llvm::ExtractElementInst &inst) {
+  LOG(ERROR)
+      << "Unsupported " << remill::LLVMThingToString(&inst);
+
+  auto not_tainted = llvm::Constant::getNullValue(taint_type);
+  llvm::IRBuilder<> ir(&inst);
+  ir.CreateStore(not_tainted, func_taints[&inst]);
+}
+
+void TaintTrackerTool::visitInsertElementInst(llvm::InsertElementInst &inst) {
+  LOG(ERROR)
+      << "Unsupported " << remill::LLVMThingToString(&inst);
+
+  auto not_tainted = llvm::Constant::getNullValue(taint_type);
+  llvm::IRBuilder<> ir(&inst);
+  ir.CreateStore(not_tainted, func_taints[&inst]);
 }
 
 void TaintTrackerTool::visitMemSetInst(llvm::MemSetInst &inst) {

@@ -14,19 +14,11 @@
  * limitations under the License.
  */
 
-#define CAT_(a, b) a ## b
-#define CAT(a, b) CAT_(a, b)
+#if defined(__x86_64__)
 
-/* Note:    Apple mangles C symbol names to have a leading underscore. */
-#ifdef __APPLE__
-# define SYMBOL(x) CAT(_, x)
-#else
-# define SYMBOL(x) x
-#endif
+#include "vmill/Arch/X86/Util.S"
 
-    .intel_syntax noprefix ;
     .text
-
     .extern SYMBOL(__vmill_execute)
 
     // Swap off of the Task-specific stack.
@@ -119,3 +111,5 @@ SYMBOL(__vmill_execute_async):
 .Lend2:
     .cfi_endproc
     .size SYMBOL(__vmill_execute_async),.Lend2-.Lbegin2
+
+#endif  // defined(__x86_64__)

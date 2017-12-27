@@ -444,13 +444,13 @@ void CodeCacheImpl::ReoptimizeModule(
   };
 
   OptimizeModule(module.get(), func_generator);
-  auto undef_taint = llvm::UndefValue::get(llvm::Type::getInt1Ty(module->getContext()));
-  for (auto user : undef_taint->users()) {
-    if (auto inst = llvm::dyn_cast<llvm::Instruction>(user)) {
-      LOG(ERROR) << remill::LLVMThingToString(inst);
-      inst->getParent()->dump();
-    }
-  }
+//  auto undef_taint = llvm::UndefValue::get(llvm::Type::getInt1Ty(module->getContext()));
+//  for (auto user : undef_taint->users()) {
+//    if (auto inst = llvm::dyn_cast<llvm::Instruction>(user)) {
+//      LOG(ERROR) << remill::LLVMThingToString(inst);
+//      inst->getParent()->dump();
+//    }
+//  }
 }
 
 // Tell the tool to instrument each lifted function.

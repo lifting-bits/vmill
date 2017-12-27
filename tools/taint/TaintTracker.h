@@ -144,7 +144,8 @@ class TaintTrackerTool : public Tool,
   void visitCastInst(llvm::CastInst &inst);
   void visitBinaryOperator(llvm::BinaryOperator &inst);
   void visitCmpInst(llvm::CmpInst &inst);
-
+  void visitExtractElementInst(llvm::ExtractElementInst &inst);
+  void visitInsertElementInst(llvm::InsertElementInst &inst);
   void visitMemSetInst(llvm::MemSetInst &inst);
   void visitMemCpyInst(llvm::MemCpyInst &inst);
   void visitMemMoveInst(llvm::MemMoveInst &inst);
