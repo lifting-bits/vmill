@@ -31,15 +31,24 @@ void arch_sys_sigreturn(void);  // Defined in `Arch/*/Signal.S`.
 namespace vmill {
 namespace {
 
-using SignalFuncType = void(int, siginfo_t, void *);
+struct SaveErrno {
+  int no;
+  SaveErrno(void)
+      : no(errno) {}
+  ~SaveErrno(void) {
+    errno = no;
+  }
+};
 
-std::unique_ptr<ShadowMemory> gShadowMem;
+static ShadowMemory *gShadowMem = nullptr;
 
-struct sigaction gPrevSignalHandler = {};
+static struct sigaction gPrevSignalHandler = {};
 
 //static SignalFuncType *gPrevSignalHandler = nullptr;
 
 static void CatchFault(int sig, siginfo_t *si, void *context) {
+  SaveErrno save_errno;
+
   if (gShadowMem) {
     auto addr = reinterpret_cast<uint64_t>(si->si_addr);
     if (gShadowMem->AddPageForAddress(addr)) {
@@ -74,14 +83,12 @@ static uint64_t LeastCommonMultiple(uint64_t k, uint64_t m) {
 
 }  // namespace
 
-ShadowMemory *ShadowMemory::Get(uint64_t shadow_granularity_,
-                                uint64_t page_granularity_,
-                                uint64_t shadow_base_) {
+std::unique_ptr<ShadowMemory> ShadowMemory::Get(
+    uint64_t shadow_granularity_, uint64_t page_granularity_,
+    uint64_t shadow_base_) {
+
   CHECK(!gShadowMem)
       << "There can only be one active instance of shadow memory at a time.";
-
-  auto shadow_mem = new ShadowMemory(shadow_granularity_, page_granularity_,
-                                     shadow_base_);
 
   struct sigaction act;
   act.sa_flags = SA_SIGINFO;
@@ -95,9 +102,10 @@ ShadowMemory *ShadowMemory::Get(uint64_t shadow_granularity_,
         << "Can't catch SIGSEGV for shadow memory: " << strerror(err);
   }
 
-  gShadowMem.reset(shadow_mem);
+  gShadowMem = new ShadowMemory(shadow_granularity_, page_granularity_,
+                                shadow_base_);
 
-  return shadow_mem;
+  return std::unique_ptr<ShadowMemory>(gShadowMem);
 }
 
 ShadowMemory::ShadowMemory(uint64_t shadow_granularity_,
@@ -112,15 +120,15 @@ ShadowMemory::ShadowMemory(uint64_t shadow_granularity_,
       last_forced_shadow_byte(0) {}
 
 ShadowMemory *ShadowMemory::Self(void) {
-  return gShadowMem.get();
+  return gShadowMem;
 }
 
 ShadowMemory::~ShadowMemory(void) {
-  CHECK(gShadowMem.get() == this)
+  CHECK(gShadowMem == this)
       << "Broken program invariant permitting at most one active instance "
       << "of shadow memory.";
 
-  gShadowMem.release();
+  gShadowMem = nullptr;
 
   // Restore any previous handler for SIGSEGV.
   if (gPrevSignalHandler.sa_handler) {

@@ -83,6 +83,7 @@ add_library(${PROJECT_NAME} STATIC
     vmill/Workspace/Workspace.cpp
     
     tools/taint/TaintTracker.cpp
+    tools/dft/DataFlowTracker.cpp
     
     third_party/liballoc/liballoc.c
     third_party/ThreadPool/ThreadPool.cpp

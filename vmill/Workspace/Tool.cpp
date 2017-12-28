@@ -21,7 +21,7 @@
 #include "remill/OS/FileSystem.h"
 #include "vmill/Workspace/Tool.h"
 
-#include "tools/taint/TaintTracker.h"
+#include "tools/dft/DataFlowTracker.h"
 
 namespace vmill {
 
@@ -47,8 +47,8 @@ std::unique_ptr<Tool> Tool::Load(const std::string &name_or_path) {
   if (name_or_path == "null") {
     return std::unique_ptr<Tool>(new NullTool);
 
-  } else if (name_or_path == "taint") {
-    return std::unique_ptr<Tool>(new TaintTrackerTool(1));
+  } else if (name_or_path == "dft") {
+    return CreateDataFlowTracker();
 
   } else if (remill::FileExists(name_or_path)) {
     LOG(FATAL)

@@ -72,6 +72,8 @@ uint64_t TaintTrackerTool::FindSymbolForLinking(
 
   auto c_name = name.c_str();
   if (c_name == strstr(c_name, "__taint")) {
+    LOG(ERROR)
+        << "Missing function " << name;
     return reinterpret_cast<uintptr_t>(ReturnUntainted);
   }
 
@@ -509,7 +511,7 @@ void TaintTrackerTool::visitCastInst(llvm::CastInst &inst) {
     case llvm::Instruction::UIToFP:
     case llvm::Instruction::SIToFP: {
       std::stringstream ss;
-      ss << "__taint_" << inst.getOpcodeName() << "_"
+      ss << "__taint_" << inst.getOpcodeName() << "_to_"
          << remill::LLVMThingToString(inst.getType());
       auto name = ss.str();
       auto func = GetPureFunc(taint_type, name, taint_type);
@@ -593,8 +595,13 @@ void TaintTrackerTool::visitCmpInst(llvm::CmpInst &inst) {
   llvm::DataLayout dl(module);
   std::stringstream ss;
 
+  auto cmp_type = inst.getOperand(0)->getType();
+  if (cmp_type->isPointerTy()) {
+    cmp_type = llvm::Type::getIntNTy(*context, dl.getPointerSizeInBits(0));
+  }
+
   ss << "__taint_" << inst.getOpcodeName() << "_" << GetPredicateName(inst)
-     << remill::LLVMThingToString(inst.getType());
+     << "_" << remill::LLVMThingToString(cmp_type);
 
   auto name = ss.str();
   auto func = GetPureFunc(taint_type, name, taint_type, taint_type);
@@ -647,8 +654,23 @@ void TaintTrackerTool::visitIntrinsicInst(llvm::IntrinsicInst &inst) {
     arg_types.push_back(taint_type);
   }
 
+  auto intrinsic_name = llvm::Intrinsic::getName(inst.getIntrinsicID());
+
   std::stringstream ss;
-  ss << "__taint_" << llvm::Intrinsic::getName(inst.getIntrinsicID());
+  ss << "__taint_";
+  for (auto c : intrinsic_name) {
+    if (isalnum(c)) {
+      ss << c;
+    } else {
+      ss << '_';
+    }
+  }
+
+  auto ret_type = inst.getType();
+  if (!ret_type->isVoidTy()) {
+    ss << "_" << remill::LLVMThingToString(ret_type);
+  }
+
   auto name = ss.str();
 
   if (inst.getType() == void_type) {
@@ -717,8 +739,9 @@ void TaintTrackerTool::visitSelectInst(llvm::SelectInst &inst) {
   }
   llvm::IRBuilder<> ir(&inst);
   auto taint_func = GetPureFunc(taint_type, "__taint_select",
-                                cond_type, taint_type, taint_type, taint_type);
-  auto select_taint = CallFunc(ir, taint_func, cond, LoadTaint(ir, cond),
+                                taint_type, cond_type, taint_type, taint_type);
+
+  auto select_taint = CallFunc(ir, taint_func, LoadTaint(ir, cond), cond,
                                LoadTaint(ir, inst.getTrueValue()),
                                LoadTaint(ir, inst.getFalseValue()));
   ir.CreateStore(select_taint, func_taints[&inst]);
@@ -732,7 +755,7 @@ void TaintTrackerTool::visitBranchInst(llvm::BranchInst &inst) {
   auto cond = inst.getCondition();
   auto bool_type = llvm::Type::getInt1Ty(*context);
   CHECK(bool_type == cond->getType());
-  auto taint_func = GetFunc(void_type, "__taint_branch_cond",
+  auto taint_func = GetFunc(void_type, "__taint_branch",
                             taint_type, bool_type);
   llvm::IRBuilder<> ir(&inst);
   (void) CallFunc(ir, taint_func, LoadTaint(ir, cond), cond);
@@ -746,11 +769,32 @@ void TaintTrackerTool::visitIndirectBrInst(llvm::IndirectBrInst &inst) {
 
 void TaintTrackerTool::visitSwitchInst(llvm::SwitchInst &inst) {
   auto cond = inst.getCondition();
-  auto taint_func = GetFunc(void_type, "__taint_switch_cond",
-                            taint_type, intptr_type);
+
+  std::vector<uint64_t> vals;
+  for (auto &case_entry : inst.cases()) {
+    auto case_val = case_entry.getCaseValue()->getZExtValue();
+    vals.push_back(case_val);
+  }
+
+  auto int64_type = llvm::Type::getInt64Ty(*context);
+  auto int64_ptr_type = llvm::PointerType::get(int64_type, 0);
+  auto cases = llvm::ConstantDataArray::get(*context, vals);
+  auto case_array = new llvm::GlobalVariable(
+      *module, cases->getType(), true, llvm::GlobalValue::PrivateLinkage,
+      cases);
+
+  auto first_entry = llvm::ConstantExpr::getGetElementPtr(
+      int64_type, case_array, llvm::ConstantInt::get(intptr_type, 0));
+  auto after_last_entry = llvm::ConstantExpr::getGetElementPtr(
+      int64_type, case_array, llvm::ConstantInt::get(intptr_type, 1));
+
+  auto taint_func = GetFunc(void_type, "__taint_switch",
+                            taint_type, int64_type, int64_ptr_type,
+                            int64_ptr_type);
   llvm::IRBuilder<> ir(&inst);
   (void) CallFunc(ir, taint_func, LoadTaint(ir, cond),
-                  ir.CreateZExt(cond, intptr_type));
+                  ir.CreateZExt(cond, int64_type),
+                  first_entry, after_last_entry);
 }
 
 void TaintTrackerTool::visitExtractElementInst(llvm::ExtractElementInst &inst) {

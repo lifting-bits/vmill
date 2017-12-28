@@ -92,9 +92,10 @@ class ShadowMemory {
  public:
   ~ShadowMemory(void);
 
-  static ShadowMemory *Get(uint64_t shadow_granularity_=0,
-                           uint64_t page_granularity_=12,
-                           uint64_t shadow_base_=0x100000000000);
+  static std::unique_ptr<ShadowMemory> Get(
+      uint64_t shadow_granularity_=0,
+      uint64_t page_granularity_=12,
+      uint64_t shadow_base_=0x100000000000);
 
   template <typename T, typename U>
   ALWAYS_INLINE
