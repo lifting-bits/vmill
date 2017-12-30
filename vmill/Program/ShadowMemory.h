@@ -22,8 +22,10 @@
 #include <new>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <type_traits>
 
+#include "vmill/Util/AreaAllocator.h"
 #include "vmill/Util/Compiler.h"
 
 namespace vmill {
@@ -100,14 +102,14 @@ class ShadowMemory {
   template <typename T, typename U>
   ALWAYS_INLINE
   static auto At(U *ptr) -> typename detail::BoolTag<T>::RefType {
-    return Self()->At(reinterpret_cast<uintptr_t>(ptr),
-                      typename detail::BoolTag<T>::TagType());
+    return Self()->At<T>(reinterpret_cast<uintptr_t>(ptr),
+                         typename detail::BoolTag<T>::TagType());
   }
 
-  template <typename T, typename U>
+  template <typename T>
   ALWAYS_INLINE
   static auto At(uint64_t addr) -> typename detail::BoolTag<T>::RefType {
-    return Self()->At(addr, typename detail::BoolTag<T>::TagType());
+    return Self()->At<T>(addr, typename detail::BoolTag<T>::TagType());
   }
 
   bool AddPageForAddress(uint64_t addr);
@@ -122,48 +124,73 @@ class ShadowMemory {
   static ShadowMemory *Self(void);
 
   template <typename T>
-  inline T &At(uint64_t addr, detail::not_bool_tag) {
-    last_page_address = (addr >> page_granularity) + shadow_base;
-    last_shadow_address = (addr >> shadow_granularity) + shadow_base;
-    last_shadow_elem_size_bits = sizeof(T) * 8;
-    auto byte_ptr = reinterpret_cast<uint8_t *>(last_shadow_address);
-    last_forced_shadow_byte = *byte_ptr;
-    return *reinterpret_cast<T *>(byte_ptr);
+  __attribute__((noinline))
+  T &At(uint64_t addr, detail::not_bool_tag) {
+    if (likely(addr < shadow_base)) {
+      last_shadow_address = (addr >> shadow_granularity) + shadow_base;
+      last_shadow_elem_size_bits = sizeof(T) * 8;
+      auto byte_ptr = reinterpret_cast<uint8_t *>(last_shadow_address);
+      last_forced_shadow_byte = *byte_ptr;
+      return *reinterpret_cast<T *>(byte_ptr);
+
+    // This sucks, we need to keep out "contract" of returning referencable
+    // things, but these things might actually be outside of our primary
+    // shadowable range of memory. So we have to back of this code with
+    // something else.
+    } else {
+      auto &data_ptr = reinterpret_cast<T *&>(
+          out_of_range[addr >> shadow_granularity]);
+
+      if (!data_ptr) {
+        data_ptr = out_of_range_allocator.Allocate<T>();
+      }
+
+      return *data_ptr;
+    }
   }
 
-  inline detail::BoolRef At(uint64_t addr, detail::bool_tag) {
-    last_page_address = (addr >> page_granularity) + shadow_base;
-    last_shadow_address = (addr >> shadow_granularity) + shadow_base;
-    last_shadow_elem_size_bits = 1;
-    auto byte_ptr = reinterpret_cast<uint8_t *>(last_shadow_address);
-    last_forced_shadow_byte = *byte_ptr;
-    detail::BoolRef ref(byte_ptr, last_shadow_address % 8);
-    return ref;
+  template <typename T>
+  __attribute__((noinline))
+  detail::BoolRef At(uint64_t addr, detail::bool_tag) {
+    static_assert(std::is_same<T, bool>(), "Invalid specialization!");
+    if (likely(addr < shadow_base)) {
+      last_shadow_address = (addr >> shadow_granularity) + shadow_base;
+      last_shadow_elem_size_bits = 1;
+      auto byte_ptr = reinterpret_cast<uint8_t *>(last_shadow_address);
+      last_forced_shadow_byte = *byte_ptr;
+      detail::BoolRef ref(byte_ptr, last_shadow_address % 8);
+      return ref;
+
+    } else {
+      auto &data_ptr = reinterpret_cast<uint8_t *&>(
+          out_of_range[addr >> shadow_granularity]);
+      if (!data_ptr) {
+        data_ptr = out_of_range_allocator.Allocate(1, 0);
+        *data_ptr = 0;
+      }
+      detail::BoolRef ref(data_ptr, 0);
+      return ref;
+    }
   }
 
   const uint64_t shadow_granularity;
   const uint64_t shadow_base;
   const uint64_t page_granularity;
 
-  uint64_t last_page_address;
   uint64_t last_shadow_address;
   uint32_t last_shadow_elem_size_bits;
   uint8_t last_forced_shadow_byte;
 
-  struct ShadowPage {
-    inline ShadowPage(void *base_, size_t size_)
-        : base(base_),
-          size(size_) {}
+  // Tracks mapped pages in the shadowable range,
+  std::vector<void *> shadow_pages;
+  size_t last_shadow_page_size;
 
-    ~ShadowPage(void);
+  // Used to store shadow information about bytes that are out of the
+  // shadowable range.
+  std::unordered_map<uint64_t, void *> out_of_range;
 
-    void *base;
-    size_t size;
-  };
-
-  using ShadowPagePtr = std::unique_ptr<ShadowPage>;
-
-  std::unordered_map<uint64_t, ShadowPagePtr> shadow_page_map;
+  // Allocator of objects for out of range objects.
+  AreaAllocator out_of_range_allocator;
 };
 
 }  // namespace vmill

@@ -114,10 +114,10 @@ ShadowMemory::ShadowMemory(uint64_t shadow_granularity_,
     : shadow_granularity(shadow_granularity_),
       shadow_base(shadow_base_),
       page_granularity(page_granularity_),
-      last_page_address(0),
       last_shadow_address(0),
       last_shadow_elem_size_bits(0),
-      last_forced_shadow_byte(0) {}
+      last_forced_shadow_byte(0),
+      out_of_range_allocator(kAreaRW, 0, 4096) {}
 
 ShadowMemory *ShadowMemory::Self(void) {
   return gShadowMem;
@@ -135,6 +135,11 @@ ShadowMemory::~ShadowMemory(void) {
     ::sigaction(SIGSEGV, &gPrevSignalHandler, nullptr);
     gPrevSignalHandler = {};
   }
+
+  for (auto base : shadow_pages) {
+    CHECK(0 < last_shadow_page_size);
+    munmap(base, last_shadow_page_size);
+  }
 }
 
 bool ShadowMemory::AddPageForAddress(uint64_t addr) {
@@ -143,36 +148,37 @@ bool ShadowMemory::AddPageForAddress(uint64_t addr) {
   }
 
   auto page_size = 1ULL << page_granularity;
-  auto shadow_elems_per_page = page_size >> shadow_granularity;
-  auto shadow_bits_per_page = shadow_elems_per_page *
-                              last_shadow_elem_size_bits;
-  auto shadow_bytes_per_page = shadow_bits_per_page / 8;
-  auto alloc_size = static_cast<size_t>(
-      LeastCommonMultiple(shadow_bytes_per_page, 4096));
+  auto shadow_page_size = LeastCommonMultiple(
+      ((page_size >> shadow_granularity) * last_shadow_elem_size_bits) / 8,
+      4096);
 
-  auto desired_base = reinterpret_cast<void *>(last_page_address);
-  auto alloc_base = mmap(desired_base, alloc_size, PROT_READ | PROT_WRITE,
+  if (!last_shadow_page_size) {
+    last_shadow_page_size = shadow_page_size;
+  } else {
+    CHECK(last_shadow_page_size == shadow_page_size);
+  }
+
+  auto page_offset = ((addr - shadow_base) / shadow_page_size) *
+                     shadow_page_size;
+  auto shadow_page = page_offset + shadow_base;
+  CHECK(shadow_page <= addr && addr < (shadow_page + shadow_page_size));
+
+  auto desired_base = reinterpret_cast<void *>(shadow_page);
+  auto alloc_base = mmap(desired_base, shadow_page_size, PROT_READ | PROT_WRITE,
                          MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED, -1, 0);
   auto err = errno;
   CHECK(desired_base == alloc_base)
-      << "Unable to allocate " << alloc_size << " bytes at "
+      << "Unable to allocate " << shadow_page_size << " bytes at "
       << desired_base << " (got " << alloc_base << ") for shadow memory: "
       << strerror(err);
 
-  for (size_t i = 0; i < alloc_size; i += 4096) {
-    auto base = reinterpret_cast<void *>(
-        reinterpret_cast<uintptr_t>(alloc_base) + i);
-    std::unique_ptr<ShadowPage> page(new ShadowPage(base, 4096));
-    auto old_size = shadow_page_map.size();
-    shadow_page_map[last_page_address] = std::move(page);
-    CHECK(shadow_page_map.size() > old_size);
-  }
+  DLOG(INFO)
+        << "Allocating " << shadow_page_size << " bytes at " << desired_base
+        << " got it at " << alloc_base << " accessing " << std::hex
+        << addr << std::dec;
 
+  shadow_pages.push_back(alloc_base);
   return true;
-}
-
-ShadowMemory::ShadowPage::~ShadowPage(void) {
-  munmap(base, size);
 }
 
 }  // namespace vmill

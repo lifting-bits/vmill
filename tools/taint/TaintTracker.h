@@ -58,6 +58,11 @@ class TaintTrackerTool : public Tool,
 
   virtual ~TaintTrackerTool(void);
 
+  virtual uintptr_t FindIntConstantTaint(uint64_t const_val);
+  virtual uintptr_t FindFloatConstantTaint(float const_val);
+  virtual uintptr_t FindDoubleConstantTaint(double const_val);
+  virtual uintptr_t FindTaintTransferFunc(const std::string &name);
+
   // Called when lifted bitcode or the runtime needs to resolve an external
   // symbol. This overload is provided so that client tools can choose which
   // specific taint functions they want to override, and aren't required to
@@ -168,6 +173,9 @@ class TaintTrackerTool : public Tool,
 
   // Mapping of instructions in a function to their taint locations.
   std::unordered_map<llvm::Value *, llvm::AllocaInst *> func_taints;
+
+  std::unordered_map<std::string, uintptr_t> tainted_consts;
+  std::unordered_map<std::string, uintptr_t> tainted_funcs;
 };
 
 }  // namespace vmill

@@ -16,6 +16,9 @@
 
 #include <glog/logging.h>
 
+#include <cstring>
+#include <cstdlib>
+#include <cinttypes>
 #include <string>
 #include <sstream>
 #include <unordered_set>
@@ -50,6 +53,8 @@ static uint64_t ReturnUntainted(void) {
   return 0;
 }
 
+static const uint8_t gZeroStuff[64] = {};
+
 }  // namespace
 
 TaintTrackerTool::TaintTrackerTool(size_t num_bits_)
@@ -65,19 +70,88 @@ TaintTrackerTool::TaintTrackerTool(size_t num_bits_)
 
 TaintTrackerTool::~TaintTrackerTool(void) {}
 
+uintptr_t TaintTrackerTool::FindIntConstantTaint(uint64_t const_val) {
+  return reinterpret_cast<uintptr_t>(&(gZeroStuff[0]));
+}
+
+uintptr_t TaintTrackerTool::FindFloatConstantTaint(float const_val) {
+  return reinterpret_cast<uintptr_t>(&(gZeroStuff[0]));
+}
+
+uintptr_t TaintTrackerTool::FindDoubleConstantTaint(double const_val) {
+  return reinterpret_cast<uintptr_t>(&(gZeroStuff[0]));
+}
+
+uintptr_t TaintTrackerTool::FindTaintTransferFunc(const std::string &name) {
+  return reinterpret_cast<uintptr_t>(ReturnUntainted);
+}
+
 // Called when lifted bitcode or the runtime needs to resolve an external
 // symbol.
 uint64_t TaintTrackerTool::FindSymbolForLinking(
     const std::string &name, uint64_t resolved) {
 
   auto c_name = name.c_str();
-  if (c_name == strstr(c_name, "__taint")) {
-    LOG(ERROR)
-        << "Missing function " << name;
-    return reinterpret_cast<uintptr_t>(ReturnUntainted);
-  }
+  if (c_name != strstr(c_name, "__taint")) {
+    return Tool::FindSymbolForLinking(name, resolved);
 
-  return resolved;
+  // Deal with tainted constants.
+  } else if (c_name == strstr(c_name, "__tainted_")) {
+    auto &addr = tainted_consts[name];
+    if (!addr) {
+      if (c_name == strstr(c_name, "__tainted_float_")) {
+        uint32_t val = 0;
+        CHECK(1 == sscanf(c_name, "__tainted_float_%" SCNx32, &val));
+        addr = FindFloatConstantTaint(reinterpret_cast<float &>(val));
+
+      } else if (c_name == strstr(c_name, "__tainted_double_")) {
+        uint64_t val = 0;
+        CHECK(1 == sscanf(c_name, "__tainted_double_%" SCNx64, &val));
+        addr = FindDoubleConstantTaint(reinterpret_cast<double &>(val));
+
+      } else if (c_name == strstr(c_name, "__tainted_int_")) {
+        uint64_t val = 0;
+        CHECK(1 == sscanf(c_name, "__tainted_int_%" SCNx64, &val));
+        addr = FindIntConstantTaint(val);
+      }
+    }
+
+    if (addr) {
+      return addr;
+    }
+
+    addr = Tool::FindSymbolForLinking(name, resolved);
+    if (addr) {
+      return addr;
+    }
+
+    LOG(ERROR)
+        << "Missing taint symbol " << name << " for immediate constant";
+    addr = reinterpret_cast<uintptr_t>(&(gZeroStuff[0]));
+    return addr;
+
+  // Deal with taint transfer functions.
+  } else {
+    auto &addr = tainted_funcs[name];
+    if (addr) {
+      return addr;
+    }
+
+    addr = FindTaintTransferFunc(name);
+    if (addr) {
+      return addr;
+    }
+
+    addr = Tool::FindSymbolForLinking(name, resolved);
+    if (addr) {
+      return addr;
+    }
+
+    LOG(ERROR)
+        << "Missing address for taint transfer function " << name;
+    addr = reinterpret_cast<uintptr_t>(ReturnUntainted);
+    return addr;
+  }
 }
 
 // Instrument the runtime module.
@@ -372,14 +446,39 @@ llvm::Value *TaintTrackerTool::LoadTaint(llvm::IRBuilder<> &ir,
 
   // The taint of a constant is the result of a call to something like
   // `__taint_constant_i8(val)`.
-  } else if (llvm::isa<llvm::ConstantInt>(val) ||
-             llvm::isa<llvm::ConstantFP>(val)) {
+  } else if (auto ci = llvm::dyn_cast<llvm::ConstantInt>(val)) {
+    std::stringstream ss;
+    ss << "__tainted_int_" << std::hex << ci->getZExtValue();
+    auto name = ss.str();
+    auto global = module->getOrInsertGlobal(name, taint_type);
+    return ir.CreateLoad(global);
+  }
+
+  auto not_tainted = llvm::Constant::getNullValue(taint_type);
+
+  if (auto cf = llvm::dyn_cast<llvm::ConstantFP>(val)) {
+    auto &apf = cf->getValueAPF();
 
     std::stringstream ss;
-    ss << "__taint_const_" << remill::LLVMThingToString(val->getType());
+    ss << "__tainted_";
+    auto type = cf->getType();
+    if (type->isFloatTy()) {
+      auto fv = apf.convertToFloat();
+      ss << "float_" << std::hex << reinterpret_cast<uint32_t &>(fv);
+
+    } else if (type->isDoubleTy()) {
+      auto dv = apf.convertToDouble();
+      ss << "double_" << std::hex << reinterpret_cast<uint64_t &>(dv);
+
+    } else {
+      LOG(ERROR)
+          << "Can't taint constant of type " << remill::LLVMThingToString(type);
+      return not_tainted;
+    }
+
     auto name = ss.str();
-    auto taint_func = GetPureFunc(taint_type, name, val->getType());
-    return CallFunc(ir, taint_func, val);
+    auto global = module->getOrInsertGlobal(name, taint_type);
+    return ir.CreateLoad(global);
 
   // The taint of a global variable is the `__taint_global(addr, size)`, where
   // `addr` is the address of the global variable, and `size` is the size in
@@ -396,7 +495,6 @@ llvm::Value *TaintTrackerTool::LoadTaint(llvm::IRBuilder<> &ir,
         llvm::ConstantInt::get(intptr_type, dl.getTypeAllocSize(val_type)));
   }
 
-  auto not_tainted = llvm::Constant::getNullValue(taint_type);
 
   // Functions don't really need to be tainted, they can't be changed or
   // indexed into.

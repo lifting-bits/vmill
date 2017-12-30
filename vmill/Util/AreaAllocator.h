@@ -18,6 +18,7 @@
 #define VMILL_UTIL_AREAALLOCATOR_H_
 
 #include <cstdint>
+#include <new>
 
 namespace vmill {
 
@@ -45,6 +46,11 @@ class AreaAllocator {
   AreaAllocator(AreaAllocationPerms perms, uintptr_t preferred_base_=0,
                 size_t page_size_=k2MiB);
   ~AreaAllocator(void);
+
+  template <typename T, typename... Args>
+  inline T *Allocate(Args&&... args) {
+    return new (Allocate(sizeof(T), alignof(T))) T(std::forward<Args>(args)...);
+  }
 
   uint8_t *Allocate(size_t size, size_t align=0);
 
