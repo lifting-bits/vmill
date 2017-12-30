@@ -124,7 +124,7 @@ class ShadowMemory {
   static ShadowMemory *Self(void);
 
   template <typename T>
-  __attribute__((noinline))
+  __attribute__((noinline, hot))
   T &At(uint64_t addr, detail::not_bool_tag) {
     if (likely(addr < shadow_base)) {
       last_shadow_address = (addr >> shadow_granularity) + shadow_base;
@@ -150,7 +150,7 @@ class ShadowMemory {
   }
 
   template <typename T>
-  __attribute__((noinline))
+  __attribute__((noinline, hot))
   detail::BoolRef At(uint64_t addr, detail::bool_tag) {
     static_assert(std::is_same<T, bool>(), "Invalid specialization!");
     if (likely(addr < shadow_base)) {

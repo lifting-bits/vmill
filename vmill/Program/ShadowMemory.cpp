@@ -80,7 +80,6 @@ static uint64_t LeastCommonMultiple(uint64_t k, uint64_t m) {
   return (k * m) / GreatestCommonDivisor(k, m);
 }
 
-
 }  // namespace
 
 std::unique_ptr<ShadowMemory> ShadowMemory::Get(
@@ -117,7 +116,12 @@ ShadowMemory::ShadowMemory(uint64_t shadow_granularity_,
       last_shadow_address(0),
       last_shadow_elem_size_bits(0),
       last_forced_shadow_byte(0),
-      out_of_range_allocator(kAreaRW, 0, 4096) {}
+      last_shadow_page_size(0),
+      out_of_range_allocator(kAreaRW, 0, 4096) {
+
+  out_of_range.reserve(4096);
+  shadow_pages.reserve(4096);
+}
 
 ShadowMemory *ShadowMemory::Self(void) {
   return gShadowMem;

@@ -32,8 +32,10 @@ union Taint {
   uint64_t flat;
   struct {
     uint64_t is_tainted:1;
+//    uint64_t is_literal:1;
+//    uint64_t is_address:1;
     uint64_t sel:7;
-    uint64_t id:48;
+    uint64_t val:48;
   } __attribute__((packed));
 
 } __attribute__((packed));
@@ -65,22 +67,6 @@ static Taint LoadReturnTaint(void) {
   return taint;
 }
 
-template <size_t kNumBits>
-static Taint TaintIntConstant(uint64_t val) {
-  // TODO(pag): Some kind of logging.
-  return {};
-}
-
-static Taint TaintFloatConstant(float val) {
-  // TODO(pag): Some kind of logging.
-  return {};
-}
-
-static Taint TaintDoubleConstant(float val) {
-  // TODO(pag): Some kind of logging.
-  return {};
-}
-
 template <typename Tag>
 static Taint TaintBinary(Taint lhs, Taint rhs) {
   if (likely(0 == (1 & (lhs.flat | rhs.flat)))) {
@@ -92,7 +78,7 @@ static Taint TaintBinary(Taint lhs, Taint rhs) {
   Taint res{};
   res.is_tainted = 1;
   res.sel = 0;
-  res.id = Taint::gId++;
+  res.val = Taint::gId++;
   return res;
 }
 
@@ -133,11 +119,11 @@ static Taint TaintLoad(Taint addr_taint, uint64_t addr) {
 
   size_t i = 0;
   Taint last_taint = {};
-  last_taint.id = taints[0].id;
+  last_taint.val = taints[0].val;
 
   _Pragma("unroll")
   for (const Taint &taint : taints) {
-    if (taint.id != last_taint.id) {
+    if (taint.val != last_taint.val) {
       goto concat;
     }
 
@@ -158,7 +144,7 @@ concat:
 
   // TODO(pag): Report the generation of a new taint ID.
 
-  last_taint.id = Taint::gId++;
+  last_taint.val = Taint::gId++;
   return last_taint;
 }
 
@@ -173,6 +159,48 @@ static void TaintStore(Taint addr_taint, uint64_t addr, Taint val_taint) {
     val_taint.sel = i;
     ShadowMemory::At<Taint>(addr + i) = val_taint;
   }
+}
+
+static void TaintMemSet(Taint dest_addr_taint, uintptr_t dest_addr,
+                        Taint val_taint, uintptr_t dest_val,
+                        Taint size_taint, uintptr_t dest_size) {
+  val_taint.sel = 0;
+  for (size_t i = 0; i < dest_size; ++i) {
+    ShadowMemory::At<Taint>(dest_addr + i) = val_taint;
+  }
+}
+
+static void TaintMemCopy(Taint dest_addr_taint, uintptr_t dest_addr,
+                         Taint src_addr_taint, uintptr_t src_addr,
+                         Taint size_taint, uintptr_t dest_size) {
+  for (size_t i = 0; i < dest_size; ++i) {
+    ShadowMemory::At<Taint>(dest_addr + i) = \
+        ShadowMemory::At<Taint>(src_addr + i);
+  }
+}
+
+static void TaintMemMove(Taint dest_addr_taint, uintptr_t dest_addr,
+                         Taint src_addr_taint, uintptr_t src_addr,
+                         Taint size_taint, uintptr_t dest_size) {
+  if (!dest_size) {
+    return;
+
+  } else if (dest_addr < src_addr) {
+    for (size_t i = 0; i < dest_size; ++i) {
+      ShadowMemory::At<Taint>(dest_addr + dest_size - i - 1) = \
+          ShadowMemory::At<Taint>(src_addr + dest_size - i - 1);
+    }
+
+  } else {
+    for (size_t i = 0; i < dest_size; ++i) {
+      ShadowMemory::At<Taint>(dest_addr + i) = \
+          ShadowMemory::At<Taint>(src_addr + i);
+    }
+  }
+}
+
+static Taint TaintAddress(uintptr_t address, uintptr_t size) {
+  return {};
 }
 
 #define GET_FLOAT_OPS(name) \
@@ -394,22 +422,11 @@ class DataFlowTracker : public TaintTrackerTool {
     taint_trackers["__taint_branch"] = \
         reinterpret_cast<uintptr_t>(TaintBranch);
 
-    taint_trackers["__taint_const_i1"] = \
-        reinterpret_cast<uintptr_t>(TaintIntConstant<1>);
-    taint_trackers["__taint_const_i8"] = \
-        reinterpret_cast<uintptr_t>(TaintIntConstant<8>);
-    taint_trackers["__taint_const_i16"] = \
-        reinterpret_cast<uintptr_t>(TaintIntConstant<16>);
-    taint_trackers["__taint_const_i32"] = \
-        reinterpret_cast<uintptr_t>(TaintIntConstant<32>);
-    taint_trackers["__taint_const_i64"] = \
-        reinterpret_cast<uintptr_t>(TaintIntConstant<64>);
+    taint_trackers["__taint_local"] = \
+        reinterpret_cast<uintptr_t>(TaintAddress);
 
-    taint_trackers["__taint_const_float"] = \
-        reinterpret_cast<uintptr_t>(TaintFloatConstant);
-
-    taint_trackers["__taint_const_double"] = \
-        reinterpret_cast<uintptr_t>(TaintDoubleConstant);
+    taint_trackers["__taint_global"] = \
+        reinterpret_cast<uintptr_t>(TaintAddress);
 
     taint_trackers["__taint_load_8"] = \
         reinterpret_cast<uintptr_t>(TaintLoad<1>);
@@ -432,6 +449,16 @@ class DataFlowTracker : public TaintTrackerTool {
         reinterpret_cast<uintptr_t>(TaintStore<8>);
     taint_trackers["__taint_store_128"] = \
         reinterpret_cast<uintptr_t>(TaintStore<16>);
+
+    taint_trackers["__taint_memset"] = \
+        reinterpret_cast<uintptr_t>(TaintMemSet);
+
+    taint_trackers["__taint_memcpy"] = \
+        reinterpret_cast<uintptr_t>(TaintMemCopy);
+
+    taint_trackers["__taint_memmove"] = \
+        reinterpret_cast<uintptr_t>(TaintMemMove);
+
 
 #define MAKE_TAINT_OP(name, type_size, llvm_type_name) \
     taint_trackers["__taint_" #name "_" #llvm_type_name] = \
@@ -498,7 +525,7 @@ class DataFlowTracker : public TaintTrackerTool {
   uintptr_t FindIntConstantTaint(uint64_t const_val) override {
     auto taint = constant_pool.Allocate<Taint>();
     taint->is_tainted = false;
-    taint->id = Taint::gId++;
+    taint->val = Taint::gId++;
     // TODO(pag): Logging of `const_val` or something.
     return reinterpret_cast<uintptr_t>(taint);
   }
@@ -506,7 +533,7 @@ class DataFlowTracker : public TaintTrackerTool {
   uintptr_t FindFloatConstantTaint(float const_val) override {
     auto taint = constant_pool.Allocate<Taint>();
     taint->is_tainted = false;
-    taint->id = Taint::gId++;
+    taint->val = Taint::gId++;
     // TODO(pag): Logging of `const_val` or something.
     return reinterpret_cast<uintptr_t>(taint);
   }
@@ -514,7 +541,7 @@ class DataFlowTracker : public TaintTrackerTool {
   uintptr_t FindDoubleConstantTaint(double const_val) override {
     auto taint = constant_pool.Allocate<Taint>();
     taint->is_tainted = false;
-    taint->id = Taint::gId++;
+    taint->val = Taint::gId++;
     // TODO(pag): Logging of `const_val` or something.
     return reinterpret_cast<uintptr_t>(taint);
   }
