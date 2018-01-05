@@ -35,6 +35,12 @@ uint64_t Tool::FindSymbolForLinking(const std::string &, uint64_t resolved) {
   return resolved;
 }
 
+// Called just before the beginning of a run.
+void Tool::SetUp(void) {}
+
+// Called just after the ending of a run.
+void Tool::TearDown(void) {}
+
 bool Tool::InstrumentRuntime(llvm::Module *) {
   return false;
 }

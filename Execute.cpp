@@ -51,6 +51,9 @@
 DECLARE_string(arch);
 DECLARE_string(os);
 
+DEFINE_uint64(max_num_execs, 1,
+              "Maximum number of times to execute the program.");
+
 int main(int argc, char **argv) {
 
   std::stringstream ss;
@@ -63,6 +66,9 @@ int main(int argc, char **argv) {
   google::InitGoogleLogging(argv[0]);
   google::SetUsageMessage(ss.str());
   google::ParseCommandLineFlags(&argc, &argv, true);
+
+  CHECK(0 < FLAGS_max_num_execs)
+      << "Must specific a positive value for `--max_num_execs`.";
 
   CHECK(FLAGS_arch.empty() && FLAGS_os.empty())
       << "The architecture and OS names must NOT be manually specified.";
@@ -83,7 +89,10 @@ int main(int argc, char **argv) {
 
   vmill::Executor executor;
   vmill::Workspace::LoadSnapshotIntoExecutor(snapshot, executor);
-  executor.RunOnce();
+
+  for (uint64_t i = 0; i < FLAGS_max_num_execs; ++i) {
+    executor.Run();
+  }
 
   llvm::llvm_shutdown();
   google::ShutDownCommandLineFlags();

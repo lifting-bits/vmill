@@ -181,12 +181,12 @@ class AddressSpace : public Memory {
   std::unordered_set<uint64_t> page_is_writable;
   std::unordered_set<uint64_t> page_is_executable;
 
+  // Set of lifted trace heads observed for this code version.
+  std::unordered_set<uint64_t> trace_heads;
+
   // Is the address space dead? This means that all operations on it
   // will be muted.
   bool is_dead;
-
-  // Set of lifted trace heads observed for this code version.
-  std::unordered_set<uint64_t> trace_heads;
 };
 
 }  // namespace vmill

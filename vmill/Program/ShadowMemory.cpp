@@ -107,6 +107,10 @@ std::unique_ptr<ShadowMemory> ShadowMemory::Get(
   return std::unique_ptr<ShadowMemory>(gShadowMem);
 }
 
+void ShadowMemory::Put(std::unique_ptr<ShadowMemory> &mem) {
+  mem.reset(nullptr);
+}
+
 ShadowMemory::ShadowMemory(uint64_t shadow_granularity_,
                            uint64_t page_granularity_,
                            uint64_t shadow_base_)

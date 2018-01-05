@@ -71,6 +71,10 @@ class InvalidMemoryMap : public MappedRangeBase {
   MemoryMapPtr Clone(void) final;
   CodeVersion ComputeCodeVersion(void) final;
   bool IsValid(void) const final;
+
+  std::string Provider(void) const final {
+    return "invalid";
+  }
 };
 
 // Implements an array-backed memory mapping that is filled with actual data
@@ -92,6 +96,10 @@ class ArrayMemoryMap : public MappedRangeBase {
   void *ToReadWriteVirtualAddress(uint64_t addr) final;
   const void *ToReadOnlyVirtualAddress(uint64_t addr) final;
 
+  std::string Provider(void) const final {
+    return "array";
+  }
+
   static ZoneAllocator gAllocator;
 };
 
@@ -107,6 +115,9 @@ class EmptyMemoryMap : public MappedRangeBase {
   CodeVersion ComputeCodeVersion(void) final;
   void *ToReadWriteVirtualAddress(uint64_t addr) final;
   const void *ToReadOnlyVirtualAddress(uint64_t addr) final;
+  std::string Provider(void) const final {
+    return "empty";
+  }
 };
 
 // Implements a copy-on-write range of memory.
@@ -121,6 +132,12 @@ class CopyOnWriteMemoryMap : public MappedRangeBase {
   CodeVersion ComputeCodeVersion(void) final;
   void *ToReadWriteVirtualAddress(uint64_t addr) final;
   const void *ToReadOnlyVirtualAddress(uint64_t addr) final;
+
+  std::string Provider(void) const final {
+    std::stringstream ss;
+    ss << "copy-on-write (" << parent->Provider() << ")";
+    return ss.str();
+  }
 
  private:
   using MappedRangeBase::MappedRangeBase;
@@ -174,7 +191,6 @@ MemoryMapPtr MappedRangeBase::Copy(uint64_t clone_base, uint64_t clone_limit) {
   return array_backed;
 }
 
-
 InvalidMemoryMap::~InvalidMemoryMap(void) {}
 
 bool InvalidMemoryMap::Read(uint64_t, uint8_t *out_val) {
@@ -216,6 +232,7 @@ ArrayMemoryMap::ArrayMemoryMap(uint64_t base_address_, uint64_t limit_address_,
 ArrayMemoryMap::ArrayMemoryMap(ArrayMemoryMap *steal)
     : MappedRangeBase(steal->BaseAddress(), steal->LimitAddress(),
                       steal->Name(), steal->Offset()) {
+  CHECK(steal->data.base != nullptr);
   data = steal->data;
   steal->data.Reset();
 }
@@ -253,10 +270,14 @@ CodeVersion ArrayMemoryMap::ComputeCodeVersion(void) {
 }
 
 void *ArrayMemoryMap::ToReadWriteVirtualAddress(uint64_t address) {
+  DCHECK(address >= base_address);
+  DCHECK(address < limit_address);
   return &(data.base[address - base_address]);
 }
 
 const void *ArrayMemoryMap::ToReadOnlyVirtualAddress(uint64_t address) {
+  DCHECK(address >= base_address);
+  DCHECK(address < limit_address);
   return &(data.base[address - base_address]);
 }
 

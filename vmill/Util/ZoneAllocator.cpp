@@ -67,8 +67,7 @@ ZoneAllocation ZoneAllocator::Allocate(size_t size) {
     alloc.base = allocator.Allocate(size, 64  /* Cache line size */);
     alloc.size = size;
   }
-
-  memset(alloc.base, 0, size);
+  bzero(alloc.base, size);
   return alloc;
 }
 

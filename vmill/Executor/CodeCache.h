@@ -51,6 +51,12 @@ class CodeCache {
 
   virtual uintptr_t Lookup(const char *symbol) = 0;
 
+  // Called just before the beginning of a run.
+  virtual void SetUp(void) = 0;
+
+  // Called just after the end of a run.
+  virtual void TearDown(void) = 0;
+
  protected:
   CodeCache(void);
 };

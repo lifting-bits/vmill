@@ -93,6 +93,16 @@ class CodeCacheImpl : public CodeCache,
 
   uintptr_t Lookup(const char *symbol) final;
 
+  // Called just before the beginning of a run.
+  void SetUp(void) final {
+    tool->SetUp();
+  }
+
+  // Called just after the end of a run.
+  void TearDown(void) final {
+    tool->TearDown();
+  }
+
   // Load the runtime library, this must be done first, as it supported all
   // lifted code execution.
   void LoadRuntimeLibrary(void);

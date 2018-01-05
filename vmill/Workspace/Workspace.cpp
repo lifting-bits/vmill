@@ -202,7 +202,8 @@ const std::string &Workspace::RuntimeLibraryPath(void) {
 
 namespace {
 
-using AddressSpaceIdToMemoryMap = std::unordered_map<int64_t, AddressSpace *>;
+using AddressSpaceIdToMemoryMap = \
+    std::unordered_map<int64_t, std::shared_ptr<AddressSpace>>;
 
 // Load in the data from the snapshotted page range into the address space.
 static void LoadPageRangeFromFile(AddressSpace *addr_space,
@@ -261,7 +262,7 @@ static void LoadAddressSpaceFromSnapshot(
       << "Address space " << std::dec << orig_addr_space.id()
       << " has already been deserialized.";
 
-  AddressSpace *emu_addr_space = nullptr;
+  std::shared_ptr<AddressSpace> emu_addr_space;
 
   // Create the address space, either as a clone of a parent, or as a new one.
   if (orig_addr_space.has_parent_id()) {
@@ -271,9 +272,9 @@ static void LoadAddressSpaceFromSnapshot(
         << " for address space " << std::dec << orig_addr_space.id();
 
     const auto &parent_mem = addr_space_ids[parent_id];
-    emu_addr_space = new AddressSpace(*parent_mem);
+    emu_addr_space = std::make_shared<AddressSpace>(*parent_mem);
   } else {
-    emu_addr_space = new AddressSpace;
+    emu_addr_space = std::make_shared<AddressSpace>();
   }
 
   addr_space_ids[id] = emu_addr_space;
@@ -324,7 +325,7 @@ static void LoadAddressSpaceFromSnapshot(
     auto offset = static_cast<uint64_t>(
         page.has_file_offset() ? page.file_offset() : 0L);
     emu_addr_space->AddMap(base, size, path, offset);
-    LoadPageRangeFromFile(emu_addr_space, page);
+    LoadPageRangeFromFile(emu_addr_space.get(), page);
     emu_addr_space->SetPermissions(base, size, page.can_read(),
                                    page.can_write(), page.can_exec());
   }

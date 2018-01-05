@@ -82,11 +82,15 @@ AddressSpace::AddressSpace(void)
 AddressSpace::AddressSpace(const AddressSpace &parent)
     : invalid_min_map(parent.invalid_min_map),
       invalid_max_map(parent.invalid_max_map),
-            maps(parent.maps.size()),
+      maps(parent.maps.size()),
       page_to_map(parent.page_to_map.size()),
       wnx_page_to_map(parent.wnx_page_to_map.size()),
       min_addr(parent.min_addr),
       addr_mask(parent.addr_mask),
+      page_is_readable(parent.page_is_readable),
+      page_is_writable(parent.page_is_writable),
+      page_is_executable(parent.page_is_executable),
+      trace_heads(parent.trace_heads),
       is_dead(parent.is_dead) {
 
   unsigned i = 0;
@@ -124,15 +128,15 @@ bool AddressSpace::IsDead(void) const {
 }
 
 bool AddressSpace::CanRead(uint64_t addr) const {
-  return page_is_readable.count(AlignDownToPage(addr));
+  return page_is_readable.count(AlignDownToPage(addr & addr_mask));
 }
 
 bool AddressSpace::CanWrite(uint64_t addr) const {
-  return page_is_writable.count(AlignDownToPage(addr));
+  return page_is_writable.count(AlignDownToPage(addr & addr_mask));
 }
 
 bool AddressSpace::CanExecute(uint64_t addr) const {
-  return page_is_executable.count(AlignDownToPage(addr));
+  return page_is_executable.count(AlignDownToPage(addr & addr_mask));
 }
 
 bool AddressSpace::CanReadAligned(uint64_t addr) const {
@@ -584,7 +588,7 @@ void AddressSpace::CreatePageToRangeMap(void) {
 
 // Get the code version associated with some program counter.
 CodeVersion AddressSpace::ComputeCodeVersion(PC pc) {
-  return FindRange(static_cast<uint64_t>(pc)).ComputeCodeVersion();
+  return FindRange(static_cast<uint64_t>(pc) & addr_mask).ComputeCodeVersion();
 }
 
 MappedRange &AddressSpace::FindRange(uint64_t addr) {
@@ -596,9 +600,6 @@ enum : uint64_t {
 };
 
 MappedRange &AddressSpace::FindRangeAligned(uint64_t page_addr) {
-  // if (read_addrs) {
-  //   fprintf(read_addrs, "%lx,", page_addr >> 12);
-  // }
   auto last_range = last_map_cache[kRangeCacheSize];
   if (likely(last_range && last_range->Contains(page_addr))) {
     return *last_range;
@@ -682,6 +683,8 @@ void AddressSpace::LogMaps(std::ostream &os) const {
         ss << " (offset " << std::hex << offset << ")";
       }
     }
+
+    ss << " implemented by " << range->Provider();
 
     os << ss.str() << std::endl;
   }

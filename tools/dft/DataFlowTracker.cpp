@@ -400,7 +400,7 @@ class DataFlowTracker : public TaintTrackerTool {
  public:
   DataFlowTracker(void)
       : TaintTrackerTool(64),
-        shadow_memory(ShadowMemory::Get()),
+        shadow_memory(nullptr),
         constant_pool(kAreaRW, 0) {
 
     taint_trackers["__taint_load_arg"] = \
@@ -520,6 +520,14 @@ class DataFlowTracker : public TaintTrackerTool {
 
   virtual ~DataFlowTracker(void) {
 
+  }
+
+  void SetUp(void) override {
+    shadow_memory = ShadowMemory::Get();
+  }
+
+  void TearDown(void) override {
+    ShadowMemory::Put(shadow_memory);
   }
 
   uintptr_t FindIntConstantTaint(uint64_t const_val) override {

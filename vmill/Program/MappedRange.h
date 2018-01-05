@@ -96,6 +96,9 @@ class MappedRange {
   // Return the virtual address of the memory backing `addr`.
   virtual const void *ToReadOnlyVirtualAddress(uint64_t addr);
 
+  // Type of this mapped range.
+  virtual std::string Provider(void) const = 0;
+
  protected:
   MappedRange(uint64_t base_address_, uint64_t limit_address_,
               const char *name_, uint64_t offset_);

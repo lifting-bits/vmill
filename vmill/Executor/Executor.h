@@ -48,7 +48,7 @@ using LiftedFunction = Memory *(ArchState *, PC, Memory *);
 struct InitialTaskInfo {
   std::string state;
   PC pc;
-  AddressSpace *memory;
+  std::shared_ptr<AddressSpace> memory;
 };
 
 struct CachedIndexEntry {
@@ -64,14 +64,17 @@ class Executor {
  public:
   Executor(void);
 
-  void RunOnce(void);
-  void RunMany(void);
+  void Run(void);
 
-  void AddInitialTask(const std::string &state, PC pc, AddressSpace *memory);
+  void AddInitialTask(const std::string &state, PC pc,
+                      std::shared_ptr<AddressSpace> memory);
 
   LiftedFunction *FindLiftedFunctionForTask(Task *task);
 
  private:
+  void SetUp(void);
+  void TearDown(void);
+
   __attribute__((noinline))
   void DecodeTracesFromTask(Task *task);
 
@@ -81,10 +84,6 @@ class Executor {
 
   // File-backed index of all translations for all code versions.
   std::unique_ptr<IndexCache> index;
-
-  // Have we previously executed `Executor::Run`?
-  bool has_run;
-  bool will_run_many;
 
   // List of initial tasks.
   std::vector<InitialTaskInfo> initial_tasks;

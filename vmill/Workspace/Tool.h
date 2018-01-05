@@ -46,6 +46,12 @@ class Tool {
   // Instrument a lifted function/trace.
   virtual bool InstrumentTrace(llvm::Function *func, uint64_t pc);
 
+  // Called just before the beginning of a run.
+  virtual void SetUp(void);
+
+  // Called just after the ending of a run.
+  virtual void TearDown(void);
+
  protected:
   Tool(void);
 };

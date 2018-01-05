@@ -99,6 +99,8 @@ class ShadowMemory {
       uint64_t page_granularity_=12,
       uint64_t shadow_base_=0x100000000000);
 
+  static void Put(std::unique_ptr<ShadowMemory> &mem);
+
   template <typename T, typename U>
   ALWAYS_INLINE
   static auto At(U *ptr) -> typename detail::BoolTag<T>::RefType {

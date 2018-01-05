@@ -82,8 +82,6 @@ Executor::Executor(void)
       lifters(new ThreadPool(std::max<size_t>(1, FLAGS_num_lift_threads))),
       code_cache(CodeCache::Create(LoadTool(), context)),
       index(IndexCache::Open(Workspace::IndexPath())),
-      has_run(false),
-      will_run_many(false),
       init_intrinsic(reinterpret_cast<decltype(init_intrinsic)>(
           code_cache->Lookup("__vmill_init"))),
       create_task_intrinsic(
@@ -225,42 +223,60 @@ void Executor::DecodeTracesFromTask(Task *task) {
   }
 }
 
-void Executor::RunOnce(void) {
-  CHECK(!has_run)
-      << "To emulate process more than once, use `Executor::RunMany`.";
+void Executor::SetUp(void) {
+  CHECK(!gExecutor)
+      << "`Executor::Run` should not be recursively invoked.";
 
   gExecutor = this;
-  will_run_many = false;
+  code_cache->SetUp();
+
   LOG(INFO)
       << "Initializing the runtime.";
+
   init_intrinsic();
+}
+
+void Executor::Run(void) {
+  SetUp();
+
+  CHECK(gExecutor == this)
+      << "Did you forgot to call `Executor::SetUp`?";
+
+  std::unordered_map<AddressSpace *, AddressSpace *> memories;
 
   for (const auto &info : initial_tasks) {
     LOG(INFO)
         << "Creating initial task starting at "
         << std::hex << static_cast<uint64_t>(info.pc) << std::dec;
-    create_task_intrinsic(info.state.data(), info.pc, info.memory);
+
+    auto &memory = memories[info.memory.get()];
+    if (!memory) {
+      LOG(INFO)
+          << "Creating copy-on-write mapping of address space "
+          << reinterpret_cast<void *>(info.memory.get());
+      memory = new AddressSpace(*(info.memory.get()));
+    }
+
+    create_task_intrinsic(info.state.data(), info.pc, memory);
   }
 
   LOG(INFO)
       << "Resuming snapshotted execution.";
   resume_intrinsic();
 
+  TearDown();
+}
+
+void Executor::TearDown(void) {
+  CHECK(gExecutor == this)
+      << "Did you forgot to call `Executor::SetUp`?";
+
   LOG(INFO)
       << "Finalizing the runtime.";
   fini_intrinsic();
 
-  gExecutor = nullptr;
-  has_run = true;
-}
+  code_cache->TearDown();
 
-void Executor::RunMany(void) {
-  // TODO(pag): Need to make sure that the tasks are created with clones of
-  //            the initial address spaces.
-  LOG(FATAL)
-      << "Executor::RunMany is not yet implemented.";
-  gExecutor = this;
-  will_run_many = true;
   gExecutor = nullptr;
 }
 
@@ -304,7 +320,7 @@ LiftedFunction *Executor::FindLiftedFunctionForTask(Task *task) {
 }
 
 void Executor::AddInitialTask(const std::string &state_bytes, PC pc,
-                              AddressSpace *memory) {
+                              std::shared_ptr<AddressSpace> memory) {
   InitialTaskInfo info = {state_bytes, pc, memory};
   initial_tasks.push_back(std::move(info));
 }
