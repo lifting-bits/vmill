@@ -17,8 +17,9 @@
 #define VMILL_WORKSPACE_TOOL_H_
 
 #include <cstdint>
-#include <string>
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace llvm {
 
@@ -30,8 +31,10 @@ namespace vmill {
 
 class Tool {
  public:
-  // Create a new instance of the tool identified by `name_or_path`.
-  static std::unique_ptr<Tool> Load(const std::string &name_or_path);
+  // Create a new instance of the tool identified by `name_or_path`. Multiple
+  // tools can be specified, delimiting them by colons on Unix systems, and
+  // semicolons on Windows systems.
+  static std::unique_ptr<Tool> Load(std::string name_or_path);
 
   virtual ~Tool(void);
 
@@ -61,6 +64,7 @@ class NullTool : public Tool {
   virtual ~NullTool(void);
 };
 
+// Forwards all requests to a subordinate tool.
 class ProxyTool : public Tool {
  public:
   explicit ProxyTool(std::unique_ptr<Tool> tool_);
@@ -78,11 +82,49 @@ class ProxyTool : public Tool {
   // Instrument a lifted function/trace.
   bool InstrumentTrace(llvm::Function *func, uint64_t pc) override;
 
+  // Called just before the beginning of a run.
+  void SetUp(void) override;
+
+  // Called just after the ending of a run.
+  void TearDown(void) override;
+
  protected:
   const std::unique_ptr<Tool> tool;
 
  private:
   ProxyTool(void) = delete;
+};
+
+// Like a proxy tool, but lets one compose an arbitrary number of sub-tools.
+class CompositorTool : public Tool {
+ public:
+  CompositorTool(void) = default;
+
+  explicit CompositorTool(std::unique_ptr<Tool> tool);
+
+  virtual ~CompositorTool(void);
+
+  void AddTool(std::unique_ptr<Tool> tool);
+
+  // Called when lifted bitcode or the runtime needs to resolve an external
+  // symbol.
+  uint64_t FindSymbolForLinking(
+      const std::string &name, uint64_t resolved) override;
+
+  // Instrument the runtime module.
+  bool InstrumentRuntime(llvm::Module *module) override;
+
+  // Instrument a lifted function/trace.
+  bool InstrumentTrace(llvm::Function *func, uint64_t pc) override;
+
+  // Called just before the beginning of a run.
+  void SetUp(void) override;
+
+  // Called just after the ending of a run.
+  void TearDown(void) override;
+
+ private:
+  std::vector<std::unique_ptr<Tool>> tools;
 };
 
 }  // namespace

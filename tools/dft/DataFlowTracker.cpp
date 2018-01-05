@@ -32,8 +32,6 @@ union Taint {
   uint64_t flat;
   struct {
     uint64_t is_tainted:1;
-//    uint64_t is_literal:1;
-//    uint64_t is_address:1;
     uint64_t sel:7;
     uint64_t val:48;
   } __attribute__((packed));

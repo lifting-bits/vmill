@@ -41,8 +41,11 @@
 DEFINE_string(workspace, ".", "Path to workspace in which the snapshot file is"
                               " stored, and in which files will be placed.");
 
-DEFINE_string(tool, "null",
-              "Name (or path) of the instrumentation tool to run.");
+DEFINE_string(tool, "",
+              "Names (or paths) of the instrumentation tools to run. "
+              "The default is to leave this empty and not run any tools. "
+              "On UNIX systems, multiple names/paths are separated by colons, "
+              "whereas on Windows, they are separated by semicolons.");
 
 DEFINE_string(runtime, "", "Name of a runtime, or absolute path to a "
                            "runtime bitcode file.");
@@ -119,11 +122,10 @@ const std::string &Workspace::ToolDir(void) {
   static std::string path;
   if (path.empty()) {
     std::hash<std::string> hasher;
-    auto runtime_hash = hasher(RuntimeBitcodePath());
+    auto hash = hasher(RuntimeBitcodePath() + FLAGS_tool);
 
     std::stringstream ss;
-    ss << Dir() << remill::PathSeparator() << FLAGS_tool << "."
-       << std::hex << runtime_hash;
+    ss << Dir() << remill::PathSeparator() << std::hex << hash;
     path = ss.str();
     path = remill::CanonicalPath(path);
     CHECK(remill::TryCreateDirectory(path))
