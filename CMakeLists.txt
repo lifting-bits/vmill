@@ -77,13 +77,15 @@ add_library(${PROJECT_NAME} STATIC
     vmill/Util/AreaAllocator.cpp
     vmill/Util/Hash.cpp
     vmill/Util/Timer.cpp
+    vmill/Util/Util.cpp
     vmill/Util/ZoneAllocator.cpp
     
     vmill/Workspace/Tool.cpp
     vmill/Workspace/Workspace.cpp
     
-    tools/taint/TaintTracker.cpp
-    tools/dft/DataFlowTracker.cpp
+    tools/Fuzzer/CodeCoverage.cpp
+    tools/TaintTracker/TaintTracker.cpp
+    tools/TaintTracker/DataFlowTracker.cpp
     
     third_party/liballoc/liballoc.c
     third_party/ThreadPool/ThreadPool.cpp

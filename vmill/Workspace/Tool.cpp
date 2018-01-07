@@ -21,15 +21,11 @@
 
 #include "remill/OS/FileSystem.h"
 #include "remill/OS/OS.h"
+#include "vmill/Util/Util.h"
 #include "vmill/Workspace/Tool.h"
 
-#include "tools/dft/DataFlowTracker.h"
-
-#if REMILL_ON_WINDOWS
-# define TOOL_NAME_SEP ';'
-#else
-# define TOOL_NAME_SEP ':'
-#endif
+#include "tools/Fuzzer/Fuzzer.h"
+#include "tools/TaintTracker/DataFlowTracker.h"
 
 namespace vmill {
 
@@ -159,8 +155,8 @@ class SharedLibraryTool : public Tool {
 };
 
 static std::unique_ptr<Tool> LoadOneTool(const std::string &name_or_path) {
-  if (name_or_path == "dft") {
-    return CreateDataFlowTracker();
+  if (name_or_path == "coverage") {
+    return CreateCodeCoverageTracker();
 
   } else if (remill::FileExists(name_or_path)) {
     LOG(INFO)
@@ -182,17 +178,7 @@ std::unique_ptr<Tool> Tool::Load(std::string request) {
     return std::unique_ptr<Tool>(new NullTool);
   }
 
-  // Split out the tool request into multiple names, if necessary.
-  std::vector<std::string> tool_names_or_paths;
-  for (auto pos = request.find(TOOL_NAME_SEP);
-       pos != std::string::npos;
-       pos = request.find(TOOL_NAME_SEP)) {
-    auto name_or_path = request.substr(0, pos);
-    request.erase(0, pos + 1);
-    if (!name_or_path.empty()) {
-      tool_names_or_paths.push_back(name_or_path);
-    }
-  }
+  auto tool_names_or_paths = SplitPathList(request);
 
   if (tool_names_or_paths.empty()) {
     return LoadOneTool(request);

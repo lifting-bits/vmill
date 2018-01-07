@@ -13,8 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TOOLS_VMILL_VMILL_UTIL_TIMER_H_
-#define TOOLS_VMILL_VMILL_UTIL_TIMER_H_
+
+#ifndef VMILL_UTIL_TIMER_H_
+#define VMILL_UTIL_TIMER_H_
 
 #include <ctime>
 
@@ -34,4 +35,4 @@ class Timer {
 
 }  // namespace vmill
 
-#endif  // TOOLS_VMILL_VMILL_UTIL_TIMER_H_
+#endif  // VMILL_UTIL_TIMER_H_

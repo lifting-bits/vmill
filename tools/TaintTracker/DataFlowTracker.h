@@ -14,14 +14,17 @@
  * limitations under the License.
  */
 
-#ifndef VMILL_UTIL_COMPILER_H_
-#define VMILL_UTIL_COMPILER_H_
+#ifndef TOOLS_DFT_DATAFLOWTRACKER_H_
+#define TOOLS_DFT_DATAFLOWTRACKER_H_
 
-#define likely(x) __builtin_expect((x), 1)
-#define unlikely(x) __builtin_expect((x), 0)
+#include "vmill/Workspace/Tool.h"
 
-#define USED(x) __asm__ __volatile__("" : : "m"(x) : "memory")
+namespace vmill {
 
-#define ALWAYS_INLINE __attribute__((always_inline)) inline
+class Tool;
 
-#endif  // VMILL_UTIL_COMPILER_H_
+std::unique_ptr<Tool> CreateDataFlowTracker(void);
+
+}  // namespace vmill
+
+#endif  // TOOLS_DFT_DATAFLOWTRACKER_H_

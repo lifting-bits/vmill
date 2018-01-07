@@ -37,7 +37,7 @@
 
 #include "remill/BC/Util.h"
 
-#include "tools/taint/TaintTracker.h"
+#include "tools/TaintTracker/TaintTracker.h"
 
 // TODO(pag): Eventual idea would be to move the core instrumentation into
 //            lots of helper functions, so that instead of real and tainted

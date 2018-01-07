@@ -60,6 +60,8 @@ class AreaAllocator {
     return base <= addr && addr < bump;
   }
 
+  void FreeAll(void);
+
  private:
   AreaAllocator(void) = delete;
   AreaAllocator(const AreaAllocator &) = delete;

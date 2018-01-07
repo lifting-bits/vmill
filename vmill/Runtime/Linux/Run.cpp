@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef TOOLS_VMILL_VMILL_RUNTIME_LINUX_LINUX_CPP_
-#define TOOLS_VMILL_VMILL_RUNTIME_LINUX_LINUX_CPP_
+#ifndef VMILL_RUNTIME_LINUX_RUN_CPP_
+#define VMILL_RUNTIME_LINUX_RUN_CPP_
 
 namespace vmill {
 namespace {
@@ -29,7 +29,6 @@ static pid_t gNextTid = kProcessId;
 
 // Initialize the emulated Linux operating system.
 extern "C" void __vmill_init(void) {
-//  printf("init\n");
   gNextTid = kProcessId;
   gTaskList = nullptr;
   gLastTask = nullptr;
@@ -37,7 +36,6 @@ extern "C" void __vmill_init(void) {
 
 // Tear down the emulated Linux operating system.
 extern "C" void __vmill_fini(void) {
-//  printf("fini\n");
   linux_task *next_task = nullptr;
   for (auto task = gTaskList; task; task = next_task) {
     next_task = task->next;
@@ -45,7 +43,6 @@ extern "C" void __vmill_fini(void) {
     task->next_circular = nullptr;
     __vmill_fini_task(task);
     delete task;
-//    printf("%p deleted\n", task);
   }
 
   gTaskList = nullptr;
@@ -74,8 +71,6 @@ extern "C" linux_task *__vmill_create_task(
   task->next = gTaskList;
   gTaskList = task;
 
-//  printf("%p new\n", task);
-
   return task;
 }
 
@@ -92,16 +87,13 @@ extern "C" void __vmill_resume(void) {
         case vmill::kTaskStatusResumable:
           progressed = true;
           if (!task->blocked_count) {
-//            printf("%p running \n", task);
             __vmill_run(task);
           } else {
-//            printf("%p blocked: %u\n", task, task->blocked_count);
             task->blocked_count--;
           }
           break;
 
         default:
-//          printf("%p Task status is %d\n", task, static_cast<int>(task->status));
           break;
       }
     }
@@ -110,4 +102,4 @@ extern "C" void __vmill_resume(void) {
 
 }  // namespace vmill
 
-#endif  // TOOLS_VMILL_VMILL_RUNTIME_LINUX_LINUX_CPP_
+#endif  // VMILL_RUNTIME_LINUX_RUN_CPP_

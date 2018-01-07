@@ -13,8 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TOOLS_VMILL_VMILL_UTIL_HASH_H_
-#define TOOLS_VMILL_VMILL_UTIL_HASH_H_
+#ifndef VMILL_UTIL_HASH_H_
+#define VMILL_UTIL_HASH_H_
 
 #include <cstdint>
 #include <functional>
@@ -88,4 +88,4 @@ inline uint64_t Hash(const T &data) {
     }; \
     }  // namespace std
 
-#endif  // TOOLS_VMILL_VMILL_UTIL_HASH_H_
+#endif  // VMILL_UTIL_HASH_H_

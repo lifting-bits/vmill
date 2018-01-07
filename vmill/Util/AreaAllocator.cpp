@@ -89,6 +89,10 @@ AreaAllocator::~AreaAllocator(void) {
   }
 }
 
+void AreaAllocator::FreeAll(void) {
+  bump = base;
+}
+
 uint8_t *AreaAllocator::Allocate(size_t size, size_t align) {
 
   // Initial allocation.

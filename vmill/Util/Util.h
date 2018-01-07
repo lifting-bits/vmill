@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 Trail of Bits, Inc.
+ * Copyright (c) 2018 Trail of Bits, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,14 +14,25 @@
  * limitations under the License.
  */
 
-#ifndef VMILL_UTIL_COMPILER_H_
-#define VMILL_UTIL_COMPILER_H_
+#ifndef VMILL_UTIL_UTIL_H_
+#define VMILL_UTIL_UTIL_H_
 
-#define likely(x) __builtin_expect((x), 1)
-#define unlikely(x) __builtin_expect((x), 0)
+#include <string>
+#include <vector>
 
-#define USED(x) __asm__ __volatile__("" : : "m"(x) : "memory")
+#include "remill/OS/OS.h"
 
-#define ALWAYS_INLINE __attribute__((always_inline)) inline
+namespace vmill {
 
-#endif  // VMILL_UTIL_COMPILER_H_
+#if REMILL_ON_WINDOWS
+# define VMILL_PATH_LIST_SEP ';'
+#else
+# define VMILL_PATH_LIST_SEP ':'
+#endif
+
+std::vector<std::string> SplitPathList(std::string path_list,
+                                       char sep=VMILL_PATH_LIST_SEP);
+
+}  // namespace vmill
+
+#endif  // VMILL_UTIL_UTIL_H_
