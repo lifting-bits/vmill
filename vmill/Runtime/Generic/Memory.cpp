@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#include "remill/Arch/Runtime/Operators.h"
+
 size_t NumReadableBytes(Memory *memory, addr_t addr, size_t size) {
   addr_t i = 0;
   for (; i < size; i += 4096) {
@@ -80,3 +82,65 @@ size_t CopyStringToMemory(Memory *memory, addr_t addr, const char *val,
   return i;
 }
 
+#define MAKE_CMPXCHG(size, ...) \
+    Memory *__remill_compare_exchange_memory_ ## size( \
+        Memory *memory, addr_t addr, \
+        uint ## size ## _t &expected, \
+        uint ## size ## _t __VA_ARGS__ desired) { \
+      auto old_val = __remill_read_memory_ ## size(memory, addr); \
+      if (old_val == expected) { \
+        memory = __remill_write_memory_ ## size(memory, addr, desired); \
+      } else { \
+        expected = old_val; \
+        memory = __remill_write_memory_ ## size(memory, addr, old_val); \
+      } \
+      return memory; \
+    }
+
+extern "C" {
+MAKE_CMPXCHG(8)
+MAKE_CMPXCHG(16)
+MAKE_CMPXCHG(32)
+MAKE_CMPXCHG(64)
+MAKE_CMPXCHG(128, &)
+}  // extern C
+#undef MAKE_CMPXCHG
+
+#define MAKE_RMW(name, size, op) \
+    Memory *__remill_fetch_and_ ## name ## _ ## size( \
+        Memory *memory, addr_t addr, uint ## size ## _t &value) { \
+      auto old_val = __remill_read_memory_ ## size(memory, addr); \
+      uint ## size ## _t new_val = old_val op value; \
+      value = old_val; \
+      return __remill_write_memory_ ## size(memory, addr, new_val); \
+    }
+
+extern "C" {
+
+MAKE_RMW(add, 8, +)
+MAKE_RMW(add, 16, +)
+MAKE_RMW(add, 32, +)
+MAKE_RMW(add, 64, +)
+
+MAKE_RMW(sub, 8, -)
+MAKE_RMW(sub, 16, -)
+MAKE_RMW(sub, 32, -)
+MAKE_RMW(sub, 64, -)
+
+MAKE_RMW(or, 8, |)
+MAKE_RMW(or, 16, |)
+MAKE_RMW(or, 32, |)
+MAKE_RMW(or, 64, |)
+
+MAKE_RMW(and, 8, &)
+MAKE_RMW(and, 16, &)
+MAKE_RMW(and, 32, &)
+MAKE_RMW(and, 64, &)
+
+MAKE_RMW(xor, 8, ^)
+MAKE_RMW(xor, 16, ^)
+MAKE_RMW(xor, 32, ^)
+MAKE_RMW(xor, 64, ^)
+
+}  // extern C
+#undef MAKE_RMW
