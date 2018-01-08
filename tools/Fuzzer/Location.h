@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 Trail of Bits, Inc.
+ * Copyright (c) 2018 Trail of Bits, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,17 +14,35 @@
  * limitations under the License.
  */
 
-#ifndef TOOLS_DFT_DATAFLOWTRACKER_H_
-#define TOOLS_DFT_DATAFLOWTRACKER_H_
+#ifndef TOOLS_FUZZER_LOCATION_H_
+#define TOOLS_FUZZER_LOCATION_H_
 
-#include "vmill/Workspace/Tool.h"
+#include <cstdint>
 
 namespace vmill {
 
-std::unique_ptr<Tool> CreateBranchCoverageTracker(void);
-std::unique_ptr<Tool> CreateValueCoverageTracker(void);
-std::unique_ptr<Tool> CreateFuzzer(void);
+using Location = uint32_t;
+
+enum LocationType {
+  kLocationTypeBranch,
+  kLocationTypeTrace
+};
+
+// Used to manage a persistent location counter across runs.
+class PersistentLocation {
+ public:
+  explicit PersistentLocation(LocationType type);
+  ~PersistentLocation(void);
+
+ private:
+  PersistentLocation(void) = delete;
+
+  int fd;
+
+ protected:
+  Location loc;
+};
 
 }  // namespace vmill
 
-#endif  // TOOLS_DFT_DATAFLOWTRACKER_H_
+#endif  // TOOLS_FUZZER_LOCATION_H_

@@ -155,8 +155,14 @@ class SharedLibraryTool : public Tool {
 };
 
 static std::unique_ptr<Tool> LoadOneTool(const std::string &name_or_path) {
-  if (name_or_path == "coverage") {
-    return CreateCodeCoverageTracker();
+  if (name_or_path == "branch_coverage") {
+    return CreateBranchCoverageTracker();
+
+  } else if (name_or_path == "value_coverage") {
+    return CreateValueCoverageTracker();
+
+  } else if (name_or_path == "fuzzer") {
+    return CreateFuzzer();
 
   } else if (remill::FileExists(name_or_path)) {
     LOG(INFO)

@@ -83,7 +83,11 @@ add_library(${PROJECT_NAME} STATIC
     vmill/Workspace/Tool.cpp
     vmill/Workspace/Workspace.cpp
     
-    tools/Fuzzer/CodeCoverage.cpp
+    tools/Fuzzer/Location.cpp
+    tools/Fuzzer/BranchCoverage.cpp
+    tools/Fuzzer/ValueCoverage.cpp
+    tools/Fuzzer/Fuzzer.cpp
+
     tools/TaintTracker/TaintTracker.cpp
     tools/TaintTracker/DataFlowTracker.cpp
     
