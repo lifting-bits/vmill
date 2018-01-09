@@ -43,6 +43,9 @@ class Tool {
   virtual uint64_t FindSymbolForLinking(
       const std::string &name, uint64_t resolved);
 
+  // Tells us that we are about to be able to instrument the module `module`.
+  virtual void PrepareModule(llvm::Module *module);
+
   // Instrument the runtime module.
   virtual bool InstrumentRuntime(llvm::Module *module);
 
@@ -75,6 +78,9 @@ class ProxyTool : public Tool {
   // symbol.
   uint64_t FindSymbolForLinking(
       const std::string &name, uint64_t resolved) override;
+
+  // Tells us that we are about to be able to instrument the module `module`.
+  void PrepareModule(llvm::Module *module) override;
 
   // Instrument the runtime module.
   bool InstrumentRuntime(llvm::Module *module) override;
@@ -110,6 +116,9 @@ class CompositorTool : public Tool {
   // symbol.
   uint64_t FindSymbolForLinking(
       const std::string &name, uint64_t resolved) override;
+
+  // Tells us that we are about to be able to instrument the module `module`.
+  void PrepareModule(llvm::Module *module) override;
 
   // Instrument the runtime module.
   bool InstrumentRuntime(llvm::Module *module) override;

@@ -35,8 +35,8 @@ static const char *LocationFileName(LocationType type) {
   switch (type) {
     case kLocationTypeBranch:
       return "last_branch_location";
-    case kLocationTypeTrace:
-      return "last_trace_location";
+    case kLocationTypeValue:
+      return "value_trace_location";
   }
   return "location";
 }

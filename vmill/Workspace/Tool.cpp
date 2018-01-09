@@ -45,6 +45,10 @@ void Tool::SetUp(void) {}
 // Called just after the ending of a run.
 void Tool::TearDown(void) {}
 
+// Tells us that we are about to be able to instrument the module `module`.
+void Tool::PrepareModule(llvm::Module *) {
+}
+
 bool Tool::InstrumentRuntime(llvm::Module *) {
   return false;
 }
@@ -54,6 +58,8 @@ bool Tool::InstrumentTrace(llvm::Function *, uint64_t) {
 }
 
 namespace {
+
+static void StubPrepareModule(llvm::Module *) {}
 
 static uint64_t StubFindSymbolForLinking(const std::string &,
                                          uint64_t resolved) {
@@ -78,6 +84,7 @@ class SharedLibraryTool : public Tool {
         lib(llvm::sys::DynamicLibrary::getPermanentLibrary(
             path.c_str(), &error)),
         find_symbol_for_linking(StubFindSymbolForLinking),
+        prepare_module(StubPrepareModule),
         instrument_runtime(StubInstrumentRuntime),
         instrument_trace(StubInstrumentTrace),
         set_up(StubSetUpTearDown),
@@ -90,6 +97,11 @@ class SharedLibraryTool : public Tool {
     if (loc) {
       find_symbol_for_linking = \
           reinterpret_cast<decltype(find_symbol_for_linking)>(loc);
+    }
+
+    loc = lib.SearchForAddressOfSymbol("PrepareModule");
+    if (loc) {
+      prepare_module = reinterpret_cast<decltype(prepare_module)>(loc);
     }
 
     loc = lib.SearchForAddressOfSymbol("InstrumentRuntime");
@@ -122,6 +134,11 @@ class SharedLibraryTool : public Tool {
     return find_symbol_for_linking(name, resolved);
   }
 
+  // Tells us that we are about to be able to instrument the module `module`.
+  void PrepareModule(llvm::Module *module) final {
+    return prepare_module(module);
+  }
+
   // Instrument the runtime module.
   bool InstrumentRuntime(llvm::Module *module) final {
     return instrument_runtime(module);
@@ -148,6 +165,7 @@ class SharedLibraryTool : public Tool {
   llvm::sys::DynamicLibrary lib;
 
   uint64_t (*find_symbol_for_linking)(const std::string &, uint64_t);
+  void (*prepare_module)(llvm::Module *);
   bool (*instrument_runtime)(llvm::Module *);
   bool (*instrument_trace)(llvm::Function *, uint64_t);
   void (*set_up)(void);
@@ -215,6 +233,11 @@ uint64_t ProxyTool::FindSymbolForLinking(
   return tool->FindSymbolForLinking(name, resolved);
 }
 
+// Tells us that we are about to be able to instrument the module `module`.
+void ProxyTool::PrepareModule(llvm::Module *module) {
+  return tool->PrepareModule(module);
+}
+
 // Instrument the runtime module.
 bool ProxyTool::InstrumentRuntime(llvm::Module *module) {
   return tool->InstrumentRuntime(module);
@@ -253,6 +276,13 @@ uint64_t CompositorTool::FindSymbolForLinking(
     resolved = tool->FindSymbolForLinking(name, resolved);
   }
   return resolved;
+}
+
+// Tells us that we are about to be able to instrument the module `module`.
+void CompositorTool::PrepareModule(llvm::Module *module) {
+  for (auto &tool : tools) {
+    tool->PrepareModule(module);
+  }
 }
 
 // Instrument the runtime module.

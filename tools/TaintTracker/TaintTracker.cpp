@@ -154,8 +154,8 @@ uint64_t TaintTrackerTool::FindSymbolForLinking(
   }
 }
 
-// Instrument the runtime module.
-bool TaintTrackerTool::InstrumentRuntime(llvm::Module *module_) {
+// Prepare the module for instrumentation.
+void TaintTrackerTool::PrepareModule(llvm::Module *module_) {
   module = module_;
   context = &(module->getContext());
   void_type = llvm::Type::getVoidTy(*context);
@@ -164,35 +164,21 @@ bool TaintTrackerTool::InstrumentRuntime(llvm::Module *module_) {
 
   llvm::DataLayout dl(module);
   intptr_type = llvm::Type::getIntNTy(*context, dl.getPointerSizeInBits());
+  func = nullptr;
+}
 
+// Instrument the runtime module.
+bool TaintTrackerTool::InstrumentRuntime(llvm::Module *module_) {
   for (auto &runtime_func : *module) {
     func = &runtime_func;
     VisitRuntimeFunction();
   }
-
-  module = nullptr;
-  context = nullptr;
-  void_type = nullptr;
-  taint_type = nullptr;
-  intptr_type = nullptr;
   return true;
 }
 
 // Instrument a lifted function/trace.
 bool TaintTrackerTool::InstrumentTrace(llvm::Function *func_, uint64_t pc) {
   func = func_;
-
-  if (module != func->getParent()) {
-    module = func->getParent();
-    context = &(module->getContext());
-    void_type = llvm::Type::getVoidTy(*context);
-    taint_type = llvm::Type::getIntNTy(*context, num_bits);
-    int32_type = llvm::Type::getInt32Ty(*context);
-
-    llvm::DataLayout dl(module);
-    intptr_type = llvm::Type::getIntNTy(*context, dl.getPointerSizeInBits());
-  }
-
   VisitLiftedFunction();
   return true;
 }

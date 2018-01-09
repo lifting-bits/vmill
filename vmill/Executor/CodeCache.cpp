@@ -322,6 +322,8 @@ void CodeCacheImpl::LoadRuntimeLibrary(void) {
     DLOG(INFO)
         << "Instrumenting runtime library";
 
+    tool->PrepareModule(runtime.get());
+
     if (tool->InstrumentRuntime(runtime.get())) {
       DLOG(INFO)
           << "Optimizing instrumented runtime";
@@ -466,6 +468,8 @@ void CodeCacheImpl::ReoptimizeModule(
 // Tell the tool to instrument each lifted function.
 void CodeCacheImpl::InstrumentTraces(
     const std::unique_ptr<llvm::Module> &module) {
+
+  tool->PrepareModule(module.get());
 
   std::vector<llvm::Function *> funcs;
   funcs.reserve(module->getFunctionList().size());

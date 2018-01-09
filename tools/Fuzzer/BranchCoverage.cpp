@@ -60,7 +60,7 @@ class BranchCoverageTool : public Tool, public PersistentLocation {
   // Called when lifted bitcode or the runtime needs to resolve an external
   // symbol.
   uint64_t FindSymbolForLinking(
-      const std::string &name, uint64_t resolved) override {
+      const std::string &name, uint64_t resolved) final {
     if (resolved) {
       return resolved;
     } else if (name == "__cov_switch") {
@@ -74,6 +74,7 @@ class BranchCoverageTool : public Tool, public PersistentLocation {
 
   // Instrument the runtime module.
   bool InstrumentRuntime(llvm::Module *module) final {
+    return false;
     for (auto &func : *module) {
       if (!func.isDeclaration()) {
         InstrumentTrace(&func, 0);
@@ -84,7 +85,9 @@ class BranchCoverageTool : public Tool, public PersistentLocation {
 
   // Instrument a lifted function/trace.
   bool InstrumentTrace(llvm::Function *func, uint64_t pc) final {
-    InitForModule(func->getParent());
+    if (func->hasFnAttribute(llvm::Attribute::Naked)) {
+      return false;
+    }
 
     std::vector<llvm::BranchInst *> branches;
     std::vector<llvm::SwitchInst *> switches;
@@ -109,12 +112,7 @@ class BranchCoverageTool : public Tool, public PersistentLocation {
     return true;
   }
 
- private:
-  void InitForModule(llvm::Module *module_) {
-    if (module == module_) {
-      return;
-    }
-
+  void PrepareModule(llvm::Module *module_) override {
     module = module_;
     auto &context = module->getContext();
     auto void_type = llvm::Type::getVoidTy(context);
@@ -132,9 +130,16 @@ class BranchCoverageTool : public Tool, public PersistentLocation {
         llvm::FunctionType::get(void_type, switch_arg_types, false));
   }
 
+ private:
+
+  bool ShouldInstrumentEdge(llvm::BasicBlock *from, llvm::BasicBlock *to) {
+    return true; // nullptr != to->getSinglePredecessor();
+  }
+
   // Instrument a conditional branch instruction so that we can uniquely
   // observe the flow across each path.
   void Instrument(llvm::BranchInst *inst) {
+    return;
     if (!inst->isConditional()) {
       return;
     }
@@ -143,27 +148,29 @@ class BranchCoverageTool : public Tool, public PersistentLocation {
     auto taken_block = inst->getSuccessor(0);
     auto not_taken_block = inst->getSuccessor(1);
 
-    taken_block = BlockForEdge(src_block, taken_block);
-    not_taken_block  = BlockForEdge(src_block, not_taken_block);
-
-    inst->setSuccessor(0, taken_block);
-    inst->setSuccessor(1, not_taken_block);
-
-    llvm::IRBuilder<> ir(taken_block, taken_block->getFirstInsertionPt());
     llvm::Value *args[] = {
         llvm::ConstantInt::get(loc_type, loc++),
         llvm::ConstantInt::get(loc_type, loc++)};
-    ir.CreateCall(cov_branch_func, args);
 
-    ir.SetInsertPoint(not_taken_block, not_taken_block->getFirstInsertionPt());
-    std::swap(args[0], args[1]);
-    ir.CreateCall(cov_branch_func, args);
+    if (ShouldInstrumentEdge(src_block, taken_block)) {
+      taken_block = BlockForEdge(src_block, taken_block);
+      inst->setSuccessor(0, taken_block);
+      llvm::IRBuilder<> ir(&*(taken_block->getFirstInsertionPt()));
+      ir.CreateCall(cov_branch_func, args);
+    }
+
+    if (ShouldInstrumentEdge(src_block, not_taken_block)) {
+      not_taken_block = BlockForEdge(src_block, not_taken_block);
+      inst->setSuccessor(1, not_taken_block);
+      llvm::IRBuilder<> ir(&*(not_taken_block->getFirstInsertionPt()));
+      std::swap(args[0], args[1]);
+      ir.CreateCall(cov_branch_func, args);
+    }
   }
 
   // Instrument a switch instruction so that we can uniquely observe the flow
   // across each case of the switch.
   void Instrument(llvm::SwitchInst *inst) {
-    return;
     auto src_block = inst->getParent();
 
     std::vector<Location> locs;
@@ -171,23 +178,23 @@ class BranchCoverageTool : public Tool, public PersistentLocation {
 
     // Normal cases.
     for (auto &case_entry : inst->cases()) {
-      auto edge_block = BlockForEdge(src_block, case_entry.getCaseSuccessor());
-      blocks.push_back(edge_block);
-      locs.push_back(loc++);
-    }
-
-    // Re-assign the successors.
-    unsigned i = 0;
-    for (auto block : blocks) {
-      inst->setSuccessor(i, block);
+      auto dst_block = case_entry.getCaseSuccessor();
+      if (ShouldInstrumentEdge(src_block, dst_block)) {
+        dst_block = BlockForEdge(src_block, dst_block);
+        inst->setSuccessor(case_entry.getCaseIndex(), dst_block);
+        blocks.push_back(dst_block);
+        locs.push_back(loc++);
+      }
     }
 
     // Default case.
     if (auto default_block = inst->getDefaultDest()) {
-      default_block = BlockForEdge(src_block, default_block);
-      blocks.push_back(default_block);
-      locs.push_back(loc++);
-      inst->setDefaultDest(default_block);
+      if (ShouldInstrumentEdge(src_block, default_block)) {
+        default_block = BlockForEdge(src_block, default_block);
+        blocks.push_back(default_block);
+        locs.push_back(loc++);
+        inst->setDefaultDest(default_block);
+      }
     }
 
     auto &context = inst->getContext();
@@ -206,7 +213,7 @@ class BranchCoverageTool : public Tool, public PersistentLocation {
         first_entry,
         after_last_entry};
 
-    i = 0;
+    unsigned i = 0;
     for (auto block : blocks) {
       args[0] = llvm::ConstantInt::get(loc_type, locs[i++]);
       llvm::IRBuilder<> ir(block, block->getFirstInsertionPt());

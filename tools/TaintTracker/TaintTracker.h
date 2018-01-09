@@ -70,6 +70,9 @@ class TaintTrackerTool : public Tool,
   uint64_t FindSymbolForLinking(
       const std::string &name, uint64_t resolved) override;
 
+  // Prepare the module for instrumentation.
+  void PrepareModule(llvm::Module *module_) override;
+
   // Instrument the runtime module.
   bool InstrumentRuntime(llvm::Module *module_) override;
 

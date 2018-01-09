@@ -52,7 +52,7 @@ static void DummyCoverCompare8(Location, int predicate, uint64_t, uint64_t) {}
 class ValueCoverageTool : public Tool, public PersistentLocation {
  public:
   ValueCoverageTool(void)
-      : PersistentLocation(kLocationTypeTrace),
+      : PersistentLocation(kLocationTypeValue),
         module(nullptr),
         dl(""),
         loc_type(nullptr),
@@ -98,7 +98,9 @@ class ValueCoverageTool : public Tool, public PersistentLocation {
 
   // Instrument a lifted function/trace.
   bool InstrumentTrace(llvm::Function *func, uint64_t pc) final {
-    InitForModule(func->getParent());
+    if (func->hasFnAttribute(llvm::Attribute::Naked)) {
+      return false;
+    }
 
     std::vector<llvm::CmpInst *> compares;
 
@@ -117,12 +119,7 @@ class ValueCoverageTool : public Tool, public PersistentLocation {
     return true;
   }
 
- private:
-  void InitForModule(llvm::Module *module_) {
-    if (module == module_) {
-      return;
-    }
-
+  void PrepareModule(llvm::Module *module_) override {
     module = module_;
     dl.init(module);
 
@@ -152,6 +149,7 @@ class ValueCoverageTool : public Tool, public PersistentLocation {
         "__cov_cmp_8", llvm::FunctionType::get(void_type, cmp_8_args, false));
   }
 
+ private:
   void Instrument(llvm::CmpInst *inst) {
     auto lhs_val = inst->getOperand(0);
     auto rhs_val = inst->getOperand(1);

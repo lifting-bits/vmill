@@ -25,7 +25,7 @@ using Location = uint32_t;
 
 enum LocationType {
   kLocationTypeBranch,
-  kLocationTypeTrace
+  kLocationTypeValue
 };
 
 // Used to manage a persistent location counter across runs.
