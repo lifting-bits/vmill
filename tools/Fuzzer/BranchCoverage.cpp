@@ -187,26 +187,32 @@ class BranchCoverageTool : public Tool, public PersistentLocation {
       }
     }
 
-    // Default case.
-    if (auto default_block = inst->getDefaultDest()) {
-      if (ShouldInstrumentEdge(src_block, default_block)) {
-        default_block = BlockForEdge(src_block, default_block);
-        blocks.push_back(default_block);
-        locs.push_back(loc++);
-        inst->setDefaultDest(default_block);
-      }
-    }
+//    // Default case.
+//    if (auto default_block = inst->getDefaultDest()) {
+//      if (ShouldInstrumentEdge(src_block, default_block)) {
+//        default_block = BlockForEdge(src_block, default_block);
+//        blocks.push_back(default_block);
+//        locs.push_back(loc++);
+//        inst->setDefaultDest(default_block);
+//      }
+//    }
 
     auto &context = inst->getContext();
     auto loc_array = llvm::ConstantDataArray::get(context, locs);
+    auto loc_array_type = loc_array->getType();
     auto loc_var = new llvm::GlobalVariable(
-        *module, loc_array->getType(), true,
+        *module, loc_array_type, true,
         llvm::GlobalValue::PrivateLinkage, loc_array);
 
+    auto zero = llvm::ConstantInt::get(loc_type, 0);
+    llvm::Value *gep_indexes[] = {zero, zero};
+
     auto first_entry = llvm::ConstantExpr::getGetElementPtr(
-        loc_type, loc_var, llvm::ConstantInt::get(loc_type, 0));
+        nullptr, loc_var, gep_indexes);
+
+    gep_indexes[1] = llvm::ConstantInt::get(loc_type, locs.size());
     auto after_last_entry = llvm::ConstantExpr::getGetElementPtr(
-        loc_type, loc_var, llvm::ConstantInt::get(loc_type, 1));
+        nullptr, loc_var, gep_indexes);
 
     llvm::Value *args[] = {
         nullptr,
@@ -216,13 +222,14 @@ class BranchCoverageTool : public Tool, public PersistentLocation {
     unsigned i = 0;
     for (auto block : blocks) {
       args[0] = llvm::ConstantInt::get(loc_type, locs[i++]);
-      llvm::IRBuilder<> ir(block, block->getFirstInsertionPt());
+      llvm::IRBuilder<> ir(&*block->getFirstInsertionPt());
       ir.CreateCall(cov_switch_func, args);
     }
   }
 
   llvm::BasicBlock *BlockForEdge(llvm::BasicBlock *from,
                                  llvm::BasicBlock *to) {
+    return to;
     auto &context = to->getContext();
     auto mid = llvm::BasicBlock::Create(context, "", to->getParent(), to);
 
