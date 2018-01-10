@@ -133,13 +133,12 @@ class BranchCoverageTool : public Tool, public PersistentLocation {
  private:
 
   bool ShouldInstrumentEdge(llvm::BasicBlock *from, llvm::BasicBlock *to) {
-    return true; // nullptr != to->getSinglePredecessor();
+    return to->getFirstInsertionPt() != to->end();  // Catchswitch block.
   }
 
   // Instrument a conditional branch instruction so that we can uniquely
   // observe the flow across each path.
   void Instrument(llvm::BranchInst *inst) {
-    return;
     if (!inst->isConditional()) {
       return;
     }
@@ -177,25 +176,16 @@ class BranchCoverageTool : public Tool, public PersistentLocation {
     std::vector<llvm::BasicBlock *> blocks;
 
     // Normal cases.
-    for (auto &case_entry : inst->cases()) {
-      auto dst_block = case_entry.getCaseSuccessor();
+    const auto num_cases = inst->getNumCases();
+    for (auto i = 0U; i < num_cases; ++i) {
+      auto dst_block = inst->getSuccessor(i);
       if (ShouldInstrumentEdge(src_block, dst_block)) {
         dst_block = BlockForEdge(src_block, dst_block);
-        inst->setSuccessor(case_entry.getCaseIndex(), dst_block);
+        inst->setSuccessor(i, dst_block);
         blocks.push_back(dst_block);
         locs.push_back(loc++);
       }
     }
-
-//    // Default case.
-//    if (auto default_block = inst->getDefaultDest()) {
-//      if (ShouldInstrumentEdge(src_block, default_block)) {
-//        default_block = BlockForEdge(src_block, default_block);
-//        blocks.push_back(default_block);
-//        locs.push_back(loc++);
-//        inst->setDefaultDest(default_block);
-//      }
-//    }
 
     auto &context = inst->getContext();
     auto loc_array = llvm::ConstantDataArray::get(context, locs);
@@ -229,7 +219,6 @@ class BranchCoverageTool : public Tool, public PersistentLocation {
 
   llvm::BasicBlock *BlockForEdge(llvm::BasicBlock *from,
                                  llvm::BasicBlock *to) {
-    return to;
     auto &context = to->getContext();
     auto mid = llvm::BasicBlock::Create(context, "", to->getParent(), to);
 
