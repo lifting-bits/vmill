@@ -297,13 +297,17 @@ llvm::JITSymbol CodeCacheImpl::findSymbolInLogicalDylib(
 
 // Resolve external/exported symbols during linking.
 llvm::JITSymbol CodeCacheImpl::findSymbol(const std::string &name) {
-  uint64_t addr = llvm::RTDyldMemoryManager::getSymbolAddressInProcess(name);
-  addr = tool->FindSymbolForLinking(name, addr);
-  if (!addr) {
-    LOG(ERROR)
-        << "Could not locate symbol " << name;
+  auto addr = llvm::RTDyldMemoryManager::getSymbolAddressInProcess(name);
+  auto resolved_addr = tool->FindSymbolForLinking(name, addr);
+  if (!resolved_addr) {
+    if (addr) {
+      resolved_addr = addr;
+    } else {
+      LOG(ERROR)
+          << "Could not locate address of symbol " << name;
+    }
   }
-  return llvm::JITSymbol(addr, llvm::JITSymbolFlags::None);
+  return llvm::JITSymbol(resolved_addr, llvm::JITSymbolFlags::None);
 }
 
 // Load the runtime library, this must be done first, as it supported all

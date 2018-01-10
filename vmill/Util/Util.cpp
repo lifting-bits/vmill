@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#include <glog/logging.h>
+
 #include "vmill/Util/Util.h"
 
 namespace vmill {
@@ -41,7 +43,7 @@ std::vector<std::string> SplitPathList(std::string path_list, char sep) {
     }
   }
 
-  if (parts.empty()) {
+  if (!path_list.empty()) {
     parts.push_back(path_list);
   }
 

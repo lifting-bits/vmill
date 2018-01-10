@@ -61,15 +61,14 @@ class BranchCoverageTool : public Tool, public PersistentLocation {
   // symbol.
   uint64_t FindSymbolForLinking(
       const std::string &name, uint64_t resolved) final {
-    if (resolved) {
-      return resolved;
-    } else if (name == "__cov_switch") {
-      return reinterpret_cast<uintptr_t>(DummyCoverSwitch);
-    } else if (name == "__cov_branch") {
-      return reinterpret_cast<uintptr_t>(DummyCoverBranch);
-    } else {
-      return resolved;
+    if (!resolved) {
+      if (name == "__cov_switch") {
+        resolved = reinterpret_cast<uintptr_t>(DummyCoverSwitch);
+      } else if (name == "__cov_branch") {
+        resolved = reinterpret_cast<uintptr_t>(DummyCoverBranch);
+      }
     }
+    return Tool::FindSymbolForLinking(name, resolved);
   }
 
   // Instrument the runtime module.

@@ -71,19 +71,18 @@ class ValueCoverageTool : public Tool, public PersistentLocation {
   // symbol.
   uint64_t FindSymbolForLinking(
       const std::string &name, uint64_t resolved) override {
-    if (resolved) {
-      return resolved;
-    } else if (name == "__cov_cmp_1") {
-      return reinterpret_cast<uintptr_t>(DummyCoverCompare1);
-    } else if (name == "__cov_cmp_2") {
-      return reinterpret_cast<uintptr_t>(DummyCoverCompare2);
-    } else if (name == "__cov_cmp_4") {
-      return reinterpret_cast<uintptr_t>(DummyCoverCompare4);
-    } else if (name == "__cov_cmp_8") {
-      return reinterpret_cast<uintptr_t>(DummyCoverCompare8);
-    } else {
-      return resolved;
+    if (!resolved) {
+      if (name == "__cov_cmp_1") {
+        resolved = reinterpret_cast<uintptr_t>(DummyCoverCompare1);
+      } else if (name == "__cov_cmp_2") {
+        resolved = reinterpret_cast<uintptr_t>(DummyCoverCompare2);
+      } else if (name == "__cov_cmp_4") {
+        resolved = reinterpret_cast<uintptr_t>(DummyCoverCompare4);
+      } else if (name == "__cov_cmp_8") {
+        resolved = reinterpret_cast<uintptr_t>(DummyCoverCompare8);
+      }
     }
+    return Tool::FindSymbolForLinking(name, resolved);
   }
 
   // Instrument the runtime module.

@@ -161,10 +161,9 @@ uint64_t AsyncIOTool::FindSymbolForLinking(
     const std::string &name, uint64_t resolved) {
   auto it = async_funcs.find(name);
   if (it != async_funcs.end()) {
-    return it->second;
-  } else {
-    return this->ProxyTool::FindSymbolForLinking(name, resolved);
+    resolved = it->second;
   }
+  return ProxyTool::FindSymbolForLinking(name, resolved);
 }
 
 }  // namespace

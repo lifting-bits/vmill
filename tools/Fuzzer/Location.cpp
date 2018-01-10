@@ -62,11 +62,12 @@ static Location GetCurrentLocation(int fd) {
   if (size == sizeof(Location)) {
     Location loc = 0;
     CHECK(0 < read(fd, &loc, sizeof(loc)));
+    lseek(fd, 0, SEEK_SET);
     return loc;
 
   } else if (size) {
     LOG(FATAL)
-        << "Corrupted last-location file?";
+        << "Corrupted last-location file of size " << size << " bytes.";
   }
   return 0;
 }
@@ -80,6 +81,8 @@ PersistentLocation::PersistentLocation(LocationType type)
 PersistentLocation::~PersistentLocation(void) {
   ftruncate(fd, 0);
   write(fd, &loc, sizeof(loc));
+  CHECK(remill::FileSize(fd) == sizeof(loc));
+  close(fd);
 }
 
 void CoverSwitch(Location edge, const Location *edges_begin,

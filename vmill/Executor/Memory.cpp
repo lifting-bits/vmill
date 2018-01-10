@@ -86,10 +86,9 @@ uint64_t MemoryManagerTool::FindSymbolForLinking(
     const std::string &name, uint64_t resolved) {
   auto it = alloc_funcs.find(name);
   if (it != alloc_funcs.end()) {
-    return it->second;
-  } else {
-    return this->ProxyTool::FindSymbolForLinking(name, resolved);
+    resolved = it->second;
   }
+  return ProxyTool::FindSymbolForLinking(name, resolved);
 }
 
 }  // namespace vmill

@@ -131,7 +131,8 @@ class SharedLibraryTool : public Tool {
   // symbol.
   uint64_t FindSymbolForLinking(
       const std::string &name, uint64_t resolved) final {
-    return find_symbol_for_linking(name, resolved);
+    return Tool::FindSymbolForLinking(
+        name, find_symbol_for_linking(name, resolved));
   }
 
   // Tells us that we are about to be able to instrument the module `module`.
@@ -213,7 +214,8 @@ std::unique_ptr<Tool> Tool::Load(std::string request) {
   } else {
     auto tool = new CompositorTool;
     for (const auto &tool_name_or_path : tool_names_or_paths) {
-      tool->AddTool(LoadOneTool(tool_name_or_path));
+      auto sub_tool = LoadOneTool(tool_name_or_path);
+      tool->AddTool(std::move(sub_tool));
     }
     return std::unique_ptr<Tool>(tool);
   }
@@ -230,7 +232,8 @@ ProxyTool::~ProxyTool(void) {}
 // symbol.
 uint64_t ProxyTool::FindSymbolForLinking(
     const std::string &name, uint64_t resolved) {
-  return tool->FindSymbolForLinking(name, resolved);
+  return Tool::FindSymbolForLinking(
+      name, tool->FindSymbolForLinking(name, resolved));
 }
 
 // Tells us that we are about to be able to instrument the module `module`.
@@ -275,7 +278,7 @@ uint64_t CompositorTool::FindSymbolForLinking(
   for (auto &tool : tools) {
     resolved = tool->FindSymbolForLinking(name, resolved);
   }
-  return resolved;
+  return Tool::FindSymbolForLinking(name, resolved);
 }
 
 // Tells us that we are about to be able to instrument the module `module`.
