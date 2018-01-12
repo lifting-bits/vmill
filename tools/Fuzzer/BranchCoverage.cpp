@@ -53,23 +53,12 @@ class BranchCoverageTool : public Tool, public PersistentLocation {
         module(nullptr),
         loc_type(nullptr),
         cov_branch_func(nullptr),
-        cov_switch_func(nullptr) {}
+        cov_switch_func(nullptr) {
+    OfferSymbol("__cov_switch", DummyCoverSwitch);
+    OfferSymbol("__cov_branch", DummyCoverBranch);
+  }
 
   virtual ~BranchCoverageTool(void) {}
-
-  // Called when lifted bitcode or the runtime needs to resolve an external
-  // symbol.
-  uint64_t FindSymbolForLinking(
-      const std::string &name, uint64_t resolved) final {
-    if (!resolved) {
-      if (name == "__cov_switch") {
-        resolved = reinterpret_cast<uintptr_t>(DummyCoverSwitch);
-      } else if (name == "__cov_branch") {
-        resolved = reinterpret_cast<uintptr_t>(DummyCoverBranch);
-      }
-    }
-    return Tool::FindSymbolForLinking(name, resolved);
-  }
 
   // Instrument the runtime module.
   bool InstrumentRuntime(llvm::Module *module) final {

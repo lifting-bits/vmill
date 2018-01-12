@@ -141,29 +141,18 @@ static uint64_t AsyncWrapper_(Ret (*)(Args...), uintptr_t target) {
 AsyncIOTool::AsyncIOTool(std::unique_ptr<Tool> tool_)
     : ProxyTool(std::move(tool_)) {
 
-  async_funcs[SYM(read)] = AsyncWrapper(read);
-  async_funcs[SYM(write)] = AsyncWrapper(write);
-  async_funcs[SYM(connect)] = AsyncWrapper(connect);
-  async_funcs[SYM(recvfrom)] = AsyncWrapper(recvfrom);
-  async_funcs[SYM(sendto)] = AsyncWrapper(sendto);
-  async_funcs[SYM(sendmsg)] = AsyncWrapper(sendmsg);
-  async_funcs[SYM(recvmsg)] = AsyncWrapper(recvmsg);
-  async_funcs[SYM(poll)] = AsyncWrapper(poll);
-  async_funcs[SYM(select)] = AsyncWrapper(select);
-  async_funcs[SYM(getaddrinfo)] = AsyncWrapper(getaddrinfo);
-  async_funcs[SYM(getnameinfo)] = AsyncWrapper(getnameinfo);
-  async_funcs[SYM(sleep)] = AsyncWrapper(sleep);
-}
-
-// Called when lifted bitcode or the runtime needs to resolve an external
-// symbol.
-uint64_t AsyncIOTool::FindSymbolForLinking(
-    const std::string &name, uint64_t resolved) {
-  auto it = async_funcs.find(name);
-  if (it != async_funcs.end()) {
-    resolved = it->second;
-  }
-  return ProxyTool::FindSymbolForLinking(name, resolved);
+  ProvideSymbol("read", AsyncWrapper(read));
+  ProvideSymbol("write", AsyncWrapper(write));
+  ProvideSymbol("connect", AsyncWrapper(connect));
+  ProvideSymbol("recvfrom", AsyncWrapper(recvfrom));
+  ProvideSymbol("sendto", AsyncWrapper(sendto));
+  ProvideSymbol("sendmsg", AsyncWrapper(sendmsg));
+  ProvideSymbol("recvmsg", AsyncWrapper(recvmsg));
+  ProvideSymbol("poll", AsyncWrapper(poll));
+  ProvideSymbol("select", AsyncWrapper(select));
+  ProvideSymbol("getaddrinfo", AsyncWrapper(getaddrinfo));
+  ProvideSymbol("getnameinfo", AsyncWrapper(getnameinfo));
+  ProvideSymbol("sleep", AsyncWrapper(sleep));
 }
 
 }  // namespace

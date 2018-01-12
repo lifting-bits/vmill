@@ -244,10 +244,6 @@ Memory *__remill_async_hyper_call(
 Memory *__remill_sync_hyper_call(
     State &state, Memory *mem, SyncHyperCall::Name call) {
 
-  auto eax = state.gpr.rax.dword;
-  auto ebx = state.gpr.rbx.dword;
-  auto ecx = state.gpr.rcx.dword;
-  auto edx = state.gpr.rdx.dword;
   auto task = __vmill_current();
 
   switch (call) {
@@ -298,31 +294,12 @@ Memory *__remill_sync_hyper_call(
 
 #if defined(__x86_64__) || defined(__i386__) || defined(_M_X86)
     case SyncHyperCall::kX86CPUID: {
-
+      auto eax = state.gpr.rax.dword;
+      auto ecx = state.gpr.rcx.dword;
       state.gpr.rax.aword = 0;
       state.gpr.rbx.aword = 0;
       state.gpr.rcx.aword = 0;
       state.gpr.rdx.aword = 0;
-/*
-      asm volatile(
-          "cpuid"
-          : "=a"(state.gpr.rax.aword),
-            "=b"(state.gpr.rbx.aword),
-            "=c"(state.gpr.rcx.aword),
-            "=d"(state.gpr.rdx.aword)
-          : "a"(eax),
-            "b"(ebx),
-            "c"(ecx),
-            "d"(edx)
-          : "%rax", "%rbx", "%rcx", "%rdx", "memory"
-      );
-
-      STRACE_SUCCESS(sync_hyper_call,
-                     "kX86CPUID eax=%x ecx=%x -> eax=%x ebx=%x ecx=%x edx=%x",
-                     eax, ecx, state.gpr.rax.dword, state.gpr.rbx.dword,
-                     state.gpr.rcx.dword, state.gpr.rdx.dword);
-*/
-
       STRACE_ERROR(
           sync_hyper_call, "kX86CPUID eax=%x ecx=%x -> eax=0 ebx=0 ecx=0 edx=0",
           eax, ecx);

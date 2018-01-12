@@ -20,6 +20,8 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <type_traits>
+#include <unordered_map>
 
 namespace llvm {
 
@@ -28,6 +30,41 @@ class Function;
 
 }  // namespace llvm
 namespace vmill {
+namespace detail {
+
+template <typename Ret, typename... Args>
+inline static Ret ReturnType(Ret (*)(Args...));
+
+
+template <typename Ret, typename... Args>
+inline static Ret ReturnType(Ret (*)(Args..., ...));
+
+// Enables tools to define wrapper functions for functions that are used
+// in the runtime / instrumented bitcode.
+#define DEF_WRAPPER_IMPL(name, idx, ...) \
+  namespace { \
+  using name ## _ret_type = decltype(::vmill::detail::ReturnType(name)); \
+  } \
+  inline namespace ns_ ## idx { \
+  struct name ## _wrapper { \
+   public: \
+    static name ## _ret_type run(__VA_ARGS__); \
+    static decltype(name) *name; \
+  }; \
+  decltype(name) *name ## _wrapper::name = ::name; \
+  } \
+  name ## _ret_type ns_ ## idx::name ## _wrapper::run(__VA_ARGS__)
+
+#define DEF_WRAPPER_LINE_COUNT2(name, line, count, ...) \
+    DEF_WRAPPER_IMPL(name, line ## _ ## count, ##__VA_ARGS__)
+
+#define DEF_WRAPPER_LINE_COUNT(name, line, count, ...) \
+    DEF_WRAPPER_LINE_COUNT2(name, line, count, ##__VA_ARGS__)
+
+#define DEF_WRAPPER(name, ...) \
+    DEF_WRAPPER_LINE_COUNT(name, __LINE__, __COUNTER__, ##__VA_ARGS__)
+
+}  // namespace detail
 
 class Tool {
  public:
@@ -60,6 +97,54 @@ class Tool {
 
  protected:
   Tool(void);
+
+  template <typename Ret, typename... Args>
+  inline void ProvideSymbol(const std::string &name, Ret (*ptr)(Args...)) {
+    ProvideSymbol(name, reinterpret_cast<uintptr_t>(ptr));
+  }
+
+  // Provide a symbol for linking. The symbol will be unconditionally replaced
+  // with `pc`.
+  //
+  // Note: This is only relevant to symbols in the bitcode. For example, if the
+  //       runtime calls `malloc`, then you can provide a replacement for it.
+  //       This does not apply to the emulated program calling it's own version
+  //       of the `malloc` function.
+  void ProvideSymbol(const std::string &name, uint64_t pc);
+
+  template <typename Ret, typename... Args>
+  inline void OfferSymbol(const std::string &name, Ret (*ptr)(Args...)) {
+    OfferSymbol(name, reinterpret_cast<uintptr_t>(ptr));
+  }
+
+  // Provide a symbol for linking. If we don't have an address for the symbol
+  // then this lets us map it.
+  //
+  // Note: This is only relevant to symbols in the bitcode. For example, if the
+  //       runtime calls `malloc`, then you can provide a replacement for it.
+  //       This does not apply to the emulated program calling it's own version
+  //       of the `malloc` function.
+  void OfferSymbol(const std::string &name, uint64_t pc);
+
+#define ProvideWrappedSymbol(name) \
+    do { \
+      auto native_addr = reinterpret_cast<uintptr_t>(::name); \
+      auto resolved = FindSymbolForLinking(#name, native_addr); \
+      name ## _wrapper::name = reinterpret_cast<decltype(name) *>(resolved); \
+      ProvideSymbol(#name, name ## _wrapper::run); \
+    } while (false)
+
+#define OfferWrappedSymbol(name) \
+    do { \
+      auto native_addr = reinterpret_cast<uintptr_t>(::name); \
+      auto resolved = FindSymbolForLinking(#name, native_addr); \
+      name ## _wrapper::name = reinterpret_cast<decltype(name) *>(resolved); \
+      OfferSymbol(#name, name ## _wrapper::run); \
+    } while (false
+
+ private:
+  std::unordered_map<std::string, uint64_t> provided_symbols;
+  std::unordered_map<std::string, uint64_t> offered_symbols;
 };
 
 class NullTool : public Tool {

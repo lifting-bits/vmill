@@ -19,17 +19,22 @@
 
 #include <unordered_map>
 #include <vector>
+#include <unistd.h>
+#include <fcntl.h>
 
 #include "tools/Fuzzer/Fuzzer.h"
 #include "tools/Fuzzer/Location.h"
 
 #include "vmill/Util/Compiler.h"
 
+DEFINE_string(path_to_fuzz, "/dev/stdin", "The path to the file to fuzz");
+
 namespace vmill {
 namespace {
 
 static std::vector<uint64_t> gTakenEdgeCount;
 static std::vector<uint64_t> gNotTakenEdgeCount;
+static int gFdToFuzz = -1;
 
 static void IncrementEdge(std::vector<uint64_t> &counter, Location edge_loc) {
   auto index = static_cast<size_t>(edge_loc);
@@ -72,31 +77,43 @@ static void CoverCompare8(Location here, int, uint64_t lhs, uint64_t rhs) {
 
 }
 
+DEF_WRAPPER(read, int fd, void *data, size_t size) {
+  if (0 <= fd && gFdToFuzz == fd) {
+    LOG(ERROR) << "read!!!";
+    return 0;
+  } else {
+    return read(fd, data, size);
+  }
+}
+
+DEF_WRAPPER(open, const char *path, int oflag, mode_t mode) {
+  auto fd = open(path, oflag, mode);
+  if (FLAGS_path_to_fuzz == path) {
+    gFdToFuzz = fd;
+  }
+  return fd;
+}
+
 class FuzzerTool : public Tool {
  public:
-  virtual ~FuzzerTool(void) {}
+  FuzzerTool(void) {
+    ProvideSymbol("__cov_cmp_1", CoverCompare1);
+    ProvideSymbol("__cov_cmp_2", CoverCompare2);
+    ProvideSymbol("__cov_cmp_4", CoverCompare4);
+    ProvideSymbol("__cov_cmp_8", CoverCompare8);
+    ProvideSymbol("__cov_switch", CoverSwitch);
+    ProvideSymbol("__cov_branch", CoverBranch);
 
-  uint64_t FindSymbolForLinking(
-      const std::string &name, uint64_t resolved) override {
-    if (name == "__cov_cmp_1") {
-      resolved = reinterpret_cast<uintptr_t>(CoverCompare1);
-    } else if (name == "__cov_cmp_2") {
-      resolved = reinterpret_cast<uintptr_t>(CoverCompare2);
-    } else if (name == "__cov_cmp_4") {
-      resolved = reinterpret_cast<uintptr_t>(CoverCompare4);
-    } else if (name == "__cov_cmp_8") {
-      resolved = reinterpret_cast<uintptr_t>(CoverCompare8);
-    } else if (name == "__cov_switch") {
-      resolved = reinterpret_cast<uintptr_t>(CoverSwitch);
-    } else if (name == "__cov_branch") {
-      resolved = reinterpret_cast<uintptr_t>(CoverBranch);
-    }
-    return Tool::FindSymbolForLinking(name, resolved);
+    ProvideWrappedSymbol(read);
+    ProvideWrappedSymbol(open);
   }
+
+  virtual ~FuzzerTool(void) {}
 
   void SetUp(void) final {
     gTakenEdgeCount.clear();
     gNotTakenEdgeCount.clear();
+    gFdToFuzz = -1;
   }
 
   void TearDown(void) final {

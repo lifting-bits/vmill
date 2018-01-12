@@ -35,7 +35,19 @@ Tool::~Tool(void) {}
 
 // Called when lifted bitcode or the runtime needs to resolve an external
 // symbol.
-uint64_t Tool::FindSymbolForLinking(const std::string &, uint64_t resolved) {
+uint64_t Tool::FindSymbolForLinking(const std::string &name, uint64_t resolved) {
+  auto it = provided_symbols.find(name);
+  if (it != provided_symbols.end()) {
+    resolved = it->second;
+  }
+
+  if (!resolved) {
+    it = offered_symbols.find(name);
+    if (it != offered_symbols.end()) {
+      resolved = it->second;
+    }
+  }
+
   return resolved;
 }
 
@@ -55,6 +67,30 @@ bool Tool::InstrumentRuntime(llvm::Module *) {
 
 bool Tool::InstrumentTrace(llvm::Function *, uint64_t) {
   return false;
+}
+
+void Tool::ProvideSymbol(const std::string &name, uint64_t pc) {
+  provided_symbols[name] = pc;
+#ifdef __APPLE__
+  if (name != "main") {
+    std::stringstream ss;
+    ss << "_" << name;
+    name = ss.str();
+    provided_symbols[name] = pc;
+  }
+#endif
+}
+
+void Tool::OfferSymbol(const std::string &name, uint64_t pc) {
+  offered_symbols[name] = pc;
+#ifdef __APPLE__
+  if (name != "main") {
+    std::stringstream ss;
+    ss << "_" << name;
+    name = ss.str();
+    provided_symbols[name] = pc;
+  }
+#endif
 }
 
 namespace {

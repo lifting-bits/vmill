@@ -27,11 +27,6 @@ class AsyncIOTool : public ProxyTool {
  public:
   explicit AsyncIOTool(std::unique_ptr<Tool> tool_);
 
-  // Called when lifted bitcode or the runtime needs to resolve an external
-  // symbol.
-  uint64_t FindSymbolForLinking(
-      const std::string &name, uint64_t resolved) final;
-
  private:
   // Variants of functions that will spawn work in the worker pool.
   std::unordered_map<std::string, uint64_t> async_funcs;

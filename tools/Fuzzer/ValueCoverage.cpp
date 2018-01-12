@@ -63,27 +63,15 @@ class ValueCoverageTool : public Tool, public PersistentLocation {
         cov_cmp_1_func(nullptr),
         cov_cmp_2_func(nullptr),
         cov_cmp_4_func(nullptr),
-        cov_cmp_8_func(nullptr) {}
+        cov_cmp_8_func(nullptr) {
+
+    OfferSymbol("__cov_cmp_1", DummyCoverCompare1);
+    OfferSymbol("__cov_cmp_2", DummyCoverCompare2);
+    OfferSymbol("__cov_cmp_4", DummyCoverCompare4);
+    OfferSymbol("__cov_cmp_8", DummyCoverCompare8);
+  }
 
   virtual ~ValueCoverageTool(void) {}
-
-  // Called when lifted bitcode or the runtime needs to resolve an external
-  // symbol.
-  uint64_t FindSymbolForLinking(
-      const std::string &name, uint64_t resolved) override {
-    if (!resolved) {
-      if (name == "__cov_cmp_1") {
-        resolved = reinterpret_cast<uintptr_t>(DummyCoverCompare1);
-      } else if (name == "__cov_cmp_2") {
-        resolved = reinterpret_cast<uintptr_t>(DummyCoverCompare2);
-      } else if (name == "__cov_cmp_4") {
-        resolved = reinterpret_cast<uintptr_t>(DummyCoverCompare4);
-      } else if (name == "__cov_cmp_8") {
-        resolved = reinterpret_cast<uintptr_t>(DummyCoverCompare8);
-      }
-    }
-    return Tool::FindSymbolForLinking(name, resolved);
-  }
 
   // Instrument the runtime module.
   bool InstrumentRuntime(llvm::Module *module) final {
