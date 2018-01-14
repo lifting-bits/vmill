@@ -24,6 +24,8 @@
 #include <sys/select.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <tuple>
+#include <type_traits>
 #include <unordered_map>
 
 #include "vmill/Executor/AsyncIO.h"
@@ -59,6 +61,8 @@ static const std::unique_ptr<ThreadPool> &GetIOThreadPool(void) {
   }
   return gIOPool;
 }
+
+struct async_read;
 
 // Wraps around a blocking system call (passed as the first argument to get
 // all of the type information), whose implementation is at `target` (this

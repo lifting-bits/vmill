@@ -64,8 +64,8 @@ static void __vmill_init_task(
 }
 
 static void __vmill_fini_task(vmill::Task *task) {
-  delete task->state;
-  task->state = nullptr;
   __vmill_free_coroutine(task->async_routine);
   task->async_routine = nullptr;
+  delete task->state;
+  task->state = nullptr;
 }

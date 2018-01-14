@@ -224,6 +224,11 @@ static Memory *DoClone(Memory *memory, State *state,
 
   if (CLONE_CHILD_SETTID & flags) {
     (void) TryWriteMemory(memory, ctid, child->tid);
+    child->set_child_tid = ctid;
+  }
+
+  if (CLONE_CHILD_CLEARTID & flags) {
+    child->clear_child_tid = ctid;
   }
 
   STRACE_SUCCESS(
@@ -358,5 +363,20 @@ static Memory *SysArchPrctl(Memory *memory, State *state,
   }
 }
 #endif  // 64 == VMILL_RUNTIME_X86
+
+// Emulate the `set_tid_address` system call.
+static Memory *SysSetThreadIdAddress(Memory *memory, State *state,
+                                     const SystemCallABI &syscall) {
+  addr_t tidptr = 0;
+  if (!syscall.TryGetArgs(memory, state, &tidptr)) {
+    STRACE_ERROR(set_tid_address, "Couldn't get args");
+    return syscall.SetReturn(memory, state, -EFAULT);
+  }
+
+  auto task = __vmill_current();
+  task->clear_child_tid = tidptr;
+  STRACE_SUCCESS(set_tid_address, "clear_child_tid=%" PRIxADDR, tidptr);
+  return syscall.SetReturn(memory, state, task->tid);
+}
 
 }  // namespace

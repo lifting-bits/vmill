@@ -54,8 +54,8 @@
 #include "vmill/BC/Trace.h"
 #include "vmill/BC/Util.h"
 
-//DEFINE_string(instruction_callback, "",
-//              "Name of a function to call before each lifted instruction.");
+DEFINE_string(instruction_callback, "",
+              "Name of a function to call before each lifted instruction.");
 
 namespace vmill {
 namespace {
@@ -234,7 +234,6 @@ llvm::Function *LifterImpl::LiftTrace(const DecodedTrace &trace) {
 
   remill::CloneBlockFunctionInto(func);
 
-
   // Hard-code the trace address into the bitcode.
   auto func_entry_block = &(func->front());
   auto arch = remill::GetTargetArch();
@@ -266,13 +265,13 @@ llvm::Function *LifterImpl::LiftTrace(const DecodedTrace &trace) {
     remill::AddTerminatingTailCall(entry_block, intrinsics.error);
   }
 
-//  llvm::Constant *callback = nullptr;
-//  llvm::Value *memory_ptr_ref = nullptr;
-//  if (!FLAGS_instruction_callback.empty()) {
-//    callback = module->getOrInsertFunction(
-//        FLAGS_instruction_callback, func->getFunctionType());
-//    memory_ptr_ref = remill::LoadMemoryPointerRef(entry_block);
-//  }
+  llvm::Constant *callback = nullptr;
+  llvm::Value *memory_ptr_ref = nullptr;
+  if (!FLAGS_instruction_callback.empty()) {
+    callback = semantics->getOrInsertFunction(
+        FLAGS_instruction_callback, func->getFunctionType());
+    memory_ptr_ref = remill::LoadMemoryPointerRef(entry_block);
+  }
 
   // Lift each instruction into its own basic block.
   for (const auto &entry : insts) {
@@ -281,11 +280,11 @@ llvm::Function *LifterImpl::LiftTrace(const DecodedTrace &trace) {
 
     inst.FinalizeDecode();
 
-//    if (callback) {
-//      llvm::IRBuilder<> ir(block);
-//      ir.CreateStore(ir.CreateCall(callback, remill::LiftedFunctionArgs(block)),
-//                     memory_ptr_ref);
-//    }
+    if (callback) {
+      llvm::IRBuilder<> ir(block);
+      ir.CreateStore(ir.CreateCall(callback, remill::LiftedFunctionArgs(block)),
+                     memory_ptr_ref);
+    }
 
     llvm::ConstantInt *ret_pc = nullptr;
     if (inst.IsFunctionCall()) {

@@ -27,6 +27,12 @@ static Memory *SysExit(Memory *memory, State *state,
   }
 
   auto task = __vmill_current();
+
+  if (task->clear_child_tid) {
+    // futex(clear_child_tid, FUTEX_WAKE, 1, NULL, NULL, 0);
+    DoWake(task, task->clear_child_tid, ~0U, 1);
+  }
+
   __vmill_set_location(static_cast<addr_t>(task->pc),
                        vmill::kTaskStoppedAtExit);
   return memory;

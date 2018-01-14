@@ -277,6 +277,19 @@ struct linux_compat_rlimit {
   uint32_t rlim_max;
 };
 
+enum : size_t {
+  kLinuxNumTerminalControlChars = 19
+};
+
+struct linux_termios {
+  uint32_t c_iflag;  // Input mode flags.
+  uint32_t c_oflag;  // Output mode flags.
+  uint32_t c_cflag;  // Control mode flags.
+  uint32_t c_lflag;  // Local mode flags.
+  uint8_t c_line;  // Line discipline.
+  uint8_t c_cc[kLinuxNumTerminalControlChars];  // Control characters.
+};
+
 enum : uint32_t {
   kLinuxMinIndexForTLSInGDT = 12,
   kLinuxMaxIndexForTLSInGDT = 14,
@@ -356,8 +369,14 @@ struct linux32_statfs64 {
   uint32_t f_spare[4];
 } __attribute__((packed));
 
-constexpr pid_t kParentProcessId = 0;
-static constexpr pid_t kProcessId = 1;
+// NOTE(pag): We never want to have a zero TID, because otherwise we'll get
+//            into funky issues where `pthread_rwlock_wrlock` writes the TID
+//            into `rwlock->__data.__writer`, and then, if this value is zero
+//            (and another condition is met), the `pthread_rwlock_unlock` code
+//            will execute an `XEND` instruction (without the accompanying
+//            `XBEGIN`), resulting in a `__remill_error` being executed.
+constexpr pid_t kParentProcessId = 1;
+static constexpr pid_t kProcessId = 2;
 static constexpr pid_t kParentProcessGroupId = 0;
 
 // Number of iterations of the task loop to be blocked for.
@@ -383,6 +402,8 @@ struct linux_task : public vmill::Task {
   addr_t futex_uaddr;
 
   pid_t tid;
+  addr_t clear_child_tid;
+  addr_t set_child_tid;
 };
 
 // Returns a pointer to the currently executing task.

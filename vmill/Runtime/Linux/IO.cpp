@@ -307,43 +307,111 @@ static Memory *SysIoctl(Memory *memory, State *state,
   }
 
   struct termios info = {};
+  struct linux_termios kinfo = {};
+  struct winsize window_size = {};
+  int optional_action = 0;
 
   switch (cmd) {
     case TCGETS:
-      if (!ioctl(fd, TCGETS, &info)) {
-        if (!TryWriteMemory(memory, argp, info)) {
-          STRACE_ERROR(ioctl_tcgets, "Fault writing info fd=%d argp=%" PRIxADDR,
+      if (!tcgetattr(fd, &info)) {
+        kinfo.c_iflag = info.c_iflag;
+        kinfo.c_oflag = info.c_oflag;
+        kinfo.c_cflag = info.c_cflag;
+        kinfo.c_lflag = info.c_lflag;
+        kinfo.c_line = info.c_line;
+
+        memcpy(&(kinfo.c_cc[0]), &(info.c_cc[0]),
+               std::min<size_t>(NCCS, kLinuxNumTerminalControlChars));
+
+        if (!TryWriteMemory(memory, argp, kinfo)) {
+          STRACE_ERROR(tcgetattr, "Fault writing info fd=%d argp=%" PRIxADDR,
                        fd, argp);
           return syscall.SetReturn(memory, state, -EFAULT);
         } else {
-          STRACE_SUCCESS(ioctl_tcgets, "fd=%d", fd);
+          STRACE_SUCCESS(tcgetattr, "fd=%d", fd);
           return syscall.SetReturn(memory, state, 0);
         }
       } else {
         auto err = errno;
-        STRACE_ERROR(ioctl_tcgets, "Error with fd=%d: %s", fd, strerror(err));
+        STRACE_ERROR(tcgetattr, "Error with fd=%d: %s", fd, strerror(err));
         return syscall.SetReturn(memory, state, -err);
       }
 
     case TCSETS:
-      if (TryReadMemory(memory, argp, &info)) {
-        if (!ioctl(fd, TCSETS, &info)) {
-          STRACE_SUCCESS(ioctl_tcsets, "fd=%d", fd);
+      optional_action = TCSANOW;
+      goto set_attributes;
+
+    case TCSETSW:
+      optional_action = TCSADRAIN;
+      goto set_attributes;
+
+    case TCSETSF:
+      optional_action = TCSAFLUSH;
+      goto set_attributes;
+
+    set_attributes:
+      if (TryReadMemory(memory, argp, &kinfo)) {
+        info.c_iflag = kinfo.c_iflag;
+        info.c_oflag = kinfo.c_oflag;
+        info.c_cflag = kinfo.c_cflag;
+        info.c_lflag = kinfo.c_lflag;
+        info.c_line = kinfo.c_line;
+
+        memcpy(&(info.c_cc[0]), &(kinfo.c_cc[0]),
+               std::min<size_t>(NCCS, kLinuxNumTerminalControlChars));
+
+        if (!tcsetattr(fd, optional_action, &info)) {
+          STRACE_SUCCESS(tcsetattr, "fd=%d, optional_action=%d",
+                         fd, optional_action);
           return syscall.SetReturn(memory, state, 0);
         } else {
           auto err = errno;
-          STRACE_ERROR(ioctl_tcsets, "Error with fd=%d: %s", fd, strerror(err));
+          STRACE_ERROR(tcsetattr, "Error with fd=%d, optional_action=%d: %s",
+                       fd, optional_action, strerror(err));
           return syscall.SetReturn(memory, state, -err);
         }
       } else {
-        STRACE_ERROR(ioctl_tcsets, "Fault reading info fd=%d argp=%" PRIxADDR,
+        STRACE_ERROR(tcsetattr, "Fault reading info fd=%d argp=%" PRIxADDR,
                      fd, argp);
         return syscall.SetReturn(memory, state, -EFAULT);
       }
+      break;
 
+    // Get terminal window size.
     case TIOCGWINSZ:
-      STRACE_ERROR(ioctl_tiocgwinsz, "No tty.");
-      return syscall.SetReturn(memory, state, -ENOTTY);
+      if (!ioctl(fd, TIOCGWINSZ, &window_size)) {
+        if (!TryWriteMemory(memory, argp, window_size)) {
+          STRACE_ERROR(
+              ioctl_tiocgwinsz, "Fault writing info fd=%d argp=%" PRIxADDR,
+              fd, argp);
+          return syscall.SetReturn(memory, state, -EFAULT);
+        } else {
+          STRACE_SUCCESS(ioctl_tiocgwinsz, "fd=%d", fd);
+          return syscall.SetReturn(memory, state, 0);
+        }
+      } else {
+        auto err = errno;
+        STRACE_ERROR(ioctl_tiocgwinsz, "fd=%d: %s", fd, strerror(errno));
+        return syscall.SetReturn(memory, state, -err);
+      }
+
+    // Set the terminal window size.
+    case TIOCSWINSZ:
+      if (TryReadMemory(memory, argp, &window_size)) {
+        if (!ioctl(fd, TIOCSWINSZ, &window_size)) {
+          STRACE_SUCCESS(ioctl_tiocswinsz, "fd=%d", fd);
+          return syscall.SetReturn(memory, state, 0);
+        } else {
+          auto err = errno;
+          STRACE_ERROR(ioctl_tiocswinsz, "fd=%d: %s", fd, strerror(errno));
+          return syscall.SetReturn(memory, state, -err);
+        }
+      } else {
+        STRACE_ERROR(
+            ioctl_tiocswinsz, "Fault writing info fd=%d argp=%" PRIxADDR,
+            fd, argp);
+        return syscall.SetReturn(memory, state, -EFAULT);
+      }
 
     default:
       STRACE_ERROR(ioctl, "Unsupported cmd=%lu on fd=%d", cmd, fd);

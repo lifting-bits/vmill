@@ -171,6 +171,11 @@ static uint32_t DoWake(linux_task *task, addr_t uaddr, uint32_t bitset,
        next_task != task;
        next_task = next_task->next_circular) {
 
+    // Tasks in different address spaces can't share futexes (in vmill).
+    if (task->memory != next_task->memory) {
+      continue;
+    }
+
     if (next_task->futex_uaddr == uaddr &&
         0 < next_task->blocked_count &&
         0U != (next_task->futex_bitset & bitset)) {

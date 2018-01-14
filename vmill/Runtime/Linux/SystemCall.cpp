@@ -121,6 +121,7 @@ static Memory *X86SystemCall(Memory *memory, State *state,
     case 240: return SysFutex<linux32_timespec>(memory, state, syscall);
     case 243:
       return SysSetThreadArea<linux_x86_user_desc>(memory, state, syscall);
+    case 258: return SysSetThreadIdAddress(memory, state, syscall);
     case 265: return SysClockGetTime<linux32_timespec>(memory, state, syscall);
     case 266:
       return SysClockGetResolution<linux32_timespec>(memory, state, syscall);
@@ -195,7 +196,11 @@ static Memory *AMD64SystemCall(Memory *memory, State *state,
     case 60: return SysExit(memory, state, syscall);
     case 62: return SysKill(memory, state, syscall);
     case 63: return SysUname<linux_new_utsname>(memory, state, syscall);
+    case 97: return SysGetRlimit<linux_rlimit>(memory, state, syscall);
+    case 102: return SysGetUserId(memory, state, syscall);
     case 158: return SysArchPrctl(memory, state, syscall);
+    case 202: return SysFutex<linux64_timespec>(memory, state, syscall);
+    case 218: return SysSetThreadIdAddress(memory, state, syscall);
 /*
     case 13: return SysTime(memory, state, syscall);
     case 24: return SysGetUserId(memory, state, syscall);
@@ -299,6 +304,7 @@ static Memory *AArch64SystemCall(Memory *memory, State *state,
     case 78: return SysReadLinkAt(memory, state, syscall);
     case 222: return SysMmap(memory, state, syscall);
     case 215: return SysMunmap(memory, state, syscall);
+    case 96: return SysSetThreadIdAddress(memory, state, syscall);
 #if 0
     case 106: return SysStat<linux32_stat>(memory, state, syscall);
     case 107: return SysLstat<linux32_stat>(memory, state, syscall);

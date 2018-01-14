@@ -286,7 +286,7 @@ void TaintTrackerTool::ExpandGEP(llvm::GetElementPtrInst *inst) {
     auto it_end = llvm::gep_type_end(inst);
     for (auto it = llvm::gep_type_begin(inst); it != it_end; ++it) {
       auto index = it.getOperand();
-      auto element_type = *it;
+      auto element_type = it.getIndexedType();
 
       if (auto struct_type = llvm::dyn_cast<llvm::StructType>(element_type)) {
         auto ci = llvm::dyn_cast<llvm::ConstantInt>(index);

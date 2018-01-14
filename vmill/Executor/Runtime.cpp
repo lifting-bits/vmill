@@ -166,8 +166,9 @@ uint64_t __vmill_find_unmapped_address(
 }
 
 __attribute__((noinline))
-void vmill_break_on_fault(void) {
-  asm volatile ("" : : : "memory");
+void vmill_break_on_fault(Task *task) {
+  task->memory->LogMaps(LOG(ERROR));
+  asm volatile ("nop" : :"m"(*task) : "memory");
 }
 
 #define MAKE_MEM_FAULT(access, suffix, size, fkind, vtype) \
@@ -175,11 +176,13 @@ void vmill_break_on_fault(void) {
       if (likely(gTask != nullptr)) { \
         auto &fault = gTask->mem_access_fault; \
         if (kMemoryAccessNoFault == fault.kind) { \
-          vmill_break_on_fault(); \
+          gTask->status = kTaskStatusError; \
+          gTask->status_on_resume = kTaskStatusError; \
           fault.kind = fkind; \
           fault.value_type = vtype; \
           fault.access_size = size; \
           fault.address = addr; \
+          vmill_break_on_fault(gTask); \
         } \
       } \
     }
@@ -251,11 +254,13 @@ double __remill_read_memory_f80(
     if (likely(gTask != nullptr)) {
       auto &fault = gTask->mem_access_fault;
       if (kMemoryAccessNoFault == fault.kind) {
-        vmill_break_on_fault();
+        gTask->status = kTaskStatusError;
+        gTask->status_on_resume = kTaskStatusError;
         fault.kind = kMemoryAccessFaultOnRead;
         fault.value_type = kMemoryValueTypeFloatingPoint;
         fault.access_size = 10;
         fault.address = addr;
+        vmill_break_on_fault(gTask);
       }
     }
     return 0.0;
@@ -317,11 +322,13 @@ AddressSpace *__remill_write_memory_f80(
     if (likely(gTask != nullptr)) {
       auto &fault = gTask->mem_access_fault;
       if (kMemoryAccessNoFault == fault.kind) {
-        vmill_break_on_fault();
+        gTask->status = kTaskStatusError;
+        gTask->status_on_resume = kTaskStatusError;
         fault.kind = kMemoryAccessFaultOnWrite;
         fault.value_type = kMemoryValueTypeFloatingPoint;
         fault.access_size = 10;
         fault.address = addr;
+        vmill_break_on_fault(gTask);
       }
     }
   }
@@ -336,9 +343,11 @@ void __vmill_set_location(PC pc, vmill::TaskStopLocation loc) {
     case kTaskStoppedBeforeUnhandledHyperCall:
     case kTaskStoppedAtUnsupportedInstruction:
       gTask->status = kTaskStatusError;
+      gTask->status_on_resume = kTaskStatusError;
       break;
     case kTaskStoppedAtExit:
       gTask->status = kTaskStatusExited;
+      gTask->status_on_resume = kTaskStatusExited;
       break;
 
     default:
@@ -366,6 +375,7 @@ Memory *__remill_error(ArchState *, PC pc, Memory *memory) {
   gTask->pc = pc;
   gTask->location = kTaskStoppedAtError;
   gTask->status = kTaskStatusError;
+  gTask->status_on_resume = kTaskStatusError;
   return memory;
 }
 
