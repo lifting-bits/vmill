@@ -14,6 +14,10 @@
  * limitations under the License.
  */
 
+#if defined(__APPLE__)
+# error "Taking snapshots on macOS is not yet supported."
+#endif
+
 #include <algorithm>
 #include <cinttypes>
 #include <climits>
@@ -28,7 +32,9 @@
 #include <vector>
 
 #include <sys/mman.h>
-#include <sys/personality.h>
+#if defined(__linux__)
+# include <sys/personality.h>
+#endif
 #include <sys/ptrace.h>
 #include <sys/resource.h>
 #include <sys/stat.h>

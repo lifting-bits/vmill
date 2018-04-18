@@ -94,7 +94,12 @@ static Memory *SysSetHostName(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -ENAMETOOLONG);
   }
 
+#ifdef __APPLE__
+  auto ret = sethostname(gHostName, static_cast<int>(len));
+#else
   auto ret = sethostname(gHostName, len);
+#endif
+
   if (!ret) {
     STRACE_SUCCESS(sethostname, "name=%s, len=%zu", gHostName, len);
     return syscall.SetReturn(memory, state, 0);
@@ -110,8 +115,14 @@ static Memory *SysSetHostName(Memory *memory, State *state,
 //static void SetDomainName(const struct utsname &, linux_old_utsname *) {}
 static void SetDomainName(const struct utsname &info,
                           linux_new_utsname *info_compat) {
+#ifdef __APPLE__
+  (void) info;
+  getdomainname(&(info_compat->domainname[0]),
+                static_cast<int>(sizeof(info_compat->domainname)));
+#else
   memcpy(&(info_compat->domainname[0]), &(info.domainname[0]),
          sizeof(info_compat->domainname));
+#endif
 }
 
 // Emulate the `uname` system calls.
@@ -130,7 +141,6 @@ static Memory *SysUname(Memory *memory, State *state,
     STRACE_ERROR(uname, "Couldn't get uname: %s", strerror(err));
     return syscall.SetReturn(memory, state, -err);
   }
-
   linux_new_utsname compat = {};
   memcpy(&(compat.sysname[0]), "Linux", 6);
   memcpy(&(compat.nodename[0]), &(info.nodename[0]), sizeof(compat.nodename));

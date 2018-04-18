@@ -14,21 +14,23 @@
  * limitations under the License.
  */
 
-#if defined(__x86_64__)
-
 #include "vmill/Arch/X86/Util.S"
 
-    .intel_syntax noprefix ;
-    .text
+#if defined(__x86_64__)
 
     .align 16
     .globl SYMBOL(arch_sys_sigreturn);
 SYMBOL(arch_sys_sigreturn):
     .cfi_startproc
+#if defined(__linux__)
     mov eax, 15  // `__NR_rt_sigreturn`.
     syscall
+#elif defined(__APPLE__)
+    ud2;  // TODO(pag): Figure out how to make this syscall.
+#else
+# error "Unsupported platform."
+#endif
     .cfi_endproc
-    .size SYMBOL(arch_sys_sigreturn), .-SYMBOL(arch_sys_sigreturn)
     ud2
 
 #endif  // defined(__x86_64__)

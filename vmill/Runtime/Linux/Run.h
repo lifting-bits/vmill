@@ -31,24 +31,33 @@
 #include <algorithm>
 #include <csignal>
 #include <ctime>
-#include <linux/limits.h>
-#include <linux/net.h>
 #include <dirent.h>
 #include <fcntl.h>
-#include <sys/eventfd.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
-#include <sys/sysinfo.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <sys/utsname.h>
-#include <sys/vfs.h>  // Maybe `sys/statfs.h` on other systems.
 #include <unistd.h>
+
+#if defined(__linux__)
+# include <sys/eventfd.h>
+# include <linux/limits.h>
+# include <linux/net.h>
+# include <sys/sysinfo.h>
+# include <sys/vfs.h>  // Maybe `sys/statfs.h` on other systems.
+#endif  // __linux__
+
+#if defined(__APPLE__)
+static_assert(sizeof(off_t) == 8, "Expected macOS `off_t` to be 64-bits.");
+# define off64_t off_t
+# define lseek64 lseek
+#endif  // __APPLE__
 
 #ifndef ERESTARTSYS
 # define ERESTARTSYS 512
@@ -73,6 +82,10 @@
 #ifndef HOST_NAME_MAX
 # define HOST_NAME_MAX 64
 #endif  // HOST_NAME_MAX
+
+#if !defined(EBADFD) && defined(EBADF)
+# define EBADFD EBADF
+#endif
 
 namespace {
 
@@ -385,6 +398,9 @@ static constexpr unsigned kFutexBlockedForABit = 100;
 // Basically infinity.
 static constexpr unsigned kBlockedForever = ~0U;
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpadded"
+
 // State needed to emulate a Linux thread.
 struct linux_task : public vmill::Task {
  public:
@@ -405,6 +421,8 @@ struct linux_task : public vmill::Task {
   addr_t clear_child_tid;
   addr_t set_child_tid;
 };
+
+#pragma clang diagnostic pop
 
 // Returns a pointer to the currently executing task.
 extern "C" linux_task *__vmill_current(void);

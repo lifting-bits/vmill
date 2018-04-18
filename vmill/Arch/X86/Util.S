@@ -14,15 +14,10 @@
  * limitations under the License.
  */
 
-#define CAT_(a, b) a ## b
-#define CAT(a, b) CAT_(a, b)
+#include "remill/Arch/Assembly.S"
 
-/* Note: Apple mangles C symbol names to have a leading underscore. */
-#ifdef __APPLE__
-# define SYMBOL(x) CAT(_, x)
-#else
-# define SYMBOL(x) x
+#if defined(__x86_64__)
+    .intel_syntax noprefix ;
 #endif
 
-    .intel_syntax noprefix ;
-    .text
+    TEXT_SECTION

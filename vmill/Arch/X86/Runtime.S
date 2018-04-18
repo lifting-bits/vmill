@@ -18,7 +18,7 @@
 
 #include "vmill/Arch/X86/Util.S"
 
-    .text
+    TEXT_SECTION
 
     .extern SYMBOL(__vmill_record_read_fault_8)
     .extern SYMBOL(__vmill_record_read_fault_16)
@@ -48,11 +48,10 @@ SYMBOL(__vmill_mem_ptr):
     /* uint8_t __remill_read_memory_8(vmill::AddressSpace *, addr_t) */
 
 #define MAKE_MEM_READ(i, suffix, cxx_suffix) \
-        .text ; \
-        .extern SYMBOL(_ZN5vmill12AddressSpace7TryReadEm ## cxx_suffix) ; \
+        TEXT_SECTION ; \
+        .extern SYMBOL(_ZN5vmill12AddressSpace7TryRead ## cxx_suffix) ; \
         .p2align 4, 0x90; \
         .globl SYMBOL(__remill_read_memory_ ## suffix) ; \
-        .type SYMBOL(__remill_read_memory_ ## suffix), @function ; \
     SYMBOL(__remill_read_memory_ ## suffix): \
     .Ltmp0_ ## i: \
         .cfi_startproc ; \
@@ -60,7 +59,7 @@ SYMBOL(__vmill_mem_ptr):
         mov rbp, rsp ; \
         mov qword ptr [rip + SYMBOL(__vmill_mem_address)], rsi ; \
         lea rdx, qword ptr [rip + SYMBOL(__vmill_mem_value)] ; \
-        call SYMBOL(_ZN5vmill12AddressSpace7TryReadEm ## cxx_suffix) ; \
+        call SYMBOL(_ZN5vmill12AddressSpace7TryRead ## cxx_suffix) ; \
         test al, al ; \
         jz .Ltmp1_ ## i ; \
         mov rax, qword ptr [rip + SYMBOL(__vmill_mem_value)] ; \
@@ -68,7 +67,6 @@ SYMBOL(__vmill_mem_ptr):
         ret ; \
         .cfi_endproc ; \
     .Ltmp2_ ## i: \
-        .size SYMBOL(__remill_read_memory_ ## suffix),.Ltmp2_ ## i-.Ltmp0_ ## i ; \
         .section .text.slow, "ax" ; \
     .Ltmp1_ ## i: \
         mov rdi, qword ptr [rip + SYMBOL(__vmill_mem_address)] ; \
@@ -77,21 +75,27 @@ SYMBOL(__vmill_mem_ptr):
         pop rbp ; \
         ret ;
 
-MAKE_MEM_READ(0, 8, Ph)
-MAKE_MEM_READ(1, 16, Pt)
-MAKE_MEM_READ(2, 32, Pj)
-MAKE_MEM_READ(3, 64, Pm)
+#if defined(__APPLE__)
+MAKE_MEM_READ(0, 8, EyPh)  // Uses `unsigned long long`.
+MAKE_MEM_READ(1, 16, EyPt)
+MAKE_MEM_READ(2, 32, EyPj)
+MAKE_MEM_READ(3, 64, EyPy)
+#else
+MAKE_MEM_READ(0, 8, EmPh)  // Uses `unsigned long`.
+MAKE_MEM_READ(1, 16, EmPt)
+MAKE_MEM_READ(2, 32, EmPj)
+MAKE_MEM_READ(3, 64, EmPm)
+#endif
 
 #undef MAKE_MEM_READ
 
     /* vmill::AddressSpace *__remill_write_memory_8(vmill::AddressSpace *, addr_t, uint8_t ) */
 
 #define MAKE_MEM_WRITE(i, suffix, cxx_suffix) \
-        .text ; \
+        TEXT_SECTION ; \
         .extern SYMBOL(_ZN5vmill12AddressSpace8TryWriteE ## cxx_suffix) ; \
         .p2align 4, 0x90; \
         .globl SYMBOL(__remill_write_memory_ ## suffix) ; \
-        .type SYMBOL(__remill_write_memory_ ## suffix), @function ; \
     SYMBOL(__remill_write_memory_ ## suffix): \
     .Ltmp0_ ## i: \
         .cfi_startproc ; \
@@ -107,7 +111,6 @@ MAKE_MEM_READ(3, 64, Pm)
         ret ; \
         .cfi_endproc ; \
     .Ltmp2_ ## i: \
-        .size SYMBOL(__remill_write_memory_ ## suffix),.Ltmp2_ ## i-.Ltmp0_ ## i ; \
         .section .text.slow, "ax" ; \
     .Ltmp1_ ## i: \
         mov rdi, qword ptr [rip + SYMBOL(__vmill_mem_address)] ; \
@@ -116,10 +119,17 @@ MAKE_MEM_READ(3, 64, Pm)
         pop rbp ; \
         ret ; \
 
-MAKE_MEM_WRITE(4, 8, mh)
+#if defined(__APPLE__)
+MAKE_MEM_WRITE(4, 8, yh)  // Uses `unsigned long long`.
+MAKE_MEM_WRITE(5, 16, yt)
+MAKE_MEM_WRITE(6, 32, yj)
+MAKE_MEM_WRITE(7, 64, yy)
+#else
+MAKE_MEM_WRITE(4, 8, mh)  // Uses `unsigned long`.
 MAKE_MEM_WRITE(5, 16, mt)
 MAKE_MEM_WRITE(6, 32, mj)
 MAKE_MEM_WRITE(7, 64, mm)
+#endif
 
 #undef MAKE_MEM_WRITE
 

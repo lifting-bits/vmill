@@ -18,7 +18,7 @@
 
 #include "vmill/Arch/X86/Util.S"
 
-    .text
+    TEXT_SECTION
     .extern SYMBOL(__vmill_execute)
 
     // Swap off of the Task-specific stack.
@@ -46,7 +46,6 @@ SYMBOL(__vmill_yield_async):
 
 .Lend0:
     .cfi_endproc
-    .size SYMBOL(__vmill_yield_async),.Lend0-.Lbegin0
 
 
     // Swap onto a Task-specific stack.
@@ -110,6 +109,5 @@ SYMBOL(__vmill_execute_async):
     ret
 .Lend2:
     .cfi_endproc
-    .size SYMBOL(__vmill_execute_async),.Lend2-.Lbegin2
 
 #endif  // defined(__x86_64__)

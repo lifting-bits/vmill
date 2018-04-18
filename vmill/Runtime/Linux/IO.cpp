@@ -312,13 +312,20 @@ static Memory *SysIoctl(Memory *memory, State *state,
   int optional_action = 0;
 
   switch (cmd) {
-    case TCGETS:
+    case 0x5401:  // TCGETS
       if (!tcgetattr(fd, &info)) {
-        kinfo.c_iflag = info.c_iflag;
-        kinfo.c_oflag = info.c_oflag;
-        kinfo.c_cflag = info.c_cflag;
-        kinfo.c_lflag = info.c_lflag;
+        kinfo.c_iflag = static_cast<uint32_t>(info.c_iflag);
+        kinfo.c_oflag = static_cast<uint32_t>(info.c_oflag);
+        kinfo.c_cflag = static_cast<uint32_t>(info.c_cflag);
+        kinfo.c_lflag = static_cast<uint32_t>(info.c_lflag);
+#ifdef __APPLE__
+          // Try to get the line discipline.
+          auto ldisc = 0;
+          (void) ioctl(fd, TIOCGETD, &ldisc);
+          kinfo.c_line = static_cast<uint8_t>(ldisc);
+#else
         kinfo.c_line = info.c_line;
+#endif
 
         memcpy(&(kinfo.c_cc[0]), &(info.c_cc[0]),
                std::min<size_t>(NCCS, kLinuxNumTerminalControlChars));
@@ -337,15 +344,15 @@ static Memory *SysIoctl(Memory *memory, State *state,
         return syscall.SetReturn(memory, state, -err);
       }
 
-    case TCSETS:
+    case 0x5402:  // TCSETS
       optional_action = TCSANOW;
       goto set_attributes;
 
-    case TCSETSW:
+    case 0x5403:  // TCSETSW
       optional_action = TCSADRAIN;
       goto set_attributes;
 
-    case TCSETSF:
+    case 0x5404:  // TCSETSF
       optional_action = TCSAFLUSH;
       goto set_attributes;
 
@@ -355,12 +362,22 @@ static Memory *SysIoctl(Memory *memory, State *state,
         info.c_oflag = kinfo.c_oflag;
         info.c_cflag = kinfo.c_cflag;
         info.c_lflag = kinfo.c_lflag;
+
+#ifndef __APPLE__
         info.c_line = kinfo.c_line;
+#endif
 
         memcpy(&(info.c_cc[0]), &(kinfo.c_cc[0]),
                std::min<size_t>(NCCS, kLinuxNumTerminalControlChars));
 
         if (!tcsetattr(fd, optional_action, &info)) {
+
+#ifdef __APPLE__
+          // Try to set the line discipline.
+          auto ldisc = static_cast<int>(kinfo.c_line);
+          (void) ioctl(fd, TIOCSETD, &ldisc);
+#endif
+
           STRACE_SUCCESS(tcsetattr, "fd=%d, optional_action=%d",
                          fd, optional_action);
           return syscall.SetReturn(memory, state, 0);
@@ -378,7 +395,7 @@ static Memory *SysIoctl(Memory *memory, State *state,
       break;
 
     // Get terminal window size.
-    case TIOCGWINSZ:
+    case 0x5413:  // TIOCGWINSZ
       if (!ioctl(fd, TIOCGWINSZ, &window_size)) {
         if (!TryWriteMemory(memory, argp, window_size)) {
           STRACE_ERROR(
@@ -396,7 +413,7 @@ static Memory *SysIoctl(Memory *memory, State *state,
       }
 
     // Set the terminal window size.
-    case TIOCSWINSZ:
+    case 0x5414:  // TIOCSWINSZ
       if (TryReadMemory(memory, argp, &window_size)) {
         if (!ioctl(fd, TIOCSWINSZ, &window_size)) {
           STRACE_SUCCESS(ioctl_tiocswinsz, "fd=%d", fd);
@@ -434,7 +451,7 @@ static Memory *SysPoll(Memory *memory, State *state,
   getrlimit(RLIMIT_NOFILE, &lim);
   auto max_fds = std::min(lim.rlim_cur, lim.rlim_max);
   if (nfds >= max_fds) {
-    STRACE_ERROR(poll, "nfds=%u is too big (max %lu)", nfds, max_fds);
+    STRACE_ERROR(poll, "nfds=%u is too big (max %" PRIu64 ")", nfds, max_fds);
     return syscall.SetReturn(memory, state, -ENOMEM);
   }
 

@@ -75,7 +75,7 @@ void Tool::ProvideSymbol(const std::string &name, uint64_t pc) {
   if (name != "main") {
     std::stringstream ss;
     ss << "_" << name;
-    name = ss.str();
+    auto apple_name = ss.str();
     provided_symbols[name] = pc;
   }
 #endif
@@ -87,8 +87,8 @@ void Tool::OfferSymbol(const std::string &name, uint64_t pc) {
   if (name != "main") {
     std::stringstream ss;
     ss << "_" << name;
-    name = ss.str();
-    provided_symbols[name] = pc;
+    auto apple_name = ss.str();
+    provided_symbols[apple_name] = pc;
   }
 #endif
 }

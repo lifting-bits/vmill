@@ -14,6 +14,10 @@
  * limitations under the License.
  */
 
+#include <cfenv>
+#include <cfloat>
+#include <cmath>
+
 #include "remill/Arch/Runtime/Operators.h"
 
 size_t NumReadableBytes(Memory *memory, addr_t addr, size_t size) {

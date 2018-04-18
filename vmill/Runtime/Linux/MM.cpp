@@ -33,7 +33,6 @@ static constexpr addr_t kAllocMin = IF_64BIT_ELSE(k4GiB, k1GiB);
 static constexpr addr_t kAllocMax = IF_64BIT_ELSE((1ULL << 47ULL),
                                                   0xf7000000);
 
-
 // Emulate an `brk` system call.
 static Memory *SysBrk(Memory *memory, State *state,
                       const SystemCallABI &syscall) {
@@ -46,6 +45,18 @@ static Memory *SysBrk(Memory *memory, State *state,
   STRACE_ERROR(brk, "addr=%" PRIxADDR ", suppressed", addr);
   return syscall.SetReturn(memory, state, -ENOMEM);
 }
+
+#ifndef MAP_GROWSDOWN
+# define MAP_GROWSDOWN 0x00100
+#endif
+
+#ifndef MAP_GROWSUP
+# define MAP_GROWSUP 0
+#endif
+
+#ifndef MAP_STACK
+# define MAP_STACK 0x20000
+#endif
 
 // Emulate an `mmap` system call.
 static Memory *SysMmap(Memory *memory, State *state,
@@ -84,12 +95,12 @@ static Memory *SysMmap(Memory *memory, State *state,
       return syscall.SetReturn(memory, state, -EBADFD);
 
     } else if (0 > offset || offset % 4096) {  // Not page-aligned.
-      STRACE_ERROR(mmap, "Unaligned offset %ld of fd %d", offset, fd);
+      STRACE_ERROR(mmap, "Unaligned offset %" PRId64 " of fd %d", offset, fd);
       return syscall.SetReturn(memory, state, -EINVAL);
     }
 
     if (offset > (offset + static_cast<ssize_t>(size))) {  // Signed overflow.
-      STRACE_ERROR(mmap, "Signed overflow of offset %ld and size %"
+      STRACE_ERROR(mmap, "Signed overflow of offset %" PRId64 " and size %"
                    PRIxADDR " for fd %d", offset, size, fd);
       return syscall.SetReturn(memory, state, -EOVERFLOW);
     }
@@ -111,6 +122,12 @@ static Memory *SysMmap(Memory *memory, State *state,
   // Unsupported flags.
   if ((MAP_GROWSDOWN & flags)) {
     STRACE_ERROR(mmap, "Unsupported flag: MAP_GROWSDOWN");
+    return syscall.SetReturn(memory, state, -EINVAL);
+  }
+
+  // Unsupported flags.
+  if ((MAP_GROWSUP & flags)) {
+    STRACE_ERROR(mmap, "Unsupported flag: MAP_GROWSUP");
     return syscall.SetReturn(memory, state, -EINVAL);
   }
 
@@ -262,7 +279,7 @@ static Memory *SysMmap(Memory *memory, State *state,
 
   STRACE_SUCCESS(
       mmap, "addr=%" PRIxADDR ", size=%" PRIxADDR ", read=%d, "
-            "write=%d, exec=%d, fd=%d, offset=%ld, return=%" PRIxADDR,
+            "write=%d, exec=%d, fd=%d, offset=%" PRId64 ", return=%" PRIxADDR,
       input_addr, size, can_read, can_write, can_exec, fd, offset, addr);
 
   return syscall.SetReturn(memory, state, addr);

@@ -18,6 +18,9 @@
 #define VMILL_RUNTIME_AARCH64 64
 #define VMILL_RUNTIME
 
+#define _LARGEFILE64_SOURCE
+#define _FILE_OFFSET_BITS 64
+
 #include <algorithm>
 #include <cassert>
 #include <cerrno>
@@ -29,6 +32,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wgnu-alignof-expression"
 
 #include "remill/Arch/Runtime/Intrinsics.h"
 #include "remill/Arch/AArch64/Runtime/State.h"
@@ -42,3 +48,5 @@
 #include "vmill/Runtime/Linux/Run.h"
 #include "vmill/Runtime/Linux/AArch64.cpp"
 #include "vmill/Runtime/Linux/Run.cpp"
+
+#pragma clang diagnostic pop
