@@ -122,7 +122,7 @@ static Memory *SysSetTimeOfDay(Memory *memory, State *state,
 template <typename TimeSpec>
 static Memory *SysClockGetTime(Memory *memory, State *state,
                                const SystemCallABI &syscall) {
-  clockid_t clock_id = 0;
+  clockid_t clock_id = {};  // Might be an `int`, might be an `enum`.
   addr_t tp = 0;
 
   if (!syscall.TryGetArgs(memory, state, &clock_id, &tp)) {
@@ -158,7 +158,7 @@ static Memory *SysClockGetTime(Memory *memory, State *state,
 template <typename TimeSpec>
 static Memory *SysClockGetResolution(Memory *memory, State *state,
                                      const SystemCallABI &syscall) {
-  clockid_t clock_id = 0;
+  clockid_t clock_id = {};
   addr_t res = 0;
 
   if (!syscall.TryGetArgs(memory, state, &clock_id, &res)) {

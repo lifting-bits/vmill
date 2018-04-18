@@ -125,22 +125,23 @@ install(
     LIBRARY DESTINATION lib
 )
 
-
-set(VMILL_SNAPSHOT vmill-snapshot-${REMILL_LLVM_VERSION})
-
-add_executable(${VMILL_SNAPSHOT}
-    Snapshot.cpp
-    vmill/Arch/X86/Snapshot.cpp
-    vmill/Arch/AArch64/Snapshot.cpp
-)
-
-target_link_libraries(${VMILL_SNAPSHOT} PRIVATE vmill ${PROJECT_LIBRARIES})
-target_include_directories(${VMILL_SNAPSHOT} SYSTEM PUBLIC ${PROJECT_INCLUDEDIRECTORIES})
-target_compile_definitions(${VMILL_SNAPSHOT} PUBLIC ${PROJECT_DEFINITIONS})
-set_target_properties(${VMILL_SNAPSHOT} PROPERTIES COMPILE_FLAGS ${PROJECT_CXXFLAGS})
-
-install(
-    TARGETS ${VMILL_SNAPSHOT}
-    RUNTIME DESTINATION bin
-    LIBRARY DESTINATION lib
-)
+if(NOT APPLE)
+    set(VMILL_SNAPSHOT vmill-snapshot-${REMILL_LLVM_VERSION})
+    
+    add_executable(${VMILL_SNAPSHOT}
+        Snapshot.cpp
+        vmill/Arch/X86/Snapshot.cpp
+        vmill/Arch/AArch64/Snapshot.cpp
+    )
+    
+    target_link_libraries(${VMILL_SNAPSHOT} PRIVATE vmill ${PROJECT_LIBRARIES})
+    target_include_directories(${VMILL_SNAPSHOT} SYSTEM PUBLIC ${PROJECT_INCLUDEDIRECTORIES})
+    target_compile_definitions(${VMILL_SNAPSHOT} PUBLIC ${PROJECT_DEFINITIONS})
+    set_target_properties(${VMILL_SNAPSHOT} PROPERTIES COMPILE_FLAGS ${PROJECT_CXXFLAGS})
+    
+    install(
+        TARGETS ${VMILL_SNAPSHOT}
+        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION lib
+    )
+ endif()

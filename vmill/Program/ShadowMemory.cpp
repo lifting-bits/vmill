@@ -46,6 +46,14 @@ static struct sigaction gPrevSignalHandler = {};
 
 //static SignalFuncType *gPrevSignalHandler = nullptr;
 
+#if defined(sa_handler)
+# define SIGNAL_HANDLER_FIELD sa_handler
+#elif defined(sa_restorer)
+# define SIGNAL_HANDLER_FIELD sa_restorer
+#else
+# error "Unsupported platform"
+#endif
+
 static void CatchFault(int sig, siginfo_t *si, void *context) {
   SaveErrno save_errno;
 
@@ -58,8 +66,8 @@ static void CatchFault(int sig, siginfo_t *si, void *context) {
 
   if (gPrevSignalHandler.sa_sigaction) {
     gPrevSignalHandler.sa_sigaction(sig, si, context);
-    if (gPrevSignalHandler.sa_restorer) {
-      return;  // This isn't exactly right.
+    if (gPrevSignalHandler.SIGNAL_HANDLER_FIELD) {
+      return;  // TODO(pag): This isn't exactly right.
     }
   }
   abort();
@@ -92,7 +100,9 @@ std::unique_ptr<ShadowMemory> ShadowMemory::Get(
   struct sigaction act;
   act.sa_flags = SA_SIGINFO;
   act.sa_sigaction = CatchFault;
-  act.sa_restorer = arch_sys_sigreturn;
+  act.SIGNAL_HANDLER_FIELD = \
+      reinterpret_cast<decltype(act.SIGNAL_HANDLER_FIELD)>(
+          arch_sys_sigreturn);
   sigfillset(&(act.sa_mask));
 
   if (-1 == ::sigaction(SIGSEGV, &act, &gPrevSignalHandler)) {

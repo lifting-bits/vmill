@@ -124,13 +124,14 @@ static Memory *SysLseek(Memory *memory, State *state,
   auto new_offset64 = lseek64(fd, offset64, whence);
   if (static_cast<off64_t>(-1) == new_offset64) {
     auto err = errno;
-    STRACE_ERROR(lseek, "fd=%d, offset=%ld, whence=%d: %s",
+    STRACE_ERROR(lseek, "fd=%d, offset=%" PRId64 ", whence=%d: %s",
                  fd, offset64, whence, strerror(err));
     return syscall.SetReturn(memory, state, -err);
   }
 
-  STRACE_SUCCESS(lseek, "fd=%d, offset=%ld, whence=%d, new offset=%ld",
-                 fd, offset64, whence, new_offset64);
+  STRACE_SUCCESS(
+      lseek, "fd=%d, offset=%" PRId64 ", whence=%d, new offset=%" PRId64,
+      fd, offset64, whence, new_offset64);
   return syscall.SetReturn(memory, state, new_offset64);
 }
 
@@ -157,7 +158,7 @@ static Memory *SysLlseek(Memory *memory, State *state,
   auto new_offset64 = lseek64(fd, offset64, whence);
   if (static_cast<off64_t>(-1) == new_offset64) {
     auto err = errno;
-    STRACE_ERROR(llseek, "fd=%d, offset=%ld, whence=%d: %s",
+    STRACE_ERROR(llseek, "fd=%d, offset=%" PRId64", whence=%d: %s",
                  fd, offset64, whence, strerror(err));
     return syscall.SetReturn(memory, state, -err);
   }
@@ -167,8 +168,9 @@ static Memory *SysLlseek(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  STRACE_SUCCESS(llseek, "fd=%d, offset=%ld, whence=%d, new offset=%ld",
-                 fd, offset64, whence, new_offset64);
+  STRACE_SUCCESS(
+      llseek, "fd=%d, offset=%" PRId64", whence=%d, new offset=%" PRId64,
+      fd, offset64, whence, new_offset64);
   return syscall.SetReturn(memory, state, 0);
 }
 
@@ -189,20 +191,31 @@ template <typename T>
 void CopyStat(const struct stat &info, T *info32) {
   SetInodeNumber(info, info32);
 
-  info32->st_dev = info.st_dev;
-  info32->st_mode = info.st_mode;
-  info32->st_nlink = static_cast<uint32_t>(info.st_nlink);
-  info32->st_uid = info.st_uid;
-  info32->st_gid = info.st_gid;
-  info32->st_rdev = info.st_rdev;
-  info32->st_size = info.st_size;
+  info32->st_dev = static_cast<decltype(info32->st_dev)>(info.st_dev);
+  info32->st_mode = static_cast<decltype(info32->st_mode)>(info.st_mode);
+  info32->st_nlink = static_cast<decltype(info32->st_nlink)>(info.st_nlink);
+  info32->st_uid = static_cast<decltype(info32->st_uid)>(info.st_uid);
+  info32->st_gid = static_cast<decltype(info32->st_gid)>(info.st_gid);
+  info32->st_rdev = static_cast<decltype(info32->st_rdev)>(info.st_rdev);
+  info32->st_size = static_cast<decltype(info32->st_size)>(info.st_size);
   info32->st_blksize = static_cast<decltype(info32->st_blksize)>(
       info.st_blksize);
-  info32->st_blocks = info.st_blocks;
+  info32->st_blocks = static_cast<decltype(info32->st_blocks)>(info.st_blocks);
 
   using sec_t = decltype(info32->st_ctim.tv_sec);
   using nsec_t = decltype(info32->st_ctim.tv_nsec);
 
+#if defined(__APPLE__)
+  info32->st_atim.tv_sec = static_cast<sec_t>(info.st_atimespec.tv_sec);
+  info32->st_atim.tv_nsec = static_cast<nsec_t>(info.st_atimespec.tv_nsec);
+
+  info32->st_mtim.tv_sec = static_cast<sec_t>(info.st_mtimespec.tv_sec);
+  info32->st_mtim.tv_nsec = static_cast<nsec_t>(info.st_mtimespec.tv_nsec);
+
+  info32->st_ctim.tv_sec = static_cast<sec_t>(info.st_ctimespec.tv_sec);
+  info32->st_ctim.tv_nsec = static_cast<nsec_t>(info.st_ctimespec.tv_nsec);
+
+#else
   info32->st_atim.tv_sec = static_cast<sec_t>(info.st_atim.tv_sec);
   info32->st_atim.tv_nsec = static_cast<nsec_t>(info.st_atim.tv_nsec);
 
@@ -211,6 +224,7 @@ void CopyStat(const struct stat &info, T *info32) {
 
   info32->st_ctim.tv_sec = static_cast<sec_t>(info.st_ctim.tv_sec);
   info32->st_ctim.tv_nsec = static_cast<nsec_t>(info.st_ctim.tv_nsec);
+#endif
 }
 
 // Emulate a `stat` system call.
@@ -276,10 +290,16 @@ static char *GetBasePathAt(int fd) {
     return nullptr;
   }
 
-#ifndef __linux__
-# error "Cannot access `/proc/` file system on non-Linux machines."
+#if defined(F_GETPATH)
+# define CAN_GET_FD_PATH
+  if (fcntl(fd, F_GETPATH, gPathAt) >= 0) {
+    gPathAt[PATH_MAX] = '\0';
+    return gPathAt;
+  }
 #endif
 
+#if defined(__linux__)
+# define CAN_GET_FD_PATH
   // TODO(pag): This is linux specific.
   char fd_path[64] = {};
   sprintf(&(fd_path[0]), "/proc/self/fd/%d", fd);
@@ -290,6 +310,12 @@ static char *GetBasePathAt(int fd) {
     return nullptr;
   }
   gPathAt[ret] = '\0';
+#endif
+
+#if !defined(CAN_GET_FD_PATH)
+# error "Unable to determine paths of FDs on this platform."
+#endif
+
   return gPathAt;
 }
 
@@ -711,7 +737,11 @@ static Memory *SysGetDirEntries64(Memory *memory, State *state,
     }
 
     entry.d_ino = static_cast<decltype(entry.d_ino)>(our_entry->d_ino);
+#ifdef __APPLE__
+    entry.d_off = static_cast<decltype(entry.d_off)>(our_entry->d_seekoff);
+#else
     entry.d_off = static_cast<decltype(entry.d_off)>(our_entry->d_off);
+#endif
     entry.d_reclen = static_cast<uint16_t>(to_write);
     entry.d_type = static_cast<decltype(entry.d_type)>(our_entry->d_type);
 
@@ -925,6 +955,10 @@ static Memory *SysEventFd(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
+#ifdef __APPLE__
+  STRACE_ERROR(eventfd, "unsupported on macOS hosts");
+  return syscall.SetReturn(memory, state, -ENOSYS);
+#else
   auto ret = eventfd(count, 0);
   if (-1 == ret) {
     auto err = errno;
@@ -934,6 +968,7 @@ static Memory *SysEventFd(Memory *memory, State *state,
     STRACE_SUCCESS(eventfd, "count=%x, fd=%d", count, ret);
     return syscall.SetReturn(memory, state, ret);
   }
+#endif
 }
 
 static Memory *SysEventFd2(Memory *memory, State *state,
@@ -945,6 +980,10 @@ static Memory *SysEventFd2(Memory *memory, State *state,
     STRACE_ERROR(eventfd2, "Couldn't get args");
     return syscall.SetReturn(memory, state, -EFAULT);
   }
+#ifdef __APPLE__
+  STRACE_ERROR(eventfd2, "unsupported on macOS hosts");
+  return syscall.SetReturn(memory, state, -ENOSYS);
+#else
   auto ret = eventfd(count, flags);
   if (-1 == ret) {
     auto err = errno;
@@ -955,6 +994,7 @@ static Memory *SysEventFd2(Memory *memory, State *state,
     STRACE_SUCCESS(eventfd2, "count=%x, flags=%x, fd=%d", count, flags, ret);
     return syscall.SetReturn(memory, state, ret);
   }
+#endif
 }
 
 // Emulate a `mkdir` system call.

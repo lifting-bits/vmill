@@ -163,7 +163,32 @@ static Memory *DoSysAccept(Memory *memory, State *state,
   }
 
   auto orig_addrlen = addrlen;
-  auto ret_fd = accept4(fd, &info, &addrlen, flags);
+  int ret_fd = -1;
+  if (!flags) {
+    ret_fd = accept(fd, &info, &addrlen);
+  } else {
+#ifdef __APPLE__
+# define LINUX_SOCK_CLOEXEC 02000000
+# define LINUX_SOCK_NONBLOCK 00004000
+    ret_fd = accept(fd, &info, &addrlen);
+    if (-1 != ret_fd) {
+      int fd_flags = 0;
+      if (0 != (LINUX_SOCK_CLOEXEC & flags)) {
+        fd_flags |= O_CLOEXEC;
+      }
+      if (0 != (LINUX_SOCK_NONBLOCK & flags)) {
+        fd_flags |= O_NONBLOCK;
+      }
+      if (-1 == fcntl(ret_fd, F_SETFL, fd_flags)) {
+        auto saved_errno = errno;
+        (void) close(ret_fd);
+        errno = saved_errno;
+      }
+    }
+#else
+    ret_fd = accept4(fd, &info, &addrlen, flags);
+#endif
+  }
 
   if (-1 == ret_fd) {
     auto err = errno;
@@ -767,7 +792,7 @@ struct MessageHeader final : public msghdr {
         return EFAULT;
       }
 
-      msg_iovlen = compat.msg_iovlen;
+      msg_iovlen = static_cast<decltype(msg_iovlen)>(compat.msg_iovlen);
       orig_iov = new IOVecT[msg_iovlen];
       CopyFromMemory(memory, orig_iov, compat.msg_iov, total_len);
 
@@ -810,11 +835,12 @@ struct MessageHeader final : public msghdr {
           return ret;
         }
       }
-      if (!CanWriteMemory(memory, compat.msg_iov, msg_iovlen)) {
+      if (!CanWriteMemory(memory, compat.msg_iov,
+                          static_cast<size_t>(msg_iovlen))) {
         return EFAULT;
       }
 
-      auto total_len = msg_iovlen * sizeof(IOVecT);
+      size_t total_len = static_cast<size_t>(msg_iovlen) * sizeof(IOVecT);
       CopyToMemory(memory, compat.msg_iov, orig_iov, total_len);
     }
 
@@ -1103,51 +1129,51 @@ static Memory *SysSocketCall(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  if (0 > call || call > SYS_SENDMMSG) {
+  if (0 > call || call > 20 /* SYS_SENDMMSG */) {
     return syscall.SetReturn(memory, state, -EINVAL);
   }
 
   SocketCallABI<AddrT> abi(syscall, args);
   switch (call) {
-    case SYS_SOCKET:
+    case 1: // SYS_SOCKET
       return SysSocket(memory, state, abi);
-    case SYS_BIND:
+    case 2: // SYS_BIND
       return SysBind(memory, state, abi);
-    case SYS_CONNECT:
+    case 3:  // SYS_CONNECT
       return SysConnect(memory, state, abi);
-    case SYS_LISTEN:
+    case 4: // SYS_LISTEN
       return SysListen(memory, state, abi);
-    case SYS_ACCEPT:
+    case 5:  // SYS_ACCEPT
       return SysAccept(memory, state, abi);
-    case SYS_GETSOCKNAME:
+    case 6:  // SYS_GETSOCKNAME
       return SysGetSockName(memory, state, abi);
-    case SYS_GETPEERNAME:
+    case 7:  // SYS_GETPEERNAME
       return SysGetPeerName(memory, state, abi);
-    case SYS_SOCKETPAIR:
+    case 8:  // SYS_SOCKETPAIR
       return SysSocketPair(memory, state, abi);
-    case SYS_SEND:
+    case 9:  // SYS_SEND
       return SysSend(memory, state, abi);
-    case SYS_RECV:
+    case 10:  // SYS_RECV
       return SysRecv(memory, state, abi);
-    case SYS_SENDTO:
+    case 11:  // SYS_SENDTO
       return SysSendTo(memory, state, abi);
-    case SYS_RECVFROM:
+    case 12:  // SYS_RECVFROM
       return SysRecvFrom(memory, state, abi);
-    case SYS_SHUTDOWN:
+    case 13:  // SYS_SHUTDOWN
       return SysShutdown(memory, state, abi);
-    case SYS_SETSOCKOPT:
+    case 14:  // SYS_SETSOCKOPT
       return SysSetSockOpt(memory, state, abi);
-    case SYS_GETSOCKOPT:
+    case 15:  // SYS_GETSOCKOPT
       return SysGetSockOpt(memory, state, abi);
-    case SYS_SENDMSG:
+    case 16:  // SYS_SENDMSG
       return SysSendMsg<linux32_msghdr, linux32_iovec>(memory, state, abi);
-    case SYS_RECVMSG:
+    case 17:  // SYS_RECVMSG
       return SysRecvMsg<linux32_msghdr, linux32_iovec>(memory, state, abi);
-    case SYS_ACCEPT4:
+    case 18:  // SYS_ACCEPT4
       return SysAccept4(memory, state, abi);
 
-    case SYS_RECVMMSG:
-    case SYS_SENDMMSG:
+    case 19:  // SYS_RECVMMSG
+    case 20:  // SYS_SENDMMSG
     default:
       return abi.SetReturn(
           memory, state,

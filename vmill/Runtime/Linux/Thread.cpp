@@ -19,8 +19,41 @@
 #endif
 
 #include <sched.h>
+
+#ifdef __linux__
 #include <asm/prctl.h>
 #include <sys/prctl.h>
+#endif
+
+#ifndef __linux__
+# define CLONE_VM 0x100
+# define CLONE_FS 0x200
+# define CLONE_FILES 0x400
+# define CLONE_SIGHAND 0x800
+# define CLONE_PTRACE 0x2000
+# define CLONE_VFORK 0x4000
+# define CLONE_PARENT 0x8000
+# define CLONE_THREAD 0x10000
+# define CLONE_NEWNS 0x20000
+# define CLONE_SYSVSEM 0x40000
+# define CLONE_SETTLS 0x80000
+# define CLONE_PARENT_SETTID 0x100000
+# define CLONE_CHILD_CLEARTID 0x200000
+# define CLONE_DETACHED 0x400000
+# define CLONE_UNTRACED 0x800000
+# define CLONE_CHILD_SETTID 0x1000000
+# define CLONE_NEWUTS 0x4000000
+# define CLONE_NEWIPC 0x8000000
+# define CLONE_NEWUSER 0x10000000
+# define CLONE_NEWPID 0x20000000
+# define CLONE_NEWNET 0x40000000
+# define CLONE_IO 0x80000000
+
+# define ARCH_SET_GS 0x1001
+# define ARCH_SET_FS 0x1002
+# define ARCH_GET_FS 0x1003
+# define ARCH_GET_GS 0x1004
+#endif
 
 #ifndef CLONE_NEWCGROUP
 # define CLONE_NEWCGROUP 0
