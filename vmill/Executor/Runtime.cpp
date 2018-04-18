@@ -167,7 +167,7 @@ uint64_t __vmill_find_unmapped_address(
 
 __attribute__((noinline))
 void vmill_break_on_fault(Task *task) {
-  task->memory->LogMaps(LOG(ERROR));
+//  task->memory->LogMaps(LOG(ERROR));
   asm volatile ("nop" : :"m"(*task) : "memory");
 }
 

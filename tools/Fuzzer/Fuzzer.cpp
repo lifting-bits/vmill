@@ -114,6 +114,16 @@ class FuzzerTool : public Tool {
     gTakenEdgeCount.clear();
     gNotTakenEdgeCount.clear();
     gFdToFuzz = -1;
+
+    if (FLAGS_path_to_fuzz == "/dev/stdin") {
+      gFdToFuzz = STDIN_FILENO;
+
+    } else if (FLAGS_path_to_fuzz == "/dev/stdout") {
+      gFdToFuzz = STDOUT_FILENO;
+
+    } else if (FLAGS_path_to_fuzz == "/dev/stderr") {
+      gFdToFuzz = STDERR_FILENO;
+    }
   }
 
   void TearDown(void) final {

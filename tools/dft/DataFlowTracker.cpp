@@ -16,7 +16,7 @@
 
 #include "DataFlowTracker.h"
 
-#include "tools/taint/TaintTracker.h"
+#include "tools/TaintTracker/TaintTracker.h"
 
 #include "vmill/Program/ShadowMemory.h"
 #include "vmill/Util/Compiler.h"
