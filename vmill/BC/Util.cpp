@@ -103,7 +103,7 @@ static llvm::GlobalVariable *DeclareVarInModule(llvm::GlobalVariable *var,
 
   dest_var->copyAttributesFrom(var);
 
-  if (var->hasInitializer()) {
+  if (var->hasInitializer() && var->hasLocalLinkage()) {
     auto initializer = var->getInitializer();
 #if LLVM_VERSION_NUMBER > LLVM_VERSION(3, 6)
     CHECK(!initializer->needsRelocation())
@@ -164,19 +164,29 @@ void MoveFunctionIntoModule(llvm::Function *func,
 
       // Substitute globals in the operands.
       for (auto &op : inst.operands()) {
-        auto used_val = op.get();
+        auto old_val = op.get();
+        auto used_val = old_val->stripPointerCasts();
         auto used_func = llvm::dyn_cast<llvm::Function>(used_val);
         auto used_var = llvm::dyn_cast<llvm::GlobalVariable>(used_val);
+        llvm::Constant *new_val = nullptr;
         if (used_func) {
-          op.set(DeclareFunctionInModule(used_func, dest_module));
+          new_val = DeclareFunctionInModule(used_func, dest_module);
 
         } else if (used_var) {
-          op.set(DeclareVarInModule(used_var, dest_module));
+          new_val = DeclareVarInModule(used_var, dest_module);
 
         } else {
           CHECK(!llvm::isa<llvm::GlobalValue>(used_val))
               << "Cannot move global value " << used_val->getName().str()
               << " into destination module.";
+        }
+
+        if (new_val) {
+          if (old_val->getType() != new_val->getType()) {
+            op.set(llvm::ConstantExpr::getBitCast(new_val, old_val->getType()));
+          } else {
+            op.set(new_val);
+          }
         }
       }
     }

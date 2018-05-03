@@ -66,7 +66,7 @@ int main(int argc, char **argv) {
   google::InitGoogleLogging(argv[0]);
   google::SetUsageMessage(ss.str());
   google::ParseCommandLineFlags(&argc, &argv, true);
-
+  FLAGS_logtostderr = true;
   CHECK(0 < FLAGS_max_num_execs)
       << "Must specific a positive value for `--max_num_execs`.";
 

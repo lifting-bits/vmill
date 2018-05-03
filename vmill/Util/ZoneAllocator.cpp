@@ -46,8 +46,8 @@ ZoneAllocation ZoneAllocator::Allocate(size_t size) {
       auto diff = alloc.size - size;
       if (diff > kPageSize) {
         LOG(INFO)
-            << "Splitting previously freed " << std::hex << alloc.size
-            << "-byte allocation for a " << size << "-byte allocation"
+            << "Splitting previously freed 0x" << std::hex << alloc.size
+            << "-byte allocation for a 0x" << size << "-byte allocation"
             << std::dec;
 
         ZoneAllocation split = {alloc.base, diff};
@@ -57,8 +57,8 @@ ZoneAllocation ZoneAllocator::Allocate(size_t size) {
         alloc.size = size;
       } else {
         LOG(INFO)
-            << "Re-using a previously freed " << std::hex << alloc.size
-            << "-byte allocation for a " << size << "-byte allocation"
+            << "Re-using a previously freed 0x" << std::hex << alloc.size
+            << "-byte allocation for a 0x" << size << "-byte allocation"
             << std::dec;
       }
     }

@@ -17,6 +17,27 @@
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wpadded"
 
+extern "C" {
+
+// Debug registers.
+uint64_t gDR0;
+uint64_t gDR1;
+uint64_t gDR2;
+uint64_t gDR3;
+uint64_t gDR4;
+uint64_t gDR5;
+uint64_t gDR6;
+uint64_t gDR7;
+
+// Control regs.
+CR0Reg gCR0;
+CR1Reg gCR1;
+CR2Reg gCR2;
+CR3Reg gCR3;
+CR4Reg gCR4;
+
+}  // extern C
+
 class X86BaseSystemCall : public SystemCallABI {
  public:
   virtual ~X86BaseSystemCall(void) {}
@@ -150,19 +171,26 @@ Memory *__remill_async_hyper_call(
 
   switch (state.hyper_call) {
     case AsyncHyperCall::kX86SysEnter: {
-      STRACE_ERROR(sync_hyper_call, "kX86SysEnter");
+      STRACE_ERROR(async_hyper_call, "kX86SysEnter");
       break;
     }
 
     case AsyncHyperCall::kX86IntN: {
-      STRACE_ERROR(sync_hyper_call, "kX86IntN vector=0x%x",
+      STRACE_ERROR(async_hyper_call, "kX86IntN vector=0x%x",
                    state.hyper_call_vector);
       break;
     }
 
     case AsyncHyperCall::kX86SysCall: {
-      STRACE_ERROR(sync_hyper_call, "kX86SysCall");
+      STRACE_ERROR(async_hyper_call, "kX86SysCall");
       break;
+    }
+
+    case AsyncHyperCall::kX86IRet: {
+      STRACE_SUCCESS(async_hyper_call, "kX86IRet");
+      __vmill_set_location(
+          ret_addr, vmill::kTaskStoppedAtReturnTarget);
+      return memory;
     }
 
     default:
@@ -180,6 +208,10 @@ Memory *__remill_sync_hyper_call(
   auto task = __vmill_current();
 
   switch (call) {
+    case SyncHyperCall::kAssertPrivileged:
+      STRACE_SUCCESS(sync_hyper_call, "kAssertPrivileged pc=%" PRIxADDR,
+                     state.gpr.rip.aword);
+      break;
     case SyncHyperCall::kX86SetSegmentES:
       STRACE_ERROR(sync_hyper_call, "kX86SetSegmentES index=%u rpi=%u ti=%u",
                    state.seg.es.index, state.seg.es.rpi, state.seg.es.ti);
@@ -203,7 +235,6 @@ Memory *__remill_sync_hyper_call(
                    state.seg.fs.index, state.seg.fs.rpi, state.seg.fs.ti);
       break;
 
-#if defined(__x86_64__) || defined(__i386__) || defined(_M_X86)
     case SyncHyperCall::kX86CPUID: {
       auto eax = state.gpr.rax.dword;
       auto ecx = state.gpr.rcx.dword;
@@ -211,7 +242,7 @@ Memory *__remill_sync_hyper_call(
       state.gpr.rbx.aword = 0;
       state.gpr.rcx.aword = 0;
       state.gpr.rdx.aword = 0;
-      STRACE_ERROR(
+      STRACE_SUCCESS(
           sync_hyper_call, "kX86CPUID eax=%x ecx=%x -> eax=0 ebx=0 ecx=0 edx=0",
           eax, ecx);
       break;
@@ -220,11 +251,13 @@ Memory *__remill_sync_hyper_call(
     case SyncHyperCall::kX86ReadTSC:
       state.gpr.rax.aword = 0;
       state.gpr.rdx.aword = 0;
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X86)
       asm volatile(
           "rdtsc"
           : "=a"(state.gpr.rax.dword),
             "=d"(state.gpr.rdx.dword)
       );
+#endif  // defined(__x86_64__) || defined(__i386__) || defined(_M_X86)
       STRACE_SUCCESS(sync_hyper_call, "kX86ReadTSC eax=%x edx=%x",
                      state.gpr.rax.dword, state.gpr.rdx.dword);
       break;
@@ -233,15 +266,43 @@ Memory *__remill_sync_hyper_call(
       state.gpr.rax.aword = 0;
       state.gpr.rcx.aword = 0;
       state.gpr.rdx.aword = 0;
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X86)
       asm volatile(
           "rdtscp"
           : "=a"(state.gpr.rax.dword),
             "=c"(state.gpr.rcx.dword),
             "=d"(state.gpr.rdx.dword)
       );
+#endif  // defined(__x86_64__) || defined(__i386__) || defined(_M_X86)
       STRACE_SUCCESS(sync_hyper_call, "kX86ReadTSCP eax=%x ecx=%x edx=%x",
                      state.gpr.rax.dword, state.gpr.rcx.dword,
                      state.gpr.rdx.dword);
+      break;
+
+    case SyncHyperCall::kX86LoadGlobalDescriptorTable:
+      STRACE_ERROR(
+          sync_hyper_call,
+          "kX86LoadGlobalDescriptorTable pc=%" PRIxADDR " table=%" PRIxADDR,
+          state.gpr.rip.aword, static_cast<addr_t>(state.addr_to_load));
+      break;
+
+    case SyncHyperCall::kX86SetDebugReg:
+      STRACE_ERROR(sync_hyper_call, "kX86SetDebugReg pc=%" PRIxADDR,
+                   state.gpr.rip.aword);
+      break;
+
+    case SyncHyperCall::kAMD64SetDebugReg:
+      STRACE_ERROR(sync_hyper_call, "kAMD64SetDebugReg pc=%" PRIxADDR,
+                   state.gpr.rip.aword);
+      break;
+
+    case SyncHyperCall::kX86SetControlReg:
+      STRACE_ERROR(sync_hyper_call, "kX86SetControlReg pc=%" PRIxADDR,
+                   state.gpr.rip.aword);
+      break;
+    case SyncHyperCall::kAMD64SetControlReg:
+      STRACE_ERROR(sync_hyper_call, "kAMD64SetControlReg pc=%" PRIxADDR,
+                   state.gpr.rip.aword);
       break;
 
     case SyncHyperCall::kX86EmulateInstruction:
@@ -251,15 +312,13 @@ Memory *__remill_sync_hyper_call(
       __vmill_set_location(state.gpr.rip.aword,
                            vmill::kTaskStoppedAtUnsupportedInstruction);
       __vmill_yield(task);
-      __builtin_unreachable();
+      abort();
       break;
     }
 
-#endif  // defined(__x86_64__) || defined(__i386__) || defined(_M_X86)
-
     default:
       STRACE_ERROR(sync_hyper_call, "%u", call);
-      __builtin_trap();
+      abort();
       break;
   }
 

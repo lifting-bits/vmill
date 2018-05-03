@@ -17,6 +17,27 @@
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wpadded"
 
+extern "C" {
+
+// Debug registers.
+uint64_t gDR0;
+uint64_t gDR1;
+uint64_t gDR2;
+uint64_t gDR3;
+uint64_t gDR4;
+uint64_t gDR5;
+uint64_t gDR6;
+uint64_t gDR7;
+
+// Control regs.
+CR0Reg gCR0;
+CR1Reg gCR1;
+CR2Reg gCR2;
+CR3Reg gCR3;
+CR4Reg gCR4;
+
+}  // extern C
+
 class X86BaseSystemCall : public SystemCallABI {
  public:
   virtual ~X86BaseSystemCall(void) {}
@@ -340,7 +361,7 @@ Memory *__remill_sync_hyper_call(
       __vmill_set_location(state.gpr.rip.aword,
                            vmill::kTaskStoppedAtUnsupportedInstruction);
       __vmill_yield(task);
-      __builtin_unreachable();
+      abort();
       break;
     }
 
