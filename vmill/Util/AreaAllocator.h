@@ -28,12 +28,17 @@ enum AreaAllocationPerms {
 };
 
 enum AreaPreferences : uint64_t {
-  kAreaCodeCacheCode    = 0x80000000ULL,  // 2 GiB.
-  kAreaCodeCacheData    = 0xC0000000ULL,  // 3 GiB.
-  kAreaCodeCacheIndex   = 0x10000000000ULL,
-  kAreaAddressSpace     = 0x20000000000ULL,
-  kAreaCoroutineStacks  = 0x30000000000ULL,
-  kAreaRuntimeHeap      = 0x40000000000ULL,
+#ifdef __APPLE__
+  kAreaBase = 0x0000000100000000ULL,
+#else
+  kAreaBase = 0ULL,
+#endif
+  kAreaCodeCacheCode    = 0x80000000ULL + kAreaBase,  // 2 GiB.
+  kAreaCodeCacheData    = 0xC0000000ULL + kAreaBase,  // 3 GiB.
+  kAreaCodeCacheIndex   = 0x10000000000ULL + kAreaBase,
+  kAreaAddressSpace     = 0x20000000000ULL + kAreaBase,
+  kAreaCoroutineStacks  = 0x30000000000ULL + kAreaBase,
+  kAreaRuntimeHeap      = 0x40000000000ULL + kAreaBase,
 };
 
 enum : size_t {

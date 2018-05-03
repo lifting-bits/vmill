@@ -36,7 +36,7 @@
 #include <cstring>
 
 #pragma clang diagnostic push
-#pragma clang diagnostic disabled "-Wgnu-alignof-expression"
+#pragma clang diagnostic ignored "-Wgnu-alignof-expression"
 
 #include "remill/Arch/Runtime/Intrinsics.h"
 #include "remill/Arch/X86/Runtime/State.h"

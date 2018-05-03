@@ -14,9 +14,6 @@
  * limitations under the License.
  */
 
-namespace {
-struct linux_task;
-}  // namespace
 extern "C" {
 
 struct RegTraceEntry {
@@ -37,9 +34,6 @@ enum : size_t {
 
 size_t __vmill_x86_reg_trace_entry = 0;
 RegTraceEntry __vmill_x86_reg_trace_table[kNumEntries];
-
-extern "C" void vmill_break_on_fault(linux_task *task);
-extern "C" struct linux_task *__vmill_current(void);
 
 Memory *__vmill_breakpoint(State *state, vmill::PC pc, Memory *memory) {
   auto index = __vmill_x86_reg_trace_entry++ % kNumEntries;

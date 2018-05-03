@@ -220,10 +220,10 @@ static void LoadPageRangeFromFile(AddressSpace *addr_space,
       << ") does not exist.";
 
   auto range_size = static_cast<uint64_t>(range.limit() - range.base());
-  CHECK(range_size == remill::FileSize(path))
+  CHECK(range_size <= remill::FileSize(path))
       << "File " << path << " with the data of the page range [" << std::hex
       << range.base() << ", " << std::hex << range.limit()
-      << ") is not the right size.";
+      << ") is too small.";
 
   LOG(INFO)
       << "Loading file " << path << " into range [" << std::hex << range.base()

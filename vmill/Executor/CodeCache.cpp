@@ -303,8 +303,22 @@ llvm::JITSymbol CodeCacheImpl::findSymbol(const std::string &name) {
     if (addr) {
       resolved_addr = addr;
     } else {
+#ifdef __APPLE__
+      auto uname = '_' + name;
+      addr = llvm::RTDyldMemoryManager::getSymbolAddressInProcess(uname);
+      resolved_addr = tool->FindSymbolForLinking(uname, addr);
+      if (!resolved_addr) {
+        if (addr) {
+          resolved_addr = addr;
+        } else {
+          LOG(ERROR)
+              << "Could not locate address of symbol " << name;
+        }
+      }
+#else
       LOG(ERROR)
           << "Could not locate address of symbol " << name;
+#endif
     }
   }
   return llvm::JITSymbol(resolved_addr, llvm::JITSymbolFlags::None);
@@ -536,6 +550,11 @@ LiftedFunction *CodeCacheImpl::Lookup(TraceId trace_id) const {
 uintptr_t CodeCacheImpl::Lookup(const char *symbol) {
   std::string name(symbol);
   llvm::JITSymbol sym = findSymbolInLogicalDylib(name);
+#ifdef __APPLE__
+  if (!sym) {
+    sym = findSymbolInLogicalDylib('_' + name);
+  }
+#endif
   if (!sym) {
     sym = findSymbol(name);
   }
