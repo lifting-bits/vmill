@@ -445,12 +445,16 @@ void LifterImpl::LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
     ss << std::hex << pc_uint << "_" << hash_uint;
     auto name = ss.str();
 
-    // Add an entry into the `.translations` section for this block. These
+    // Add an entry into the `.DATA,index` section for this block. These
     // entries will end up being contiguous in memory.
     auto var = new llvm::GlobalVariable(
         *module, trace_entry_type, true, llvm::GlobalValue::PrivateLinkage,
         trace_entry_val, name);
-    var->setSection(".translations");
+#ifdef __APPLE__
+    var->setSection(".__DATA,index");
+#else
+    var->setSection(".index");
+#endif
     var->setAlignment(8);
 
     used_list.push_back(llvm::ConstantExpr::getBitCast(var, int8_ptr_type));

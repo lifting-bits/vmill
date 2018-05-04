@@ -214,7 +214,11 @@ uint8_t *CodeCacheImpl::allocateDataSection(
 
   // If we're allocating translations then we want all entries across all
   // translation segments to be contiguous.
-  if (name == ".translations") {
+#ifdef __APPLE__
+  if (name == "index") {
+#else
+  if (name == ".index") {
+#endif
     base = index_allocator.Allocate(size, 0);
     is_index = true;
   } else {

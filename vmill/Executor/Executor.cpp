@@ -109,6 +109,26 @@ Executor::Executor(void)
   CHECK(error_intrinsic != nullptr)
       << "Could not locate __remill_error";
 
+  LOG(INFO)
+      << std::hex << "__vmill_init = "
+      << reinterpret_cast<void *>(init_intrinsic) << std::dec;
+
+  LOG(INFO)
+      << std::hex << "__vmill_create_task = "
+      << reinterpret_cast<void *>(create_task_intrinsic) << std::dec;
+
+  LOG(INFO)
+      << std::hex << "__vmill_resume = "
+      << reinterpret_cast<void *>(resume_intrinsic) << std::dec;
+
+  LOG(INFO)
+      << std::hex << "__vmill_fini = "
+      << reinterpret_cast<void *>(fini_intrinsic) << std::dec;
+
+  LOG(INFO)
+      << std::hex << "__remill_error = "
+      << reinterpret_cast<void *>(error_intrinsic) << std::dec;
+
   // Load the code cache index from the disk.
   for (const auto &entry : *index) {
     const auto &trace_id = entry.trace_id;

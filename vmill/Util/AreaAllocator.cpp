@@ -37,6 +37,10 @@
 # define MAP_HUGE_2MB 0
 #endif
 
+#ifndef MAP_JIT
+# define MAP_JIT 0
+#endif
+
 namespace vmill {
 namespace {
 

@@ -17,27 +17,6 @@
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wpadded"
 
-extern "C" {
-
-// Debug registers.
-uint64_t gDR0;
-uint64_t gDR1;
-uint64_t gDR2;
-uint64_t gDR3;
-uint64_t gDR4;
-uint64_t gDR5;
-uint64_t gDR6;
-uint64_t gDR7;
-
-// Control regs.
-CR0Reg gCR0;
-CR1Reg gCR1;
-CR2Reg gCR2;
-CR3Reg gCR3;
-CR4Reg gCR4;
-
-}  // extern C
-
 class X86BaseSystemCall : public SystemCallABI {
  public:
   virtual ~X86BaseSystemCall(void) {}
@@ -166,6 +145,55 @@ class X86SysEnter32SystemCall : public X86BaseSystemCall {
 
 extern "C" {
 
+
+// Debug registers.
+uint64_t gDR0;
+uint64_t gDR1;
+uint64_t gDR2;
+uint64_t gDR3;
+uint64_t gDR4;
+uint64_t gDR5;
+uint64_t gDR6;
+uint64_t gDR7;
+
+// Control regs.
+CR0Reg gCR0;
+CR1Reg gCR1;
+CR2Reg gCR2;
+CR3Reg gCR3;
+CR4Reg gCR4;
+
+// Read/write to I/O ports.
+uint8_t __remill_read_io_port_8(Memory *, addr_t port) {
+  STRACE_ERROR(read_io_port8, "port=%" PRIxADDR, port);
+  return 0;
+}
+
+uint16_t __remill_read_io_port_16(Memory *, addr_t port) {
+  STRACE_ERROR(read_io_port16, "port=%" PRIxADDR, port);
+  return 0;
+}
+
+uint32_t __remill_read_io_port_32(Memory *, addr_t port) {
+  STRACE_ERROR(read_io_port32, "port=%" PRIxADDR, port);
+  return 0;
+}
+
+Memory *__remill_write_io_port_8(Memory *memory, addr_t port, uint8_t val) {
+  STRACE_ERROR(write_io_port8, "port=%" PRIxADDR " val=%x", port, val);
+  return memory;
+}
+
+Memory *__remill_write_io_port_16(Memory *memory, addr_t port, uint16_t val) {
+  STRACE_ERROR(write_io_port16, "port=%" PRIxADDR " val=%x", port, val);
+  return memory;
+}
+
+Memory *__remill_write_io_port_32(Memory *memory, addr_t port, uint32_t val) {
+  STRACE_ERROR(write_io_port32, "port=%" PRIxADDR " val=%x", port, val);
+  return memory;
+}
+
 Memory *__remill_async_hyper_call(
     State &state, addr_t ret_addr, Memory *memory) {
 
@@ -209,8 +237,6 @@ Memory *__remill_sync_hyper_call(
 
   switch (call) {
     case SyncHyperCall::kAssertPrivileged:
-      STRACE_SUCCESS(sync_hyper_call, "kAssertPrivileged pc=%" PRIxADDR,
-                     state.gpr.rip.aword);
       break;
     case SyncHyperCall::kX86SetSegmentES:
       STRACE_ERROR(sync_hyper_call, "kX86SetSegmentES index=%u rpi=%u ti=%u",
@@ -286,6 +312,33 @@ Memory *__remill_sync_hyper_call(
           state.gpr.rip.aword, static_cast<addr_t>(state.addr_to_load));
       break;
 
+    case SyncHyperCall::kX86LoadInterruptDescriptorTable:
+      STRACE_ERROR(
+          sync_hyper_call,
+          "kX86LoadInterruptDescriptorTable pc=%" PRIxADDR " table=%" PRIxADDR,
+          state.gpr.rip.aword, static_cast<addr_t>(state.addr_to_load));
+      break;
+
+    case SyncHyperCall::kX86WriteBackInvalidate:
+      STRACE_ERROR(sync_hyper_call, "kX86WriteBackInvalidate");
+      break;
+
+    case SyncHyperCall::kX86ReadModelSpecificRegister:
+      state.gpr.rax.aword = 0;
+      state.gpr.rdx.aword = 0;
+      STRACE_ERROR(
+          sync_hyper_call,
+          "kX86ReadModelSpecificRegister ecx=%x edx:eax=%x:%x",
+          state.gpr.rcx.dword, state.gpr.rdx.dword, state.gpr.rax.dword);
+      break;
+
+    case SyncHyperCall::kX86WriteModelSpecificRegister:
+      STRACE_ERROR(
+          sync_hyper_call,
+          "kX86WriteModelSpecificRegister ecx=%x edx:eax=%x:%x",
+          state.gpr.rcx.dword, state.gpr.rdx.dword, state.gpr.rax.dword);
+      break;
+
     case SyncHyperCall::kX86SetDebugReg:
       STRACE_ERROR(sync_hyper_call, "kX86SetDebugReg pc=%" PRIxADDR,
                    state.gpr.rip.aword);
@@ -296,13 +349,46 @@ Memory *__remill_sync_hyper_call(
                    state.gpr.rip.aword);
       break;
 
-    case SyncHyperCall::kX86SetControlReg:
-      STRACE_ERROR(sync_hyper_call, "kX86SetControlReg pc=%" PRIxADDR,
-                   state.gpr.rip.aword);
+    case SyncHyperCall::kX86SetControlReg0:
+      STRACE_ERROR(sync_hyper_call, "kX86SetControlReg0 CR0=%" PRIx64,
+                   gCR0.flat);
       break;
-    case SyncHyperCall::kAMD64SetControlReg:
-      STRACE_ERROR(sync_hyper_call, "kAMD64SetControlReg pc=%" PRIxADDR,
-                   state.gpr.rip.aword);
+    case SyncHyperCall::kX86SetControlReg1:
+      STRACE_ERROR(sync_hyper_call, "kX86SetControlReg1 CR1=%" PRIx64,
+                   gCR1.flat);
+      break;
+    case SyncHyperCall::kX86SetControlReg2:
+      STRACE_ERROR(sync_hyper_call, "kX86SetControlReg2 CR2=%" PRIx64,
+                   gCR2.flat);
+      break;
+    case SyncHyperCall::kX86SetControlReg3:
+      STRACE_ERROR(sync_hyper_call, "kX86SetControlReg3 CR3=%" PRIx64,
+                   gCR3.flat);
+      break;
+    case SyncHyperCall::kX86SetControlReg4:
+      STRACE_ERROR(sync_hyper_call, "kX86SetControlReg4 CR4=%" PRIx64,
+                   gCR4.flat);
+      break;
+
+    case SyncHyperCall::kAMD64SetControlReg0:
+      STRACE_ERROR(sync_hyper_call, "kAMD64SetControlReg0 CR0=%" PRIx64,
+                   gCR0.flat);
+      break;
+    case SyncHyperCall::kAMD64SetControlReg1:
+      STRACE_ERROR(sync_hyper_call, "kAMD64SetControlReg0 CR1=%" PRIx64,
+                   gCR1.flat);
+      break;
+    case SyncHyperCall::kAMD64SetControlReg2:
+      STRACE_ERROR(sync_hyper_call, "kAMD64SetControlReg0 CR2=%" PRIx64,
+                   gCR2.flat);
+      break;
+    case SyncHyperCall::kAMD64SetControlReg3:
+      STRACE_ERROR(sync_hyper_call, "kAMD64SetControlReg0 CR3=%" PRIx64,
+                   gCR3.flat);
+      break;
+    case SyncHyperCall::kAMD64SetControlReg4:
+      STRACE_ERROR(sync_hyper_call, "kAMD64SetControlReg0 CR4=%" PRIx64,
+                   gCR4.flat);
       break;
 
     case SyncHyperCall::kX86EmulateInstruction:
