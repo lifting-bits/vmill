@@ -66,8 +66,6 @@ SYMBOL(__vmill_mem_ptr):
         pop rbp ; \
         ret ; \
         .cfi_endproc ; \
-    .Ltmp2_ ## i: \
-        .section .text.slow, "ax" ; \
     .Ltmp1_ ## i: \
         mov rdi, qword ptr [rip + SYMBOL(__vmill_mem_address)] ; \
         call SYMBOL(__vmill_record_read_fault_ ## suffix) ; \
@@ -110,8 +108,6 @@ MAKE_MEM_READ(3, 64, EmPm)
         pop rbp ; \
         ret ; \
         .cfi_endproc ; \
-    .Ltmp2_ ## i: \
-        .section .text.slow, "ax" ; \
     .Ltmp1_ ## i: \
         mov rdi, qword ptr [rip + SYMBOL(__vmill_mem_address)] ; \
         call SYMBOL(__vmill_record_write_fault_ ## suffix) ; \

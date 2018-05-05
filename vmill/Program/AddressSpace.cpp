@@ -31,6 +31,9 @@
 
 #include "third_party/xxHash/xxhash.h"
 
+DEFINE_bool(version_code, false,
+            "Use code versioning to track self-modifying code.");
+
 
 // static FILE *OpenReadAddrs(void) {
 //   return fopen("/tmp/read_addrs", "w");
@@ -184,12 +187,13 @@ bool AddressSpace::TryWrite(uint64_t addr_, const void *val, size_t size) {
     }
 
     auto &range = FindRangeAligned(page_addr);
-    if (CanExecuteAligned(page_addr)) {
+    if (FLAGS_version_code && CanExecuteAligned(page_addr)) {
 
       // TODO(pag): remove cache entries associated with this range
       // TODO(pag): Split the range?
 
       range.InvalidateCodeVersion();
+      trace_heads.clear();
     }
 
     auto page_end_addr = page_addr + kPageSize;
@@ -588,7 +592,11 @@ void AddressSpace::CreatePageToRangeMap(void) {
 
 // Get the code version associated with some program counter.
 CodeVersion AddressSpace::ComputeCodeVersion(PC pc) {
-  return FindRange(static_cast<uint64_t>(pc) & addr_mask).ComputeCodeVersion();
+  if (FLAGS_version_code) {
+    return FindRange(static_cast<uint64_t>(pc) & addr_mask).ComputeCodeVersion();
+  } else {
+    return static_cast<CodeVersion>(0);
+  }
 }
 
 MappedRange &AddressSpace::FindRange(uint64_t addr) {

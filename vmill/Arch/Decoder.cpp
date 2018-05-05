@@ -51,6 +51,7 @@ static std::string ReadInstructionBytes(
     }
     instr_bytes.push_back(static_cast<char>(byte));
   }
+
   return instr_bytes;
 }
 

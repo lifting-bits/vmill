@@ -240,6 +240,7 @@ void CodeCacheImpl::registerEHFrames(uint8_t *addr, uint64_t, size_t) {
 // Normally this function is meant to finalize permissions of any pending JITed
 // page ranges. We this as the place to
 bool CodeCacheImpl::finalizeMemory(std::string *error_message) {
+  bool all_good = true;
   for (const auto &entry : pending_jit_ranges) {
     const auto &range = entry.second;
     jit_ranges[range.base] = range;
@@ -252,20 +253,24 @@ bool CodeCacheImpl::finalizeMemory(std::string *error_message) {
     auto limit = &(base[range.size / sizeof(CacheIndexEntry)]);
 
     for (; base < limit; ++base) {
-      if (!code_allocator.Contains(base->lifted_function)) {
+      if (!static_cast<uint64_t>(base->trace_id.pc)) {
+        continue;
+
+      } else if (!code_allocator.Contains(base->lifted_function)) {
         if (error_message) {
           *error_message = "Lifted function address is not managed by the "
                            "code cache allocator.";
         } else {
           LOG(ERROR)
               << "Cache entry with trace id (" << std::hex
-              << static_cast<TraceHashBaseType>(base->trace_id.pc) << ", "
+              << static_cast<uint64_t>(base->trace_id.pc) << ", "
               << static_cast<TraceHashBaseType>(base->trace_id.hash)
               << std::dec << ") and lifted code at "
               << reinterpret_cast<void *>(base->lifted_function)
               << " is not valid; the lifted code isn't inside the code cache!";
         }
-        return false;
+        all_good = false;
+        continue;
       }
 
       auto &lifted_func = lifted_functions[base->trace_id];
@@ -273,7 +278,7 @@ bool CodeCacheImpl::finalizeMemory(std::string *error_message) {
         LOG(ERROR)
             << "Code at " << reinterpret_cast<void *>(base->lifted_function)
             << " implementing trace with hash (" << std::hex
-            << static_cast<TraceHashBaseType>(base->trace_id.pc) << ", "
+            << static_cast<uint64_t>(base->trace_id.pc) << ", "
             << static_cast<TraceHashBaseType>(base->trace_id.hash) << std::dec
             << ") already implemented at "
             << reinterpret_cast<void *>(lifted_func);
@@ -283,7 +288,7 @@ bool CodeCacheImpl::finalizeMemory(std::string *error_message) {
     }
   }
   pending_jit_ranges.clear();
-  return true;
+  return all_good;
 }
 
 // Resolve symbols, including hidden symbols, for handling relocations.
