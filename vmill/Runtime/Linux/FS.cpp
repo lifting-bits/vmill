@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 
+#include <sys/param.h>
+#include <sys/mount.h>
+
 #ifndef AT_FDCWD
 # define AT_FDCWD (-100)
 #endif
@@ -856,8 +859,12 @@ static Memory *SysStatFs64(Memory *memory, State *state,
   cinfo.f_files = static_cast<decltype(cinfo.f_files)>(info.f_files);
   cinfo.f_ffree = static_cast<decltype(cinfo.f_ffree)>(info.f_ffree);
   cinfo.f_fsid = 0;
+#ifndef __APPLE__
   cinfo.f_namelen = static_cast<decltype(cinfo.f_namelen)>(info.f_namelen);
   cinfo.f_frsize = static_cast<decltype(cinfo.f_frsize)>(info.f_frsize);
+#else
+# warning "Incomplete support for statfs64."
+#endif
   cinfo.f_flags = static_cast<decltype(cinfo.f_flags)>(info.f_flags);
 
   if (!TryWriteMemory(memory, buf, cinfo)) {
@@ -906,8 +913,12 @@ static Memory *SysFStatFs64(Memory *memory, State *state,
   cinfo.f_files = static_cast<decltype(cinfo.f_files)>(info.f_files);
   cinfo.f_ffree = static_cast<decltype(cinfo.f_ffree)>(info.f_ffree);
   cinfo.f_fsid = 0;
+#ifndef __APPLE__
   cinfo.f_namelen = static_cast<decltype(cinfo.f_namelen)>(info.f_namelen);
   cinfo.f_frsize = static_cast<decltype(cinfo.f_frsize)>(info.f_frsize);
+#else
+# warning "Incomplete support for fstatfs64."
+#endif
   cinfo.f_flags = static_cast<decltype(cinfo.f_flags)>(info.f_flags);
 
   if (!TryWriteMemory(memory, buf, cinfo)) {
@@ -933,7 +944,13 @@ static Memory *SysFAdvise(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
+#ifndef __APPLE__
   auto ret = posix_fadvise(fd, offset, len, advice);
+#else
+# warning "Incomplete support for fadvise."
+  auto ret = 0;
+#endif
+
   if (-1 == ret) {
     auto err = errno;
     STRACE_ERROR(fadvise, "fd=%d, offset=%d, len=%d, advice=%d: %s",

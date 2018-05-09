@@ -94,7 +94,8 @@ extern "C" void __vmill_resume(void) {
           break;
 
         default:
-          printf("Task status %p = %lx\n", &(task->status), task->status);
+          printf("Task status %p = %" PRIx64 "\n",
+                 reinterpret_cast<void *>(&(task->status)), task->status);
           break;
       }
     }

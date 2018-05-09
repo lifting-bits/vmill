@@ -92,6 +92,16 @@ static llvm::CodeGenOpt::Level CodeGenOptLevel(void) {
   }
 }
 
+static void RemoveThreadLocals(llvm::Module &module) {
+  for (auto &global : module.globals()) {
+    if (global.isThreadLocal()) {
+      LOG(WARNING)
+          << "Removing thread-local attribute from " << global.getName().str();
+      global.setThreadLocal(false);
+    }
+  }
+}
+
 }  // namespace
 
 Compiler::~Compiler(void) {}
@@ -144,6 +154,8 @@ void Compiler::CompileModuleToFile(llvm::Module &module,
       << "Unable to open " << path << " for writing compiled module: "
       << error_code.message();
 #endif
+
+  RemoveThreadLocals(module);
 
   llvm::MCContext *machine_context = nullptr;
 

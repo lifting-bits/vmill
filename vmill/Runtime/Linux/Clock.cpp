@@ -110,7 +110,8 @@ static Memory *SysSetTimeOfDay(Memory *memory, State *state,
     STRACE_SUCCESS(
         settimeofday,
         "set tv_sec=%ld, tv_usec=%ld, tz_minuteswest=%d, tz_dsttime=%d",
-        tv.tv_sec, tv.tv_usec, tz.tz_minuteswest, tz.tz_dsttime);
+        tv.tv_sec, static_cast<long>(tv.tv_usec), tz.tz_minuteswest,
+        tz.tz_dsttime);
     return syscall.SetReturn(memory, state, 0);
   } else {
     auto err = errno;

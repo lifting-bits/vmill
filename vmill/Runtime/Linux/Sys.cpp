@@ -255,12 +255,17 @@ static Memory *SysGetRESUserId(Memory *memory, State *state,
   uid_t real_uid = 0;
   uid_t effective_uid = 0;
   uid_t set_uid = 0;
+
+#ifndef __APPLE__
   auto ret = getresuid(&real_uid, &effective_uid, &set_uid);
   if (-1 == ret) {
     auto err = errno;
     STRACE_ERROR(getresuid, "%s", strerror(err));
     return syscall.SetReturn(memory, state, -err);
   }
+#else
+  STRACE_ERROR(getresgid, "unimplemented on macOS");
+#endif
 
   if (rid) {
     if (!TryWriteMemory(memory, rid, static_cast<uint32_t>(real_uid))) {
@@ -304,12 +309,17 @@ static Memory *SysGetRESGroupId(Memory *memory, State *state,
   gid_t real_gid = 0;
   gid_t effective_gid = 0;
   gid_t set_gid = 0;
+
+#ifndef __APPLE__
   auto ret = getresgid(&real_gid, &effective_gid, &set_gid);
   if (-1 == ret) {
     auto err = errno;
     STRACE_ERROR(getresgid, "%s", strerror(err));
     return syscall.SetReturn(memory, state, -err);
   }
+#else
+  STRACE_ERROR(getresgid, "unimplemented on macOS");
+#endif
 
   if (rid) {
     if (!TryWriteMemory(memory, rid, static_cast<uint32_t>(real_gid))) {
@@ -353,6 +363,7 @@ static Memory *SysGetSysInfo(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
+#ifndef __APPLE__
   struct sysinfo info = {};
   auto ret = sysinfo(&info);
   if (-1 == ret) {
@@ -375,6 +386,9 @@ static Memory *SysGetSysInfo(Memory *memory, State *state,
   compat_info.totalhigh = static_cast<addr_t>(info.totalhigh);
   compat_info.freehigh = static_cast<addr_t>(info.freehigh);
   compat_info.mem_unit = info.mem_unit;
+#else
+# warning "Incomplete support for sysinfo."
+#endif
 
   if (!TryWriteMemory(memory, info_addr, compat_info)) {
     STRACE_ERROR(sysinfo, "Couldn't write info=%" PRIxADDR, info_addr);
@@ -382,7 +396,8 @@ static Memory *SysGetSysInfo(Memory *memory, State *state,
   }
 
   STRACE_SUCCESS(sysinfo, "uptime=%lu, loads=[%lu, %lu, %lu], ...",
-                 info.uptime, info.loads[0], info.loads[1], info.loads[2]);
+                 compat_info.uptime, compat_info.loads[0], compat_info.loads[1],
+                 compat_info.loads[2]);
   return syscall.SetReturn(memory, state, 0);
 }
 
