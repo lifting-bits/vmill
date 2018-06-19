@@ -73,6 +73,7 @@ struct MemoryMap {
   bool can_write;
   bool can_exec;
   bool is_index;
+  bool is_ctors;
   std::string source_file;
 
   inline bool operator<(const MemoryMap &that) const {
@@ -92,6 +93,20 @@ class CodeCacheImpl : public CodeCache,
   LiftedFunction *Lookup(TraceId trace_id) const final;
 
   uintptr_t Lookup(const char *symbol) final;
+
+  // Called to run constructors in the runtime.
+  void RunConstructors(void) final {
+    if (constructors.empty()) {
+      return;
+    }
+
+    for (auto ctor : constructors) {
+      ctor();
+    }
+    LOG(INFO)
+        << "Ran " << constructors.size() << " constructors";
+    constructors.clear();
+  }
 
   // Called just before the beginning of a run.
   void SetUp(void) final {
@@ -143,7 +158,6 @@ class CodeCacheImpl : public CodeCache,
   // Apply all final permissions to any pending JITed page ranges, moving
   // them into the `jit_ranges` list.
   bool finalizeMemory(std::string *error_message=nullptr) final;
-
   // Implementing the `llvm::JITSymbolResolver` interface.
 
   // Resolve symbols, including hidden symbols, for handling relocations.
@@ -154,6 +168,9 @@ class CodeCacheImpl : public CodeCache,
 
  private:
   CodeCacheImpl(void) = delete;
+
+  bool LoadIndex(const MemoryMap &range, std::string *error_message);
+  void LoadConstructors(const MemoryMap &range);
 
   void ReoptimizeModule(const std::unique_ptr<llvm::Module> &module);
   void InstrumentTraces(const std::unique_ptr<llvm::Module> &module);
@@ -166,6 +183,7 @@ class CodeCacheImpl : public CodeCache,
   AreaAllocator code_allocator;
   AreaAllocator data_allocator;
   AreaAllocator index_allocator;
+  AreaAllocator ctor_allocator;
 
   llvm::JITEventListener *event_listener;
   std::map<uint8_t *, MemoryMap> jit_ranges;
@@ -174,6 +192,7 @@ class CodeCacheImpl : public CodeCache,
   std::unique_ptr<llvm::RuntimeDyld> runtime_loader;
   std::string pending_source_file;
   std::unordered_map<TraceId, LiftedFunction *> lifted_functions;
+  std::vector<void(*)(void)> constructors;
 };
 
 CodeCacheImpl::CodeCacheImpl(std::unique_ptr<Tool> tool_,
@@ -185,6 +204,7 @@ CodeCacheImpl::CodeCacheImpl(std::unique_ptr<Tool> tool_,
       code_allocator(kAreaRWX, kAreaCodeCacheCode),
       data_allocator(kAreaRW, kAreaCodeCacheData),
       index_allocator(kAreaRW, kAreaCodeCacheIndex),
+      ctor_allocator(kAreaRW),
       event_listener(llvm::JITEventListener::createGDBRegistrationListener()) {
   LoadRuntimeLibrary();
   if (!LoadLibraries()) {
@@ -199,7 +219,7 @@ uint8_t *CodeCacheImpl::allocateCodeSection(
     uintptr_t size, unsigned alignment, unsigned section_id,
     llvm::StringRef name) {
   MemoryMap map = {code_allocator.Allocate(size, alignment), size,
-                   section_id, true, false, true, false,
+                   section_id, true, false, true, false, false,
                    pending_source_file};
   pending_jit_ranges[section_id] = map;
   return map.base;
@@ -211,21 +231,23 @@ uint8_t *CodeCacheImpl::allocateDataSection(
     llvm::StringRef name, bool is_read_only) {
   uint8_t *base = nullptr;
   bool is_index = false;
+  bool is_ctors = false;
 
   // If we're allocating translations then we want all entries across all
   // translation segments to be contiguous.
-#ifdef __APPLE__
-  if (name == "index") {
-#else
-  if (name == ".index") {
-#endif
+  if (name == ".vindex") {
     base = index_allocator.Allocate(size, 0);
     is_index = true;
+
+  } else if (name == ".vctors") {
+    base = ctor_allocator.Allocate(size, 0);
+    is_ctors = true;
+
   } else {
     base = data_allocator.Allocate(size, alignment);
   }
   MemoryMap map = {base, size, section_id, true, !is_read_only,
-                   false, is_index, pending_source_file};
+                   false, is_index, is_ctors, pending_source_file};
   pending_jit_ranges[section_id] = map;
   return map.base;
 }
@@ -237,6 +259,66 @@ void CodeCacheImpl::registerEHFrames(uint8_t *addr, uint64_t, size_t) {
   }
 }
 
+bool CodeCacheImpl::LoadIndex(const MemoryMap &range,
+                              std::string *error_message) {
+  auto all_good = true;
+  auto base = reinterpret_cast<CacheIndexEntry *>(range.base);
+  auto limit = &(base[range.size / sizeof(CacheIndexEntry)]);
+
+  for (; base < limit; ++base) {
+    if (!static_cast<uint64_t>(base->trace_id.pc)) {
+      continue;
+
+    } else if (!code_allocator.Contains(base->lifted_function)) {
+      if (error_message) {
+        *error_message = "Lifted function address is not managed by the "
+                         "code cache allocator.";
+      } else {
+        LOG(ERROR)
+            << "Cache entry with trace id (" << std::hex
+            << static_cast<uint64_t>(base->trace_id.pc) << ", "
+            << static_cast<TraceHashBaseType>(base->trace_id.hash)
+            << std::dec << ") and lifted code at "
+            << reinterpret_cast<void *>(base->lifted_function)
+            << " is not valid; the lifted code isn't inside the code cache!";
+      }
+      all_good = false;
+      continue;
+    }
+
+    auto &lifted_func = lifted_functions[base->trace_id];
+    if (lifted_func != nullptr) {
+      LOG(ERROR)
+          << "Code at " << reinterpret_cast<void *>(base->lifted_function)
+          << " implementing trace with hash (" << std::hex
+          << static_cast<uint64_t>(base->trace_id.pc) << ", "
+          << static_cast<TraceHashBaseType>(base->trace_id.hash) << std::dec
+          << ") already implemented at "
+          << reinterpret_cast<void *>(lifted_func);
+    } else {
+      lifted_func = base->lifted_function;
+    }
+  }
+  return all_good;
+}
+
+struct Constructor {
+  uint32_t priority;
+  void (*func)(void);
+  void *data;
+};
+
+void CodeCacheImpl::LoadConstructors(const MemoryMap &range) {
+  auto base = reinterpret_cast<Constructor *>(range.base);
+  auto limit = &(base[range.size / sizeof(Constructor)]);
+
+  for (; base < limit; ++base) {
+    if (base->func) {
+      constructors.push_back(base->func);
+    }
+  }
+}
+
 // Normally this function is meant to finalize permissions of any pending JITed
 // page ranges. We this as the place to
 bool CodeCacheImpl::finalizeMemory(std::string *error_message) {
@@ -245,46 +327,10 @@ bool CodeCacheImpl::finalizeMemory(std::string *error_message) {
     const auto &range = entry.second;
     jit_ranges[range.base] = range;
 
-    if (!range.is_index) {
-      continue;
-    }
-
-    auto base = reinterpret_cast<CacheIndexEntry *>(range.base);
-    auto limit = &(base[range.size / sizeof(CacheIndexEntry)]);
-
-    for (; base < limit; ++base) {
-      if (!static_cast<uint64_t>(base->trace_id.pc)) {
-        continue;
-
-      } else if (!code_allocator.Contains(base->lifted_function)) {
-        if (error_message) {
-          *error_message = "Lifted function address is not managed by the "
-                           "code cache allocator.";
-        } else {
-          LOG(ERROR)
-              << "Cache entry with trace id (" << std::hex
-              << static_cast<uint64_t>(base->trace_id.pc) << ", "
-              << static_cast<TraceHashBaseType>(base->trace_id.hash)
-              << std::dec << ") and lifted code at "
-              << reinterpret_cast<void *>(base->lifted_function)
-              << " is not valid; the lifted code isn't inside the code cache!";
-        }
-        all_good = false;
-        continue;
-      }
-
-      auto &lifted_func = lifted_functions[base->trace_id];
-      if (lifted_func != nullptr) {
-        LOG(ERROR)
-            << "Code at " << reinterpret_cast<void *>(base->lifted_function)
-            << " implementing trace with hash (" << std::hex
-            << static_cast<uint64_t>(base->trace_id.pc) << ", "
-            << static_cast<TraceHashBaseType>(base->trace_id.hash) << std::dec
-            << ") already implemented at "
-            << reinterpret_cast<void *>(lifted_func);
-      } else {
-        lifted_func = base->lifted_function;
-      }
+    if (range.is_ctors) {
+      LoadConstructors(range);
+    } else if (range.is_index) {
+      all_good = LoadIndex(range, error_message) || all_good;
     }
   }
   pending_jit_ranges.clear();

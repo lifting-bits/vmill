@@ -43,6 +43,7 @@
 #include "remill/Arch/Arch.h"
 #include "remill/Arch/Name.h"
 #include "remill/BC/ABI.h"
+#include "remill/BC/DeadStoreEliminator.h"
 #include "remill/BC/IntrinsicTable.h"
 #include "remill/BC/Lifter.h"
 #include "remill/BC/Util.h"
@@ -94,6 +95,9 @@ class LifterImpl : public Lifter {
   // Bitcode semantics for the target architecture.
   const std::unique_ptr<llvm::Module> semantics;
 
+  // For dead store elimination.
+  const std::vector<remill::StateSlot> slots;
+
   // Tracks the Remill intrinsics present in `semantics`.
   remill::IntrinsicTable intrinsics;
 
@@ -112,6 +116,7 @@ LifterImpl::LifterImpl(const std::shared_ptr<llvm::LLVMContext> &context_)
     : Lifter(),
       context(context_),
       semantics(remill::LoadTargetSemantics(context.get())),
+      slots(remill::StateSlots(semantics.get())),
       intrinsics(semantics.get()),
       lifter(remill::AddressType(semantics.get()), &intrinsics),
       pc_metadata_id(context->getMDKindID("PC")) {
@@ -397,7 +402,6 @@ void LifterImpl::LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
   RunO3(lifted_funcs);  // Optimize the lifted functions.
 
   auto context_ptr = context.get();
-
   auto int8_ptr_type  = llvm::Type::getInt8PtrTy(module->getContext());
 
   std::vector<llvm::Constant *> used_list;
@@ -451,21 +455,13 @@ void LifterImpl::LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
         *module, trace_entry_type, true, llvm::GlobalValue::PrivateLinkage,
         trace_entry_val, name);
 #ifdef __APPLE__
-    var->setSection(".__DATA,index");
+    var->setSection(".__DATA,.vindex");
 #else
-    var->setSection(".index");
+    var->setSection(".vindex");
 #endif
     var->setAlignment(8);
 
     used_list.push_back(llvm::ConstantExpr::getBitCast(var, int8_ptr_type));
-  }
-
-  // Kill off all the function names.
-  for (const auto &entry : lifted_funcs) {
-    auto func = entry.first;
-    func->setName("");  // Kill its name.
-    func->setLinkage(llvm::GlobalValue::PrivateLinkage);
-    func->setVisibility(llvm::GlobalValue::DefaultVisibility);
   }
 
   // Mark all the translations as used.
@@ -474,6 +470,17 @@ void LifterImpl::LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
       *module, used_type, false, llvm::GlobalValue::AppendingLinkage,
       llvm::ConstantArray::get(used_type, used_list), "llvm.used");
   used->setSection("llvm.metadata");
+
+  auto bb_func = remill::BasicBlockFunction(semantics.get());
+  remill::RemoveDeadStores(module, bb_func, slots);
+
+  // Kill off all the function names.
+  for (const auto &entry : lifted_funcs) {
+    auto func = entry.first;
+    func->setName("");  // Kill its name.
+    func->setLinkage(llvm::GlobalValue::PrivateLinkage);
+    func->setVisibility(llvm::GlobalValue::DefaultVisibility);
+  }
 }
 
 }  // namespace

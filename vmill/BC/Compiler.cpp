@@ -28,6 +28,7 @@
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/Triple.h>
 #include <llvm/IR/DataLayout.h>
+#include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/MC/MCContext.h>
@@ -44,6 +45,7 @@
 
 #include "remill/Arch/Arch.h"
 #include "remill/BC/Compat/FileSystem.h"
+#include "remill/BC/Util.h"
 #include "remill/BC/Version.h"
 #include "remill/OS/FileSystem.h"
 #include "remill/OS/OS.h"
@@ -102,6 +104,21 @@ static void RemoveThreadLocals(llvm::Module &module) {
   }
 }
 
+static void MoveConstructors(llvm::Module &module) {
+  auto ctors = module.getGlobalVariable("llvm.global_ctors");
+  if (!ctors || !ctors->hasInitializer()) {
+    return;
+  }
+
+  ctors->setLinkage(llvm::GlobalValue::PrivateLinkage);
+  ctors->setName("__vmill_constructors");
+#ifdef __APPLE__
+  ctors->setSection(".__DATA,.vctors");
+#else
+  ctors->setSection(".vctors");
+#endif
+}
+
 }  // namespace
 
 Compiler::~Compiler(void) {}
@@ -123,11 +140,7 @@ Compiler::Compiler(const std::shared_ptr<llvm::LLVMContext> &context_)
   machine = std::unique_ptr<llvm::TargetMachine>(target->createTargetMachine(
       host_triple, cpu, GetNativeFeatureString(), options,
       llvm::Reloc::PIC_,
-#ifdef __APPLE__
       llvm::CodeModel::Large,
-#else
-      llvm::CodeModel::Kernel,  // Code+data in high 2 GiB.
-#endif
       CodeGenOptLevel()));
 
   CHECK(machine)
@@ -156,6 +169,7 @@ void Compiler::CompileModuleToFile(llvm::Module &module,
 #endif
 
   RemoveThreadLocals(module);
+  MoveConstructors(module);
 
   llvm::MCContext *machine_context = nullptr;
 

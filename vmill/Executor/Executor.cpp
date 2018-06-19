@@ -233,6 +233,7 @@ void Executor::DecodeTracesFromTask(Task *task) {
   remill::StoreModuleToFile(module.get(), file_name);
 
   code_cache->AddModuleToCache(module);
+  code_cache->RunConstructors();
 
   // Add the now lifted traces into the live trace cache.
   for (const auto &trace : traces) {
@@ -257,6 +258,7 @@ void Executor::SetUp(void) {
 }
 
 void Executor::Run(void) {
+  code_cache->RunConstructors();
   SetUp();
 
   CHECK(gExecutor == this)

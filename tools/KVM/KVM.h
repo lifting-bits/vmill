@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 Trail of Bits, Inc.
+ * Copyright (c) 2018 Trail of Bits, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,17 +14,15 @@
  * limitations under the License.
  */
 
-#ifndef TOOLS_DFT_DATAFLOWTRACKER_H_
-#define TOOLS_DFT_DATAFLOWTRACKER_H_
+#ifndef TOOLS_VMILL_TOOLS_KVM_KVM_H_
+#define TOOLS_VMILL_TOOLS_KVM_KVM_H_
 
 #include "vmill/Workspace/Tool.h"
 
 namespace vmill {
 
-class Tool;
-
-std::unique_ptr<Tool> CreateDataFlowTracker(void);
+std::unique_ptr<Tool> CreateKVM(void);
 
 }  // namespace vmill
 
-#endif  // TOOLS_DFT_DATAFLOWTRACKER_H_
+#endif  // TOOLS_VMILL_TOOLS_KVM_KVM_H_

@@ -36,4 +36,4 @@ add_runtime_helper(linux amd64_avx 64)
 add_runtime_helper(linux aarch64 64)
 
 add_runtime_helper(vxworks x86 32)
-#add_runtime_helper(qemu x86 32)
+add_runtime_helper(qemu x86 32)

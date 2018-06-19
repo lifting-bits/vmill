@@ -91,6 +91,8 @@ add_library(${PROJECT_NAME} STATIC
     tools/TaintTracker/TaintTracker.cpp
     tools/TaintTracker/DataFlowTracker.cpp
     
+    tools/KVM/KVM.cpp
+    
     third_party/liballoc/liballoc.c
     third_party/ThreadPool/ThreadPool.cpp
     third_party/xxHash/xxhash.c
@@ -125,6 +127,131 @@ install(
     LIBRARY DESTINATION lib
 )
 
+if (UNIX AND NOT APPLE)
+    set(VMILL_KVM vmill-kvm-${REMILL_LLVM_VERSION})
+    
+    add_executable(${VMILL_KVM}
+        Virtualize.cpp
+    )
+    
+    target_link_libraries(${VMILL_KVM} PRIVATE vmill ${PROJECT_LIBRARIES}
+        /lib/x86_64-linux-gnu/libseccomp.so.2
+/usr/lib/x86_64-linux-gnu/libSDL-1.2.so.0
+/usr/lib/x86_64-linux-gnu/libX11.so.6
+/lib/x86_64-linux-gnu/libbrlapi.so.0.6
+/usr/lib/x86_64-linux-gnu/libcacard.so.0
+/usr/lib/x86_64-linux-gnu/libusbredirparser.so.1
+/lib/x86_64-linux-gnu/libusb-1.0.so.0
+/lib/x86_64-linux-gnu/libz.so.1
+/lib/x86_64-linux-gnu/libaio.so.1
+/usr/lib/x86_64-linux-gnu/libiscsi.so.2
+/usr/lib/x86_64-linux-gnu/libcurl-gnutls.so.4
+/usr/lib/x86_64-linux-gnu/librbd.so.1
+/usr/lib/x86_64-linux-gnu/librados.so.2
+/usr/lib/x86_64-linux-gnu/libpixman-1.so.0
+/lib/x86_64-linux-gnu/libutil.so.1
+/usr/lib/x86_64-linux-gnu/libnuma.so.1
+/usr/lib/x86_64-linux-gnu/libbluetooth.so.3
+/lib/x86_64-linux-gnu/libpng12.so.0
+/usr/lib/x86_64-linux-gnu/libjpeg.so.8
+/usr/lib/x86_64-linux-gnu/libsasl2.so.2
+/usr/lib/x86_64-linux-gnu/libnettle.so.6
+/usr/lib/x86_64-linux-gnu/libgnutls.so.30
+/usr/lib/x86_64-linux-gnu/libxenstore.so.3.0
+/usr/lib/x86_64-linux-gnu/libxenctrl-4.6.so
+/usr/lib/x86_64-linux-gnu/libxenguest-4.6.so
+/usr/lib/x86_64-linux-gnu/libspice-server.so.1
+/lib/x86_64-linux-gnu/libm.so.6
+/lib/x86_64-linux-gnu/libpthread.so.0
+/usr/lib/x86_64-linux-gnu/libgthread-2.0.so.0
+/lib/x86_64-linux-gnu/libglib-2.0.so.0
+/lib/x86_64-linux-gnu/librt.so.1
+/usr/lib/x86_64-linux-gnu/libstdc++.so.6
+/lib/x86_64-linux-gnu/libgcc_s.so.1
+/lib/x86_64-linux-gnu/libc.so.6
+/usr/lib/x86_64-linux-gnu/libasound.so.2
+/lib/x86_64-linux-gnu/libdl.so.2
+/usr/lib/x86_64-linux-gnu/libpulse-simple.so.0
+/usr/lib/x86_64-linux-gnu/libpulse.so.0
+/usr/lib/x86_64-linux-gnu/libXext.so.6
+/usr/lib/x86_64-linux-gnu/libcaca.so.0
+/usr/lib/x86_64-linux-gnu/libxcb.so.1
+/usr/lib/x86_64-linux-gnu/libnss3.so
+/usr/lib/x86_64-linux-gnu/libnspr4.so
+/lib/x86_64-linux-gnu/libudev.so.1
+/usr/lib/x86_64-linux-gnu/libidn.so.11
+/usr/lib/x86_64-linux-gnu/librtmp.so.1
+/usr/lib/x86_64-linux-gnu/libgssapi_krb5.so.2
+/usr/lib/x86_64-linux-gnu/liblber-2.4.so.2
+/usr/lib/x86_64-linux-gnu/libldap_r-2.4.so.2
+/usr/lib/x86_64-linux-gnu/libboost_thread.so.1.58.0
+/usr/lib/x86_64-linux-gnu/libboost_random.so.1.58.0
+/lib/x86_64-linux-gnu/libblkid.so.1
+/usr/lib/x86_64-linux-gnu/libboost_iostreams.so.1.58.0
+/usr/lib/x86_64-linux-gnu/libboost_system.so.1.58.0
+/usr/lib/x86_64-linux-gnu/libsmime3.so
+/usr/lib/x86_64-linux-gnu/libp11-kit.so.0
+/usr/lib/x86_64-linux-gnu/libtasn1.so.6
+/usr/lib/x86_64-linux-gnu/libhogweed.so.4
+/usr/lib/x86_64-linux-gnu/libgmp.so.10
+/lib/x86_64-linux-gnu/liblzma.so.5
+/usr/lib/x86_64-linux-gnu/libopus.so.0
+/lib/x86_64-linux-gnu/libssl.so.1.0.0
+/lib/x86_64-linux-gnu/libcrypto.so.1.0.0
+/lib/x86_64-linux-gnu/libpcre.so.3
+/usr/lib/x86_64-linux-gnu/pulseaudio/libpulsecommon-8.0.so
+/lib/x86_64-linux-gnu/libjson-c.so.2
+/lib/x86_64-linux-gnu/libdbus-1.so.3
+/lib/x86_64-linux-gnu/libslang.so.2
+/lib/x86_64-linux-gnu/libncursesw.so.5
+/lib/x86_64-linux-gnu/libtinfo.so.5
+/usr/lib/x86_64-linux-gnu/libXau.so.6
+/usr/lib/x86_64-linux-gnu/libXdmcp.so.6
+/usr/lib/x86_64-linux-gnu/libnssutil3.so
+/usr/lib/x86_64-linux-gnu/libplc4.so
+/usr/lib/x86_64-linux-gnu/libplds4.so
+/usr/lib/x86_64-linux-gnu/libkrb5.so.3
+/usr/lib/x86_64-linux-gnu/libk5crypto.so.3
+/lib/x86_64-linux-gnu/libcom_err.so.2
+/usr/lib/x86_64-linux-gnu/libkrb5support.so.0
+/lib/x86_64-linux-gnu/libresolv.so.2
+/usr/lib/x86_64-linux-gnu/libgssapi.so.3
+/lib/x86_64-linux-gnu/libuuid.so.1
+/lib/x86_64-linux-gnu/libbz2.so.1.0
+/usr/lib/x86_64-linux-gnu/libffi.so.6
+/lib/x86_64-linux-gnu/libsystemd.so.0
+/lib/x86_64-linux-gnu/libwrap.so.0
+/usr/lib/x86_64-linux-gnu/libsndfile.so.1
+/usr/lib/x86_64-linux-gnu/libasyncns.so.0
+/lib/x86_64-linux-gnu/libkeyutils.so.1
+/usr/lib/x86_64-linux-gnu/libheimntlm.so.0
+/usr/lib/x86_64-linux-gnu/libkrb5.so.26
+/usr/lib/x86_64-linux-gnu/libasn1.so.8
+/usr/lib/x86_64-linux-gnu/libhcrypto.so.4
+/usr/lib/x86_64-linux-gnu/libroken.so.18
+/lib/x86_64-linux-gnu/libselinux.so.1
+/lib/x86_64-linux-gnu/libgcrypt.so.20
+/lib/x86_64-linux-gnu/libnsl.so.1
+/usr/lib/x86_64-linux-gnu/libFLAC.so.8
+/usr/lib/x86_64-linux-gnu/libvorbisenc.so.2
+/usr/lib/x86_64-linux-gnu/libwind.so.0
+/usr/lib/x86_64-linux-gnu/libheimbase.so.1
+/usr/lib/x86_64-linux-gnu/libhx509.so.5
+/usr/lib/x86_64-linux-gnu/libsqlite3.so.0
+/lib/x86_64-linux-gnu/libcrypt.so.1
+/lib/x86_64-linux-gnu/libgpg-error.so.0
+/usr/lib/x86_64-linux-gnu/libogg.so.0
+/usr/lib/x86_64-linux-gnu/libvorbis.so.0)
+    target_include_directories(${VMILL_KVM} SYSTEM PUBLIC ${PROJECT_INCLUDEDIRECTORIES})
+    target_compile_definitions(${VMILL_KVM} PUBLIC ${PROJECT_DEFINITIONS})
+    set_target_properties(${VMILL_KVM} PROPERTIES COMPILE_FLAGS ${PROJECT_CXXFLAGS})
+    
+    install(
+        TARGETS ${VMILL_KVM}
+        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION lib
+    )
+endif()
 
 set(VMILL_LOAD vmill-load-${REMILL_LLVM_VERSION})
 add_executable(${VMILL_LOAD}

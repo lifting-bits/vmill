@@ -25,6 +25,7 @@
 #include "vmill/Workspace/Tool.h"
 
 #include "tools/Fuzzer/Fuzzer.h"
+#include "tools/KVM/KVM.h"
 #include "tools/TaintTracker/DataFlowTracker.h"
 
 namespace vmill {
@@ -76,7 +77,7 @@ void Tool::ProvideSymbol(const std::string &name, uint64_t pc) {
     std::stringstream ss;
     ss << "_" << name;
     auto apple_name = ss.str();
-    provided_symbols[name] = pc;
+    provided_symbols[apple_name] = pc;
   }
 #endif
 }
@@ -210,6 +211,8 @@ class SharedLibraryTool : public Tool {
 };
 
 static std::unique_ptr<Tool> LoadOneTool(const std::string &name_or_path) {
+  LOG(INFO)
+      << "Loading tool " << name_or_path;
   if (name_or_path == "branch_coverage") {
     return CreateBranchCoverageTracker();
 
@@ -218,6 +221,9 @@ static std::unique_ptr<Tool> LoadOneTool(const std::string &name_or_path) {
 
   } else if (name_or_path == "fuzzer") {
     return CreateFuzzer();
+
+  } else if (name_or_path == "kvm") {
+    return CreateKVM();
 
   } else if (remill::FileExists(name_or_path)) {
     LOG(INFO)

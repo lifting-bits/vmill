@@ -51,6 +51,9 @@ class CodeCache {
 
   virtual uintptr_t Lookup(const char *symbol) = 0;
 
+  // Called to run constructors in the runtime.
+  virtual void RunConstructors(void) = 0;
+
   // Called just before the beginning of a run.
   virtual void SetUp(void) = 0;
 
