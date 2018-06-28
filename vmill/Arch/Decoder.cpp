@@ -30,6 +30,8 @@
 #include "vmill/Program/AddressSpace.h"
 #include "vmill/Util/Hash.h"
 
+DECLARE_bool(verbose);
+
 namespace vmill {
 namespace {
 
@@ -94,7 +96,6 @@ static void AddSuccessorsToWorkList(const remill::Instruction &inst,
 // Enqueue control flow targets that will potentially represent future traces.
 static void AddSuccessorsToTraceList(const remill::Instruction &inst,
                                      DecoderWorkList &work_list) {
-
   switch (inst.category) {
     case remill::Instruction::kCategoryDirectFunctionCall:
       if (inst.branch_taken_pc != inst.next_pc) {
@@ -143,7 +144,7 @@ DecodedTraceList DecodeTraces(AddressSpace &addr_space, PC start_pc) {
   DecoderWorkList trace_list;
   DecoderWorkList work_list;
 
-  DLOG(INFO)
+  DLOG_IF(INFO, FLAGS_verbose)
       << "Recursively decoding machine code, beginning at "
       << std::hex << static_cast<uint64_t>(start_pc);
 
@@ -195,7 +196,7 @@ DecodedTraceList DecodeTraces(AddressSpace &addr_space, PC start_pc) {
 
     trace.id = HashTraceInstructions(trace);
 
-    DLOG(INFO)
+    DLOG_IF(INFO, FLAGS_verbose)
         << "Decoded " << trace.instructions.size()
         << " instructions starting from "
         << std::hex << static_cast<uint64_t>(trace.pc) << std::dec;

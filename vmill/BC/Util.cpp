@@ -24,6 +24,7 @@
 #include <llvm/IR/Module.h>
 
 #include "remill/BC/Version.h"
+#include "remill/BC/Util.h"
 #include "vmill/BC/Util.h"
 
 namespace vmill {
@@ -78,6 +79,10 @@ static llvm::Function *DeclareFunctionInModule(llvm::Function *func,
     return dest_func;
   }
 
+  LOG_IF(FATAL, func->hasLocalLinkage())
+      << "Cannot declare internal function " << func->getName().str()
+      << " as external in another module";
+
   dest_func = llvm::Function::Create(
       func->getFunctionType(), func->getLinkage(),
       func->getName(), dest_module);
@@ -111,6 +116,10 @@ static llvm::GlobalVariable *DeclareVarInModule(llvm::GlobalVariable *var,
         << " cannot be trivially copied to the destination module.";
 #endif
     dest_var->setInitializer(initializer);
+  } else {
+    LOG_IF(FATAL, var->hasLocalLinkage())
+        << "Cannot declare internal variable " << var->getName().str()
+        << " as external in another module";
   }
 
   return dest_var;

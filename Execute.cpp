@@ -54,6 +54,8 @@ DECLARE_string(os);
 DEFINE_uint64(max_num_execs, 1,
               "Maximum number of times to execute the program.");
 
+DEFINE_bool(verbose, false, "Enable verbose logging?");
+
 int main(int argc, char **argv) {
 
   std::stringstream ss;

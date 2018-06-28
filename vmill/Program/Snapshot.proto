@@ -27,6 +27,7 @@ enum PageRangeKind {
   
   kFileBackedPageRange = 5;
   kAnonymousPageRange = 6;
+  kAnonymousZeroRange = 7;
 }
 
 message PageRange {

@@ -96,10 +96,13 @@ class LifterImpl : public Lifter {
   const std::unique_ptr<llvm::Module> semantics;
 
   // For dead store elimination.
-  const std::vector<remill::StateSlot> slots;
+  std::vector<remill::StateSlot> slots;
 
   // Tracks the Remill intrinsics present in `semantics`.
-  remill::IntrinsicTable intrinsics;
+  const remill::IntrinsicTable intrinsics;
+
+  // The `__remill_basic_block` function.
+  llvm::Function * const bb_func;
 
   // Lifts instructions from the target architecture to bitcode that can run
   // on the host architecture.
@@ -118,6 +121,7 @@ LifterImpl::LifterImpl(const std::shared_ptr<llvm::LLVMContext> &context_)
       semantics(remill::LoadTargetSemantics(context.get())),
       slots(remill::StateSlots(semantics.get())),
       intrinsics(semantics.get()),
+      bb_func(remill::BasicBlockFunction(semantics.get())),
       lifter(remill::AddressType(semantics.get()), &intrinsics),
       pc_metadata_id(context->getMDKindID("PC")) {
 
@@ -129,14 +133,6 @@ LifterImpl::LifterImpl(const std::shared_ptr<llvm::LLVMContext> &context_)
       << " code";
 
   target_arch->PrepareModule(semantics.get());
-
-  remill::ForEachISel(
-      semantics.get(),
-      [=] (llvm::GlobalVariable *, llvm::Function *sem) -> void {
-        if (sem) {
-          sem->addFnAttr(llvm::Attribute::OptimizeNone);
-        }
-      });
 }
 
 LifterImpl::~LifterImpl(void) {}
@@ -269,6 +265,7 @@ llvm::Function *LifterImpl::LiftTrace(const DecodedTrace &trace) {
   // failed to decode.
   if (!insts.count(trace.pc)) {
     remill::AddTerminatingTailCall(entry_block, intrinsics.error);
+    return func;
   }
 
   llvm::Constant *callback = nullptr;
@@ -398,7 +395,6 @@ static llvm::MDNode *CreatePCAnnotation(llvm::Constant *pc) {
 
 void LifterImpl::LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
                                       llvm::Module *module) {
-
   RunO3(lifted_funcs);  // Optimize the lifted functions.
 
   auto context_ptr = context.get();
@@ -471,7 +467,6 @@ void LifterImpl::LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
       llvm::ConstantArray::get(used_type, used_list), "llvm.used");
   used->setSection("llvm.metadata");
 
-  auto bb_func = remill::BasicBlockFunction(semantics.get());
   remill::RemoveDeadStores(module, bb_func, slots);
 
   // Kill off all the function names.

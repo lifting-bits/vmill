@@ -31,9 +31,10 @@
 
 #include "third_party/xxHash/xxhash.h"
 
+DECLARE_bool(verbose);
+
 DEFINE_bool(version_code, false,
             "Use code versioning to track self-modifying code.");
-
 
 // static FILE *OpenReadAddrs(void) {
 //   return fopen("/tmp/read_addrs", "w");
@@ -70,26 +71,23 @@ static uint64_t GetAddressMask(void) {
 }  // namespace
 
 AddressSpace::AddressSpace(void)
-    : invalid_min_map(MappedRange::CreateInvalidLow()),
-      invalid_max_map(MappedRange::CreateInvalidHigh()),
-      page_to_map(256),
+    : page_to_map(256),
       wnx_page_to_map(256),
       min_addr(std::numeric_limits<uint64_t>::max()),
       addr_mask(GetAddressMask()),
+      invalid(MappedRange::CreateInvalid(0, addr_mask)),
       is_dead(false) {
-  maps.push_back(invalid_min_map);
-  maps.push_back(invalid_max_map);
+  maps.push_back(invalid);
   CreatePageToRangeMap();
 }
 
 AddressSpace::AddressSpace(const AddressSpace &parent)
-    : invalid_min_map(parent.invalid_min_map),
-      invalid_max_map(parent.invalid_max_map),
-      maps(parent.maps.size()),
+    : maps(parent.maps.size()),
       page_to_map(parent.page_to_map.size()),
       wnx_page_to_map(parent.wnx_page_to_map.size()),
       min_addr(parent.min_addr),
       addr_mask(parent.addr_mask),
+      invalid(parent.invalid),
       page_is_readable(parent.page_is_readable),
       page_is_writable(parent.page_is_writable),
       page_is_executable(parent.page_is_executable),
@@ -312,24 +310,18 @@ static std::vector<MemoryMapPtr> RemoveRange(
   std::vector<MemoryMapPtr> new_ranges;
   new_ranges.reserve(ranges.size() + 1);
 
-  DLOG(INFO)
+  DLOG_IF(INFO, FLAGS_verbose)
       << "  RemoveRange: [" << std::hex << base << ", "
-      << std::hex << limit << ")";
+      << std::hex << limit << ") from list of "
+      << ranges.size() << " ranges";
 
   for (auto &map : ranges) {
-
-    // Min or max tombstone.
-    if (!map->IsValid()) {
-      new_ranges.push_back(map);
-      continue;
-    }
-
     auto map_base_address = map->BaseAddress();
     auto map_limit_address = map->LimitAddress();
 
     // No overlap between `map` and the range to remove.
     if (map_limit_address <= base || map_base_address >= limit) {
-      DLOG(INFO)
+      DLOG_IF(INFO, FLAGS_verbose)
           << "    Keeping with no overlap ["
           << std::hex << map_base_address << ", "
           << std::hex << map_limit_address << ")";
@@ -337,7 +329,7 @@ static std::vector<MemoryMapPtr> RemoveRange(
 
     // `map` is fully contained in the range to remove.
     } else if (map_base_address >= base && map_limit_address <= limit) {
-      DLOG(INFO)
+      DLOG_IF(INFO, FLAGS_verbose)
           << "    Removing with full containment ["
           << std::hex << map_base_address << ", "
           << std::hex << map_limit_address << ")";
@@ -345,7 +337,7 @@ static std::vector<MemoryMapPtr> RemoveRange(
 
     // The range to remove is fully contained in `map`.
     } else if (map_base_address < base && map_limit_address > limit) {
-      DLOG(INFO)
+      DLOG_IF(INFO, FLAGS_verbose)
           << "    Splitting with overlap ["
           << std::hex << map_base_address << ", "
           << std::hex << map_limit_address << ") into "
@@ -358,14 +350,14 @@ static std::vector<MemoryMapPtr> RemoveRange(
 
     // The range to remove is a prefix of `map`.
     } else if (map_base_address == base) {
-      DLOG(INFO)
+      DLOG_IF(INFO, FLAGS_verbose)
           << "    Keeping prefix [" << std::hex << limit << ", "
           << std::hex << map_limit_address << ")";
       new_ranges.push_back(map->Copy(limit, map_limit_address));
 
     // The range to remove is a suffix of `map`.
     } else {
-      DLOG(INFO)
+      DLOG_IF(INFO, FLAGS_verbose)
           << "    Keeping suffix ["
           << std::hex << map_base_address << ", "
           << std::hex << base << ")";
@@ -408,9 +400,9 @@ void AddressSpace::SetPermissions(uint64_t base_, size_t size, bool can_read,
 void AddressSpace::AddMap(uint64_t base_, size_t size, const char *name,
                           uint64_t offset) {
   auto base = AlignDownToPage(base_);
-  auto limit = base + RoundUpToPage(size);
+  auto limit = std::min(base + RoundUpToPage(size), addr_mask);
 
-  if (is_dead) {
+  if (unlikely(is_dead)) {
     LOG(ERROR)
         << "Trying to map range [" << std::hex << base << ", " << limit
         << ") in destroyed address space." << std::dec;
@@ -421,47 +413,49 @@ void AddressSpace::AddMap(uint64_t base_, size_t size, const char *name,
       << "Mapping range [" << std::hex << base << ", " << limit
       << ")" << std::dec;
 
-  auto old_ranges = RemoveRange(maps, base, limit);
+  auto new_map = MappedRange::Create(base, limit, name, offset);
 
+  CHECK(!maps.empty());
+
+  auto old_ranges = RemoveRange(maps, base, limit);
   if (old_ranges.size() < maps.size()) {
     LOG(INFO)
         << "New map [" << std::hex << base << ", " << limit << ")"
         << " overlapped with " << std::dec << (maps.size() - old_ranges.size())
         << " existing maps";
   }
-
-  auto new_map = MappedRange::Create(base, limit, name, offset);
   maps.swap(old_ranges);
   maps.push_back(new_map);
-
   SetPermissions(base, limit - base, true, true, false);
 }
 
 void AddressSpace::RemoveMap(uint64_t base_, size_t size) {
   auto base = AlignDownToPage(base_);
-  auto limit = base + RoundUpToPage(size);
+  auto limit = std::min(base + RoundUpToPage(size), addr_mask);
 
-  LOG(INFO)
-      << "Unmapping range [" << std::hex << base << ", "
-      << limit << ")" << std::dec;
-
-  if (is_dead) {
+  if (unlikely(is_dead)) {
     LOG(ERROR)
-        << "Trying to unmap range ["
-        << std::hex << base << ", " << std::hex << limit
-        << ") in destroyed address space.";
+        << "Trying to map range [" << std::hex << base << ", " << limit
+        << ") in destroyed address space." << std::dec;
     return;
   }
 
-  maps = RemoveRange(maps, base, limit);
+  LOG(INFO)
+      << "Unmapping range [" << std::hex << base << ", " << limit
+      << ")" << std::dec;
 
-  for (; base < limit; base += kPageSize) {
-    page_is_executable.erase(base);
-    page_is_readable.erase(base);
-    page_is_writable.erase(base);
+  auto new_map = MappedRange::CreateInvalid(base, limit);
+  CHECK(!maps.empty());
+  auto old_ranges = RemoveRange(maps, base, limit);
+  if (old_ranges.size() < maps.size()) {
+    LOG(INFO)
+        << "New invalid map [" << std::hex << base << ", " << limit << ")"
+        << " overlapped with " << std::dec << (maps.size() - old_ranges.size())
+        << " existing maps";
   }
-
-  CreatePageToRangeMap();
+  maps.swap(old_ranges);
+  maps.push_back(new_map);
+  SetPermissions(base, limit - base, false, false, false);
 }
 
 // Returns `true` if `find` is a mapped address (with any permission).
@@ -496,7 +490,6 @@ bool AddressSpace::FindHole(uint64_t min, uint64_t max, uint64_t size,
 
   size = RoundUpToPage(size);
   if (size > (max - min)) {
-    asm("nop;" : : :"memory");
     return false;
   }
 
@@ -507,17 +500,28 @@ bool AddressSpace::FindHole(uint64_t min, uint64_t max, uint64_t size,
 
   while (it != it_end) {
     const auto &range_high = *it++;
-    if (it == it_end) {
+    uint64_t high_base = 0;
+    uint64_t low_limit = 0;
+
+    // Might be able to find a hole in this invalid map.
+    if (!range_high->IsValid()) {
+      high_base = range_high->LimitAddress();
+      low_limit = range_high->BaseAddress();
+
+    } else if (it == it_end) {
       break;
+
+    } else {
+      high_base = range_high->BaseAddress();
+
+      const auto &range_low = *it;
+      low_limit = range_low->LimitAddress();
     }
 
-    const auto high_base = range_high->BaseAddress();
     if (high_base < min) {
       break;
     }
 
-    const auto &range_low = *it;
-    const auto low_limit = range_low->LimitAddress();
     CHECK(low_limit <= high_base);
 
     // No overlap in our range.
@@ -541,8 +545,6 @@ bool AddressSpace::FindHole(uint64_t min, uint64_t max, uint64_t size,
 }
 
 void AddressSpace::CreatePageToRangeMap(void) {
-  CHECK(2 <= maps.size());
-
   page_to_map.clear();
   wnx_page_to_map.clear();
   memset(last_map_cache, 0, sizeof(last_map_cache));
@@ -585,15 +587,13 @@ void AddressSpace::CreatePageToRangeMap(void) {
       }
     }
   }
-
-  CHECK(!maps.front()->IsValid());  // Min tombstone.
-  CHECK(!maps.back()->IsValid());  // Max tombstone.
 }
 
 // Get the code version associated with some program counter.
 CodeVersion AddressSpace::ComputeCodeVersion(PC pc) {
   if (FLAGS_version_code) {
-    return FindRange(static_cast<uint64_t>(pc) & addr_mask).ComputeCodeVersion();
+    auto masked_pc = static_cast<uint64_t>(pc) & addr_mask;
+    return FindRange(masked_pc).ComputeCodeVersion();
   } else {
     return static_cast<CodeVersion>(0);
   }
@@ -628,7 +628,7 @@ MappedRange &AddressSpace::FindRangeAligned(uint64_t page_addr) {
     last_map_cache[cache_index] = last_range;
     return *last_range;
   } else {
-    return *invalid_min_map.get();
+    return *invalid;
   }
 }
 
@@ -657,7 +657,7 @@ MappedRange &AddressSpace::FindWNXRangeAligned(uint64_t page_addr) {
     wnx_last_map_cache[cache_index] = last_range;
     return *last_range;
   } else {
-    return *invalid_min_map.get();
+    return *invalid;
   }
 }
 

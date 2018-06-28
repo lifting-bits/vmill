@@ -150,10 +150,6 @@ class AddressSpace : public Memory {
   __attribute__((hot)) MappedRange &FindRangeAligned(uint64_t addr);
   __attribute__((hot)) MappedRange &FindWNXRangeAligned(uint64_t addr);
 
-  // Used to represent an invalid memory map.
-  MemoryMapPtr invalid_min_map;
-  MemoryMapPtr invalid_max_map;
-
   // Sorted list of mapped memory page ranges.
   std::vector<MemoryMapPtr> maps;
 
@@ -167,6 +163,9 @@ class AddressSpace : public Memory {
 
   // Mask on addresses (e.g. to make them 32- or 64-bit).
   const uint64_t addr_mask;
+
+  // Invalid memory map covering the whole address space.
+  const MemoryMapPtr invalid;
 
   enum : uint64_t {
     kRangeCacheSize = 256ULL,

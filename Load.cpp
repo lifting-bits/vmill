@@ -22,6 +22,8 @@
 #include <sstream>
 #include <unistd.h>
 
+#include <llvm/Object/ObjectFile.h>
+
 #include "remill/Arch/Arch.h"
 #include "remill/Arch/Name.h"
 
@@ -33,12 +35,13 @@
 
 #include "third_party/ELFIO/elfio/elfio.hpp"
 
-
 #include "remill/Arch/X86/Runtime/State.h"
 
 DEFINE_string(binary, "", "ELF binary to load into a snapshot.");
 DECLARE_string(arch);
 DECLARE_string(os);
+
+DEFINE_bool(verbose, false, "Enable verbose logging?");
 
 namespace {
 
@@ -75,67 +78,17 @@ int main(int argc, char **argv) {
   auto memory = snapshot.add_address_spaces();
   memory->set_id(1);
 
-  std::stringstream zero_path_ss;
-  zero_path_ss << vmill::Workspace::MemoryDir()
-               << remill::PathSeparator()
-               << "zero";
-  const auto zero_path = zero_path_ss.str();
-
-  // Make sure the file that will contain the memory has the right size.
-  auto zero_fd = open(zero_path.c_str(), O_RDWR | O_TRUNC | O_CREAT, 0666);
-  CHECK(-1 != zero_fd)
-      << "Can't open " << zero_path << " for writing.";
-
-  ftruncate(zero_fd, 0x800000);
-  close(zero_fd);
-
-  if (arch->IsX86()) {
-    // Lower memory for valid access.
-    auto info = memory->add_page_ranges();
-    info->set_base(0x1000);
-    info->set_limit(0xa0000);
-    info->set_can_read(true);
-    info->set_can_write(true);
-    info->set_can_exec(false);
-    info->set_kind(vmill::snapshot::kAnonymousPageRange);
-    info->set_name("zero");
-
-    // Video RAM, I/O, etc.
-    info = memory->add_page_ranges();
-    info->set_base(0xa0000);
-    info->set_limit(0xa0000 + 0x60000);
-    info->set_can_read(true);
-    info->set_can_write(true);
-    info->set_can_exec(false);
-    info->set_kind(vmill::snapshot::kAnonymousPageRange);
-    info->set_name("zero");
-
-    // Upper memory for OS.
-    info = memory->add_page_ranges();
-    info->set_base(0x00100000);
-    info->set_limit(0x00100000 + 0x00180000);
-    info->set_can_read(true);
-    info->set_can_write(true);
-    info->set_can_exec(false);
-    info->set_kind(vmill::snapshot::kAnonymousPageRange);
-    info->set_name("zero");
-
-    // Upper memory for Application.
-    info = memory->add_page_ranges();
-    info->set_base(0x00100000 + 0x00180000);
-    info->set_limit(0x00100000 + 0x00180000 + 0x800000 - 0x100000 - 0x180000);
-    info->set_can_read(true);
-    info->set_can_write(true);
-    info->set_can_exec(false);
-    info->set_kind(vmill::snapshot::kAnonymousPageRange);
-    info->set_name("zero");
-  }
+  uint64_t text_begin = 0;
 
   for (auto seg : reader.segments) {
     const auto base = seg->get_virtual_address() & ~4095ULL;
     const auto start = seg->get_virtual_address() & 4095ULL;
     const auto size = (start + seg->get_memory_size() + 4095ULL) & ~4095ULL;
     const auto info = memory->add_page_ranges();
+
+    if (base <= reader.get_entry() && reader.get_entry() < (base + size)) {
+      text_begin = base;
+    }
 
     std::stringstream name_ss;
     name_ss << "seg_" << std::hex << base << "_" << (base + size);
@@ -183,9 +136,18 @@ int main(int argc, char **argv) {
     close(dest_fd);
   }
 
+  CHECK(0 != text_begin);
+
   auto state = new X86State;
-  state->gpr.rsp.dword = 0x7000;  // Likely wrong.
-  state->gpr.rip.dword = static_cast<uint32_t>(reader.get_entry());
+  state->gpr.rax.qword = 0;
+  state->gpr.rbx.qword = 0x2;
+  state->gpr.rcx.qword = 0;
+  state->gpr.rdx.qword = 0x0015b878;
+  state->gpr.rsp.dword = 0x00107fc8;
+  state->gpr.rbp.dword = 0x00107ff4;
+  state->gpr.rsi.dword = static_cast<uint32_t>(reader.get_entry());
+  state->gpr.rdi.dword = 0x00008000;
+  state->gpr.rip.dword = static_cast<uint32_t>(text_begin);
 
   std::string state_str;
   state_str.insert(state_str.end(), reinterpret_cast<char *>(state),
@@ -203,5 +165,6 @@ int main(int argc, char **argv) {
 
   CHECK(snapshot.SerializePartialToOstream(&snaphot_out))
       << "Unable to serialize snapshot description to " << path;
+
   return EXIT_SUCCESS;
 }

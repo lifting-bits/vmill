@@ -52,7 +52,6 @@ class MappedRangeBase : public MappedRange {
   virtual ~MappedRangeBase(void);
   virtual bool IsValid(void) const;
   void InvalidateCodeVersion(void) final;
-  MemoryMapPtr Copy(uint64_t clone_base, uint64_t clone_limit) final;
 
   CodeVersion code_version;
   bool code_version_is_valid;
@@ -71,6 +70,7 @@ class InvalidMemoryMap : public MappedRangeBase {
   MemoryMapPtr Clone(void) final;
   CodeVersion ComputeCodeVersion(void) final;
   bool IsValid(void) const final;
+  MemoryMapPtr Copy(uint64_t clone_base, uint64_t clone_limit) final;
 
   std::string Provider(void) const final {
     return "invalid";
@@ -84,7 +84,6 @@ class ArrayMemoryMap : public MappedRangeBase {
   ArrayMemoryMap(uint64_t base_address_, uint64_t limit_address_,
                  const char *name_, uint64_t offset_);
 
-
   explicit ArrayMemoryMap(ArrayMemoryMap *steal);
 
   virtual ~ArrayMemoryMap(void);
@@ -95,6 +94,7 @@ class ArrayMemoryMap : public MappedRangeBase {
   CodeVersion ComputeCodeVersion(void) final;
   void *ToReadWriteVirtualAddress(uint64_t addr) final;
   const void *ToReadOnlyVirtualAddress(uint64_t addr) final;
+  MemoryMapPtr Copy(uint64_t clone_base, uint64_t clone_limit) final;
 
   std::string Provider(void) const final {
     return "array";
@@ -115,6 +115,7 @@ class EmptyMemoryMap : public MappedRangeBase {
   CodeVersion ComputeCodeVersion(void) final;
   void *ToReadWriteVirtualAddress(uint64_t addr) final;
   const void *ToReadOnlyVirtualAddress(uint64_t addr) final;
+  MemoryMapPtr Copy(uint64_t clone_base, uint64_t clone_limit) final;
   std::string Provider(void) const final {
     return "empty";
   }
@@ -124,6 +125,7 @@ class EmptyMemoryMap : public MappedRangeBase {
 class CopyOnWriteMemoryMap : public MappedRangeBase {
  public:
   explicit CopyOnWriteMemoryMap(MemoryMapPtr parent_);
+  CopyOnWriteMemoryMap(MemoryMapPtr parent_, uint64_t base, uint64_t limit);
   virtual ~CopyOnWriteMemoryMap(void);
   bool IsValid(void) const final;
   bool Read(uint64_t address, uint8_t *out_val) final;
@@ -131,6 +133,7 @@ class CopyOnWriteMemoryMap : public MappedRangeBase {
   MemoryMapPtr Clone(void) final;
   CodeVersion ComputeCodeVersion(void) final;
   void *ToReadWriteVirtualAddress(uint64_t addr) final;
+  MemoryMapPtr Copy(uint64_t clone_base, uint64_t clone_limit) final;
   const void *ToReadOnlyVirtualAddress(uint64_t addr) final;
 
   std::string Provider(void) const final {
@@ -176,21 +179,6 @@ bool MappedRangeBase::IsValid(void) const {
   return true;
 }
 
-MemoryMapPtr MappedRangeBase::Copy(uint64_t clone_base, uint64_t clone_limit) {
-  auto array_backed = std::make_shared<ArrayMemoryMap>(
-      clone_base, clone_limit,
-      Name(), Offset() + (clone_base - BaseAddress()));
-
-  for (; clone_base < clone_limit; ++clone_base) {
-    if (Contains(clone_base)) {
-      uint8_t val = 0;
-      Read(clone_base, &val);
-      array_backed->Write(clone_base, val);
-    }
-  }
-  return array_backed;
-}
-
 InvalidMemoryMap::~InvalidMemoryMap(void) {}
 
 bool InvalidMemoryMap::Read(uint64_t, uint8_t *out_val) {
@@ -213,6 +201,11 @@ CodeVersion InvalidMemoryMap::ComputeCodeVersion(void) {
 
 bool InvalidMemoryMap::IsValid(void) const {
   return false;
+}
+
+MemoryMapPtr InvalidMemoryMap::Copy(uint64_t clone_base, uint64_t clone_limit) {
+  return std::make_shared<InvalidMemoryMap>(
+      clone_base, clone_limit, Name(), Offset() + (clone_base - BaseAddress()));
 }
 
 ZoneAllocator ArrayMemoryMap::gAllocator(kAreaRW, kAreaAddressSpace);
@@ -249,6 +242,21 @@ bool ArrayMemoryMap::Read(uint64_t address, uint8_t *out_val) {
 bool ArrayMemoryMap::Write(uint64_t address, uint8_t val) {
   data.base[address - BaseAddress()] = val;
   return true;
+}
+
+MemoryMapPtr ArrayMemoryMap::Copy(uint64_t clone_base, uint64_t clone_limit) {
+  auto array_backed = std::make_shared<ArrayMemoryMap>(
+      clone_base, clone_limit,
+      Name(), Offset() + (clone_base - BaseAddress()));
+
+  for (; clone_base < clone_limit; ++clone_base) {
+    if (Contains(clone_base)) {
+      uint8_t val = 0;
+      Read(clone_base, &val);
+      array_backed->Write(clone_base, val);
+    }
+  }
+  return array_backed;
 }
 
 // Creates a new `ArrayMemoryMap` that takes over the data of this array memory
@@ -315,9 +323,26 @@ const void *EmptyMemoryMap::ToReadOnlyVirtualAddress(uint64_t addr) {
   return &(kZeroes[0]);
 }
 
+MemoryMapPtr EmptyMemoryMap::Copy(uint64_t clone_base,
+                                  uint64_t clone_limit) {
+  return std::make_shared<EmptyMemoryMap>(
+      clone_base, clone_limit,
+      Name(), Offset() + (clone_base - BaseAddress()));
+}
+
 CopyOnWriteMemoryMap::CopyOnWriteMemoryMap(MemoryMapPtr parent_)
     : MappedRangeBase(parent_->BaseAddress(), parent_->LimitAddress(),
                       parent_->Name(), parent_->Offset()) {
+  while (parent_) {
+    parent = parent_;
+    parent_ = reinterpret_cast<MappedRangeBase &>(*parent).parent;
+  }
+}
+
+CopyOnWriteMemoryMap::CopyOnWriteMemoryMap(MemoryMapPtr parent_, uint64_t base,
+                                           uint64_t limit)
+    : MappedRangeBase(base, limit, parent_->Name(),
+                      parent_->Offset() + (base - parent->BaseAddress())) {
   while (parent_) {
     parent = parent_;
     parent_ = reinterpret_cast<MappedRangeBase &>(*parent).parent;
@@ -363,6 +388,12 @@ void *CopyOnWriteMemoryMap::ToReadWriteVirtualAddress(uint64_t address) {
   return self->ToReadWriteVirtualAddress(address);
 }
 
+MemoryMapPtr CopyOnWriteMemoryMap::Copy(uint64_t clone_base,
+                                        uint64_t clone_limit) {
+  return std::make_shared<CopyOnWriteMemoryMap>(
+      parent, clone_base, clone_limit);
+}
+
 const void *CopyOnWriteMemoryMap::ToReadOnlyVirtualAddress(uint64_t address) {
   return parent->ToReadOnlyVirtualAddress(address);
 }
@@ -378,14 +409,9 @@ MemoryMapPtr MappedRange::Create(uint64_t base_address_,
   return ptr;
 }
 
-MemoryMapPtr MappedRange::CreateInvalidLow(void) {
-  MemoryMapPtr ptr(new InvalidMemoryMap(0, 0, "low tombstone", 0));
-  return ptr;
-}
-
-MemoryMapPtr MappedRange::CreateInvalidHigh(void) {
-  auto max = std::numeric_limits<uint64_t>::max();
-  MemoryMapPtr ptr(new InvalidMemoryMap(max, max, "high tombstone", 0));
+MemoryMapPtr MappedRange::CreateInvalid(uint64_t base_address_,
+                                        uint64_t limit_address_) {
+  MemoryMapPtr ptr(new InvalidMemoryMap(base_address_, limit_address_, "", 0));
   return ptr;
 }
 

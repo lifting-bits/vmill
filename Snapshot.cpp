@@ -59,6 +59,8 @@ DEFINE_uint64(breakpoint, 0, "Address of where to inject a breakpoint.");
 DECLARE_string(arch);
 DECLARE_string(os);
 
+DEFINE_bool(verbose, false, "Enable verbose logging?");
+
 namespace vmill {
 
 // Copy the register state from the tracee with PID `pid` into the file

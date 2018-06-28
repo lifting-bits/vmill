@@ -202,7 +202,7 @@ void Executor::DecodeTracesFromTask(Task *task) {
     coro->Pause(task);
     auto done = false;
     do {
-      switch (future_module.wait_for(std::chrono::milliseconds(2))) {
+      switch (future_module.wait_for(std::chrono::milliseconds(5))) {
         case std::future_status::deferred:
           future_module.wait();
           done = true;

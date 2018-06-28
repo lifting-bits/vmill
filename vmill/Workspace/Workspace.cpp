@@ -318,6 +318,7 @@ static void LoadAddressSpaceFromSnapshot(
         }
         break;
       case snapshot::kAnonymousPageRange:
+      case snapshot::kAnonymousZeroRange:
         break;
     }
 
@@ -327,7 +328,11 @@ static void LoadAddressSpaceFromSnapshot(
     auto offset = static_cast<uint64_t>(
         page.has_file_offset() ? page.file_offset() : 0L);
     emu_addr_space->AddMap(base, size, path, offset);
-    LoadPageRangeFromFile(emu_addr_space.get(), page);
+    if (snapshot::kAnonymousZeroRange == page.kind()) {
+
+    } else {
+      LoadPageRangeFromFile(emu_addr_space.get(), page);
+    }
     emu_addr_space->SetPermissions(base, size, page.can_read(),
                                    page.can_write(), page.can_exec());
   }

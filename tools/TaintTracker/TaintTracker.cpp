@@ -252,7 +252,7 @@ int TaintTrackerTool::UnfoldConstantExpressions(llvm::Instruction *inst) {
 // Expand a GetElementPtrInst into several other instructions.
 void TaintTrackerTool::ExpandGEP(llvm::GetElementPtrInst *inst) {
   llvm::DataLayout dl(module);
-  llvm::APInt offset(64, 0, true);
+  llvm::APInt offset(dl.getPointerSizeInBits(0), 0, true);
   llvm::IRBuilder<> ir(inst);
 
   llvm::Value *addr = nullptr;
@@ -700,7 +700,7 @@ void TaintTrackerTool::visitCmpInst(llvm::CmpInst &inst) {
 
 void TaintTrackerTool::visitGetElementPtrInst(llvm::GetElementPtrInst &inst) {
   llvm::DataLayout dl(module);
-  llvm::APInt offset(64, 0, true);
+  llvm::APInt offset(dl.getPointerSizeInBits(0), 0, true);
   llvm::IRBuilder<> ir(&inst);
 
   auto base = inst.getPointerOperand()->stripPointerCasts();
