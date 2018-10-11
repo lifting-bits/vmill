@@ -27,9 +27,6 @@ class Module;
 }  // namespace llvm
 namespace vmill {
 
-// Move a function from one module into another module.
-void MoveFunctionIntoModule(llvm::Function *func,
-                            llvm::Module *dest_module);
 
 }  // namespace vmill
 

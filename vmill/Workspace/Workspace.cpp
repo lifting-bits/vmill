@@ -236,10 +236,15 @@ static void LoadPageRangeFromFile(AddressSpace *addr_space,
 
   while (range_size) {
     auto buff = addr_space->ToReadWriteVirtualAddress(base_addr);
+
+    errno = 0;
     auto amount_read_ = read(fd, buff, range_size);
+    auto err = errno;
     if (-1 == amount_read_) {
       CHECK(!range_size)
-          << "Failed to read all page range data from " << path;
+          << "Failed to read all page range data from " << path
+          << "; remaining amount to read is " << range_size
+          << " but got error " << strerror(err);
       break;
     }
 

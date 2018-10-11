@@ -409,6 +409,11 @@ void AddressSpace::AddMap(uint64_t base_, size_t size, const char *name,
     return;
   }
 
+  CHECK((base & addr_mask) == base)
+      << "Base address " << std::hex << base << " cannot fit into mask "
+      << addr_mask << std::dec << "; are you trying to map a 64-bit address "
+      << "into a 32-bit address space?";
+
   LOG(INFO)
       << "Mapping range [" << std::hex << base << ", " << limit
       << ")" << std::dec;
@@ -439,6 +444,11 @@ void AddressSpace::RemoveMap(uint64_t base_, size_t size) {
         << ") in destroyed address space." << std::dec;
     return;
   }
+
+  CHECK((base & addr_mask) == base)
+      << "Base address " << std::hex << base << " cannot fit into mask "
+      << addr_mask << std::dec << "; are you trying to remove a 64-bit address "
+      << "from a 32-bit address space?";
 
   LOG(INFO)
       << "Unmapping range [" << std::hex << base << ", " << limit

@@ -25,8 +25,8 @@
 #include "vmill/Workspace/Tool.h"
 
 #include "tools/Fuzzer/Fuzzer.h"
-#include "tools/KVM/KVM.h"
-#include "tools/TaintTracker/DataFlowTracker.h"
+//#include "tools/KVM/KVM.h"
+//#include "tools/TaintTracker/DataFlowTracker.h"
 
 namespace vmill {
 
@@ -36,7 +36,8 @@ Tool::~Tool(void) {}
 
 // Called when lifted bitcode or the runtime needs to resolve an external
 // symbol.
-uint64_t Tool::FindSymbolForLinking(const std::string &name, uint64_t resolved) {
+uint64_t Tool::FindSymbolForLinking(const std::string &name,
+                                    uint64_t resolved) {
   auto it = provided_symbols.find(name);
   if (it != provided_symbols.end()) {
     resolved = it->second;
@@ -222,8 +223,8 @@ static std::unique_ptr<Tool> LoadOneTool(const std::string &name_or_path) {
   } else if (name_or_path == "fuzzer") {
     return CreateFuzzer();
 
-  } else if (name_or_path == "kvm") {
-    return CreateKVM();
+//  } else if (name_or_path == "kvm") {
+//    return CreateKVM();
 
   } else if (remill::FileExists(name_or_path)) {
     LOG(INFO)

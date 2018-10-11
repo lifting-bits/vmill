@@ -122,7 +122,7 @@ LifterImpl::LifterImpl(const std::shared_ptr<llvm::LLVMContext> &context_)
       slots(remill::StateSlots(semantics.get())),
       intrinsics(semantics.get()),
       bb_func(remill::BasicBlockFunction(semantics.get())),
-      lifter(remill::AddressType(semantics.get()), &intrinsics),
+      lifter(remill::GetTargetArch(), &intrinsics),
       pc_metadata_id(context->getMDKindID("PC")) {
 
   auto target_arch = remill::GetTargetArch();
@@ -318,6 +318,7 @@ llvm::Function *LifterImpl::LiftTrace(const DecodedTrace &trace) {
             GetOrCreateBlock(static_cast<PC>(inst.branch_taken_pc)),
             block);
         break;
+
       case remill::Instruction::kCategoryIndirectJump:
         remill::AddTerminatingTailCall(block, intrinsics.jump);
         break;
@@ -407,7 +408,7 @@ void LifterImpl::LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
   for (const auto &entry : lifted_funcs) {
     auto func = entry.first;
     const auto &trace = *(entry.second);
-    MoveFunctionIntoModule(func, module);
+    remill::MoveFunctionIntoModule(func, module);
 
     std::vector<llvm::Type *> types(2);
     std::vector<llvm::Constant *> values(2);

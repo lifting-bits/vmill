@@ -12,6 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+if (NOT TARGET remill)
+    # Remill's  CMake definitions are required to build to bitcode
+    message(FATAL_ERROR "The remill target does not exists!")
+endif ()
+
 function(add_runtime_helper os arch address_bit_size)
     message(" > Generating runtime target: ${target_name}")
     
@@ -19,12 +24,9 @@ function(add_runtime_helper os arch address_bit_size)
     
     add_runtime(${target_name}
         SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/${target_name}.cpp
-        ADDRESS_SIZE ${address_bit_size})
-
-    target_include_directories(${target_name} PRIVATE ${REMILL_SOURCE_DIR})
-    target_include_directories(${target_name} PRIVATE ${PROJECT_SOURCE_DIR})
-    install(TARGETS ${target_name} DESTINATION "share/vmill/${REMILL_LLVM_VERSION}/runtime")
-
+        ADDRESS_SIZE ${address_bit_size}
+        INCLUDEDIRECTORIES ${REMILL_SOURCE_DIR} ${PROJECT_SOURCE_DIR}
+        INSTALLDESTINATION "share/vmill/${REMILL_LLVM_VERSION}/runtime")
 endfunction()
 
 add_runtime_helper(linux x86 32)
@@ -35,5 +37,5 @@ add_runtime_helper(linux amd64_avx 64)
 
 add_runtime_helper(linux aarch64 64)
 
-add_runtime_helper(vxworks x86 32)
-add_runtime_helper(qemu x86 32)
+# add_runtime_helper(vxworks x86 32)
+# add_runtime_helper(qemu x86 32)

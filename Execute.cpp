@@ -72,9 +72,6 @@ int main(int argc, char **argv) {
   CHECK(0 < FLAGS_max_num_execs)
       << "Must specific a positive value for `--max_num_execs`.";
 
-  CHECK(FLAGS_arch.empty() && FLAGS_os.empty())
-      << "The architecture and OS names must NOT be manually specified.";
-
   auto snapshot = vmill::LoadSnapshotFromFile(vmill::Workspace::SnapshotPath());
 
   // Take the target architecture from the snapshot file.
