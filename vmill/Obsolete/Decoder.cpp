@@ -25,6 +25,14 @@
 
 #include "remill/Arch/Arch.h"
 #include "remill/Arch/Instruction.h"
+#include "remill/Arch/Name.h"
+
+#include "remill/BC/ABI.h"
+#include "remill/BC/IntrinsicTable.h"
+#include "remill/BC/Lifter.h"
+#include "remill/BC/Util.h"
+#include "remill/BC/Optimizer.h"
+#include "remill/OS/OS.h"
 
 #include "vmill/Arch/Decoder.h"
 #include "vmill/Program/AddressSpace.h"
