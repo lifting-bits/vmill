@@ -198,8 +198,8 @@ struct stat x;
 struct linux64_stat {
   uint64_t st_dev;
   uint64_t st_ino;
-  uint64_t st_nlink;
-  uint32_t st_mode;
+  uint64_t st_mode;
+  uint32_t st_nlink;
   uint32_t st_uid;
   uint32_t st_gid;
   uint32_t __pad0;
