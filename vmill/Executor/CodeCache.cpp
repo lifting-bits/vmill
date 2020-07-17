@@ -459,8 +459,8 @@ void CodeCacheImpl::lookup(
 llvm::Expected<llvm::JITSymbolResolver::LookupSet>
 CodeCacheImpl::getResponsibilitySet(
     const llvm::JITSymbolResolver::LookupSet &) {
-  return llvm::None;
-//  llvm::JITSymbolResolver::LookupSet result;
+  llvm::JITSymbolResolver::LookupSet result;
+  return result;
 //  for (auto sym_name : symbols) {
 //    llvm::JITSymbol found_sym = findSymbol(sym_name);
 //    if (found_sym && !found_sym.getFlags().isStrong()) {
