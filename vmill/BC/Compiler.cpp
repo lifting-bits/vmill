@@ -151,7 +151,11 @@ void Compiler::CompileModuleToFile(llvm::Module &module,
                                    const std::string &path) {
   Timer timer;
   module.setTargetTriple(host_triple.str());
-//  module.setDataLayout(host_arch->DataLayout().getStringRepresentation());
+#ifdef __APPLE__
+  module.setDataLayout("e-m:o-i64:64-f80:128-n8:16:32:64-S128");
+#else
+  module.setDataLayout("e-m:e-i64:64-f80:128-n8:16:32:64-S128");
+#endif
 
 #if LLVM_VERSION_NUMBER < LLVM_VERSION(3, 6)
   std::string error_message;

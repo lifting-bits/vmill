@@ -370,27 +370,40 @@ llvm::JITSymbol CodeCacheImpl::findSymbolInLogicalDylib(
 // Resolve external/exported symbols during linking.
 llvm::JITSymbol CodeCacheImpl::findSymbol(const std::string &name) {
   auto addr = llvm::RTDyldMemoryManager::getSymbolAddressInProcess(name);
+
+#ifdef __APPLE__
+  auto uname = '_' + name;
+  if (!addr) {
+    addr = llvm::RTDyldMemoryManager::getSymbolAddressInProcess(uname);
+  }
+#endif
+
+  if (!addr) {
+    if (auto sym = findSymbolInLogicalDylib(name); sym) {
+      auto maybe_addr = sym.getAddress();
+      if (!remill::IsError(maybe_addr)) {
+        addr = maybe_addr IF_LLVM_GTE_500(.get());
+      }
+    }
+#ifdef __APPLE__
+    if (!addr) {
+      if (auto sym = findSymbolInLogicalDylib(uname); sym) {
+        auto maybe_addr = sym.getAddress();
+        if (!remill::IsError(maybe_addr)) {
+          addr = maybe_addr IF_LLVM_GTE_500(.get());
+        }
+      }
+    }
+#endif
+  }
+
   auto resolved_addr = tool->FindSymbolForLinking(name, addr);
   if (!resolved_addr) {
     if (addr) {
       resolved_addr = addr;
     } else {
-#ifdef __APPLE__
-      auto uname = '_' + name;
-      addr = llvm::RTDyldMemoryManager::getSymbolAddressInProcess(uname);
-      resolved_addr = tool->FindSymbolForLinking(uname, addr);
-      if (!resolved_addr) {
-        if (addr) {
-          resolved_addr = addr;
-        } else {
-          LOG(ERROR)
-              << "Could not locate address of symbol " << name;
-        }
-      }
-#else
       LOG(ERROR)
           << "Could not locate address of symbol " << name;
-#endif
     }
   }
   return llvm::JITSymbol(resolved_addr, llvm::JITSymbolFlags::None);
@@ -444,8 +457,9 @@ void CodeCacheImpl::lookup(
   llvm::JITSymbolResolver::LookupResult result;
   for (auto sym_name : symbols) {
     if (llvm::JITSymbol found_sym = findSymbol(sym_name); found_sym) {
-      if (auto addr = found_sym.getAddress(); addr) {
-        llvm::JITEvaluatedSymbol sym_loc(*addr, found_sym.getFlags());
+      auto maybe_addr = found_sym.getAddress();
+      if (!remill::IsError(maybe_addr)) {
+        llvm::JITEvaluatedSymbol sym_loc(*maybe_addr, found_sym.getFlags());
         result.emplace(sym_name, std::move(sym_loc));
       }
     }
@@ -679,7 +693,11 @@ uintptr_t CodeCacheImpl::Lookup(const char *symbol) {
   if (!sym) {
     return 0;
   }
-  return sym.getAddress() IF_LLVM_GTE_500(.get());
+  auto maybe_addr = sym.getAddress();
+  if (!remill::IsError(maybe_addr)) {
+    return maybe_addr IF_LLVM_GTE_500(.get());
+  }
+  return 0;
 }
 
 }  // namespace
