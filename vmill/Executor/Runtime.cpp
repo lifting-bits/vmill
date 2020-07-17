@@ -489,6 +489,29 @@ int __remill_fpu_exception_test_and_clear(int read_mask, int clear_mask) {
 // inside of a coroutine.
 extern void __vmill_execute_async(Task *, LiftedFunction *);
 
+void __vmill_update(Task *task) {
+  const auto &fault = task->mem_access_fault;
+  if (kMemoryAccessNoFault == fault.kind) {
+    switch (task->location) {
+      case kTaskStoppedAtError:
+      case kTaskStoppedBeforeUnhandledHyperCall:
+        task->status = kTaskStatusError;
+        break;
+      default:
+        task->status = kTaskStatusRunnable;
+        break;
+    }
+  } else {
+    std::stringstream fault_ss;
+    LogFault(fault_ss, task);
+    LogRegisterState(fault_ss, task->state);
+    const auto memory = task->memory;
+    memory->LogMaps(fault_ss);
+    LOG(ERROR) << fault_ss.str();
+    task->status = kTaskStatusError;
+  }
+}
+
 // Called by assembly in `__vmill_execute_async`.
 void __vmill_execute(Task *task, LiftedFunction *lifted_func) {
   const auto memory = task->memory;
@@ -502,23 +525,7 @@ void __vmill_execute(Task *task, LiftedFunction *lifted_func) {
 
   task->last_pc = pc;
 
-  const auto &fault = task->mem_access_fault;
-  if (kMemoryAccessNoFault == fault.kind) {
-    switch (task->location) {
-      case kTaskStoppedAtError:
-      case kTaskStoppedBeforeUnhandledHyperCall:
-        task->status = kTaskStatusError;
-        break;
-      default:
-        task->status = kTaskStatusRunnable;
-        break;
-    }
-  } else {
-    LogFault(LOG(ERROR), task);
-    LogRegisterState(LOG(ERROR), task->state);
-    memory->LogMaps(LOG(ERROR));
-    task->status = kTaskStatusError;
-  }
+  __vmill_update(task);
 }
 
 // Called by the runtime to execute some lifted code.

@@ -76,6 +76,7 @@ extern "C" linux_task *__vmill_create_task(
 
 // Call into vmill to execute the actual task.
 extern "C" void __vmill_run(linux_task *task);
+extern "C" void __vmill_update(linux_task *task);
 
 // Called by the executor when all initial tasks are loaded.
 extern "C" void __vmill_resume(void) {
@@ -96,6 +97,7 @@ extern "C" void __vmill_resume(void) {
         default:
           printf("Task status %p = %" PRIx64 "\n",
                  reinterpret_cast<void *>(&(task->status)), task->status);
+          __vmill_update(task);
           break;
       }
     }
