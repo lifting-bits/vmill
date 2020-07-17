@@ -29,6 +29,7 @@ struct State;
 // setting the return value from the system call.
 class SystemCallABI {
  public:
+  [[gnu::always_inline]]
   inline SystemCallABI(void)
       : completed(false) {}
 
@@ -38,6 +39,7 @@ class SystemCallABI {
   virtual void SetPC(State *state, addr_t new_pc) const = 0;
   virtual void SetSP(State *state, addr_t new_sp) const = 0;
 
+  [[gnu::always_inline]]
   inline bool Completed(void) {
     return completed;
   }
