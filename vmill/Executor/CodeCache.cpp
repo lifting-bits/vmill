@@ -458,18 +458,19 @@ void CodeCacheImpl::lookup(
 // definitions are implicitly always part of the caller's responsibility.
 llvm::Expected<llvm::JITSymbolResolver::LookupSet>
 CodeCacheImpl::getResponsibilitySet(
-    const llvm::JITSymbolResolver::LookupSet &symbols) {
-  llvm::JITSymbolResolver::LookupSet result;
-  for (auto sym_name : symbols) {
-    llvm::JITSymbol found_sym = findSymbol(sym_name);
-    if (found_sym) {
-      result.insert(sym_name);
-    } else {
-      auto err = found_sym.takeError();
-      return std::move(err);
-    }
-  }
-  return result;
+    const llvm::JITSymbolResolver::LookupSet &) {
+  return llvm::None;
+//  llvm::JITSymbolResolver::LookupSet result;
+//  for (auto sym_name : symbols) {
+//    llvm::JITSymbol found_sym = findSymbol(sym_name);
+//    if (found_sym && !found_sym.getFlags().isStrong()) {
+//      result.insert(sym_name);
+//    } else {
+//      auto err = found_sym.takeError();
+//      return std::move(err);
+//    }
+//  }
+//  return result;
 }
 
 #endif
