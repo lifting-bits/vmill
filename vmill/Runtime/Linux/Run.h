@@ -123,7 +123,9 @@ struct linux32_msghdr {
 struct linux64_msghdr {
   addr64_t msg_name;  // `void *`.
   uint32_t msg_namelen;
+  uint32_t _padding0;
   addr64_t msg_iov;  // `struct linux32_iovec *`.
+  uint32_t _padding1;
   uint32_t msg_iovlen;
   addr64_t msg_control;  // `void *`.
   uint32_t msg_controllen;

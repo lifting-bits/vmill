@@ -45,6 +45,7 @@ class Lifter {
   virtual ~Lifter(void);
 
   static std::unique_ptr<Lifter> Create(
+      const remill::Arch *arch_,
       const std::shared_ptr<llvm::LLVMContext> &context);
 
   // Lift a list of decoded traces into a new LLVM bitcode module, and

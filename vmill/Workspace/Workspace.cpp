@@ -258,6 +258,7 @@ static void LoadPageRangeFromFile(AddressSpace *addr_space,
 
 // Go through the snapshotted pages and copy them into the address space.
 static void LoadAddressSpaceFromSnapshot(
+    const remill::Arch *arch,
     AddressSpaceIdToMemoryMap &addr_space_ids,
     const snapshot::AddressSpace &orig_addr_space) {
 
@@ -281,7 +282,7 @@ static void LoadAddressSpaceFromSnapshot(
     const auto &parent_mem = addr_space_ids[parent_id];
     emu_addr_space = std::make_shared<AddressSpace>(*parent_mem);
   } else {
-    emu_addr_space = std::make_shared<AddressSpace>();
+    emu_addr_space = std::make_shared<AddressSpace>(arch);
   }
 
   addr_space_ids[id] = emu_addr_space;
@@ -351,7 +352,8 @@ void Workspace::LoadSnapshotIntoExecutor(
   LOG(INFO) << "Loading address space information from snapshot";
   AddressSpaceIdToMemoryMap address_space_ids;
   for (const auto &address_space : snapshot->address_spaces()) {
-    LoadAddressSpaceFromSnapshot(address_space_ids, address_space);
+    LoadAddressSpaceFromSnapshot(
+        executor.arch.get(), address_space_ids, address_space);
   }
 
   LOG(INFO) << "Loading task information.";

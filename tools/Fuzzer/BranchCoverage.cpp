@@ -28,6 +28,7 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 
+#include <remill/BC/Version.h>
 
 #include "vmill/Program/ShadowMemory.h"
 #include "vmill/Util/Compiler.h"
@@ -107,15 +108,22 @@ class BranchCoverageTool : public Tool, public PersistentLocation {
     loc_type = llvm::Type::getIntNTy(context, sizeof(Location) * 8);
 
     llvm::Type *branch_arg_types[] = {loc_type, loc_type};
-    cov_branch_func = module->getOrInsertFunction(
-        "__cov_branch",
-        llvm::FunctionType::get(void_type, branch_arg_types, false));
+    cov_branch_func = llvm::dyn_cast<llvm::Function>(
+        module->getOrInsertFunction(
+            "__cov_branch",
+            llvm::FunctionType::get(void_type, branch_arg_types, false))
+        IF_LLVM_GTE_900(.getCallee()));
 
     auto loc_ptr_type = llvm::PointerType::get(loc_type, 0);
     llvm::Type *switch_arg_types[] = {loc_type, loc_ptr_type, loc_ptr_type};
-    cov_switch_func = module->getOrInsertFunction(
-        "__cov_switch",
-        llvm::FunctionType::get(void_type, switch_arg_types, false));
+    cov_switch_func = llvm::dyn_cast<llvm::Function>(
+        module->getOrInsertFunction(
+            "__cov_switch",
+            llvm::FunctionType::get(void_type, switch_arg_types, false))
+        IF_LLVM_GTE_900(.getCallee()));
+
+    CHECK_NOTNULL(cov_branch_func);
+    CHECK_NOTNULL(cov_switch_func);
   }
 
  private:

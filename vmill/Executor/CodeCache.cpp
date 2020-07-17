@@ -161,10 +161,27 @@ class CodeCacheImpl : public CodeCache,
   // Implementing the `llvm::JITSymbolResolver` interface.
 
   // Resolve symbols, including hidden symbols, for handling relocations.
-  llvm::JITSymbol findSymbolInLogicalDylib(const std::string &name) final;
+  llvm::JITSymbol findSymbolInLogicalDylib(const std::string &name) IF_LLVM_LT_900(final);
 
   /// Resolve external/exported symbols during linking.
-  llvm::JITSymbol findSymbol(const std::string &name) final;
+  llvm::JITSymbol findSymbol(const std::string &name) IF_LLVM_LT_900(final);
+
+#if LLVM_VERSION_NUMBER >= LLVM_VERSION(9, 0)
+  // Returns the fully resolved address and flags for each of the given
+  // symbols.
+  //
+  // This method will return an error if any of the given symbols can not be
+  // resolved, or if the resolution process itself triggers an error.
+  void lookup(const llvm::JITSymbolResolver::LookupSet &symbols,
+              llvm::JITSymbolResolver::OnResolvedFunction on_resolved_cb) final;
+
+  // Returns the subset of the given symbols that should be materialized by
+  // the caller. Only weak/common symbols should be looked up, as strong
+  // definitions are implicitly always part of the caller's responsibility.
+  llvm::Expected<llvm::JITSymbolResolver::LookupSet>
+  getResponsibilitySet(const llvm::JITSymbolResolver::LookupSet &symbols) final;
+
+#endif
 
  private:
   CodeCacheImpl(void) = delete;
@@ -415,6 +432,48 @@ void CodeCacheImpl::LoadRuntimeLibrary(void) {
   runtime_loader.swap(pending_loader);
 }
 
+#if LLVM_VERSION_NUMBER >= LLVM_VERSION(9, 0)
+// Returns the fully resolved address and flags for each of the given
+// symbols.
+//
+// This method will return an error if any of the given symbols can not be
+// resolved, or if the resolution process itself triggers an error.
+void CodeCacheImpl::lookup(
+    const llvm::JITSymbolResolver::LookupSet &symbols,
+    llvm::JITSymbolResolver::OnResolvedFunction on_resolved_cb) {
+  llvm::JITSymbolResolver::LookupResult result;
+  for (auto sym_name : symbols) {
+    if (llvm::JITSymbol found_sym = findSymbol(sym_name); found_sym) {
+      if (auto addr = found_sym.getAddress(); addr) {
+        llvm::JITEvaluatedSymbol sym_loc(*addr, found_sym.getFlags());
+        result.emplace(sym_name, std::move(sym_loc));
+      }
+    }
+  }
+  on_resolved_cb(result);
+}
+
+// Returns the subset of the given symbols that should be materialized by
+// the caller. Only weak/common symbols should be looked up, as strong
+// definitions are implicitly always part of the caller's responsibility.
+llvm::Expected<llvm::JITSymbolResolver::LookupSet>
+CodeCacheImpl::getResponsibilitySet(
+    const llvm::JITSymbolResolver::LookupSet &symbols) {
+  llvm::JITSymbolResolver::LookupSet result;
+  for (auto sym_name : symbols) {
+    llvm::JITSymbol found_sym = findSymbol(sym_name);
+    if (found_sym && !found_sym.getFlags().isStrong()) {
+      result.insert(sym_name);
+    } else {
+      auto err = found_sym.takeError();
+      return std::move(err);
+    }
+  }
+  return result;
+}
+
+#endif
+
 // Load a JIT-compiled module from a file `path`.
 void CodeCacheImpl::LoadLibrary(const std::string &path, bool is_runtime) {
   pending_source_file = path;
@@ -454,7 +513,11 @@ void CodeCacheImpl::LoadLibrary(const std::string &path, bool is_runtime) {
     // can go and find the symbols and such. We don't want to do this for lifted
     // code because that doesn't have much useful symbol information.
     if (is_runtime && event_listener) {
-      event_listener->NotifyObjectEmitted(*object_file_ptr, *info);
+      IF_LLVM_LT_900(event_listener->NotifyObjectEmitted(*object_file_ptr, *info);)
+      IF_LLVM_GTE_900(event_listener->notifyObjectLoaded(
+          static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
+              object_file_ptr->getData().data())),
+          *object_file_ptr, *info);)
     }
   }
 
@@ -616,7 +679,7 @@ uintptr_t CodeCacheImpl::Lookup(const char *symbol) {
   if (!sym) {
     return 0;
   }
-  return sym.getAddress() IF_LLVM_GTE_50(.get());
+  return sym.getAddress() IF_LLVM_GTE_500(.get());
 }
 
 }  // namespace

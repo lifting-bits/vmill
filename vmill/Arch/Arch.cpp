@@ -17,15 +17,18 @@
 #include "remill/Arch/Arch.h"
 
 #include "vmill/Arch/Arch.h"
+#include "vmill/Executor/Executor.h"
 
 namespace vmill {
+
+extern thread_local Executor *gExecutor;
 
 extern void LogX86RegisterState(std::ostream &os, const ArchState *state_);
 extern void LogAMD64RegisterState(std::ostream &os, const ArchState *state_);
 extern void LogAArch64RegisterState(std::ostream &os, const ArchState *state_);
 
 void LogRegisterState(std::ostream &os, const ArchState *state) {
-  auto arch = remill::GetTargetArch();
+  const auto arch = gExecutor->arch.get();
   if (arch->IsX86()) {
     LogX86RegisterState(os, state);
   } else if (arch->IsAMD64()) {

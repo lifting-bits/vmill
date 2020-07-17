@@ -78,7 +78,8 @@ class LifterImpl : public Lifter {
  public:
   virtual ~LifterImpl(void);
 
-  explicit LifterImpl(const std::shared_ptr<llvm::LLVMContext> &);
+  explicit LifterImpl(const remill::Arch *arch_,
+                      const std::shared_ptr<llvm::LLVMContext> &);
 
   std::unique_ptr<llvm::Module> Lift(
         const DecodedTraceList &traces) final;
@@ -88,6 +89,8 @@ class LifterImpl : public Lifter {
 
   void LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
                             llvm::Module *module);
+
+  const remill::Arch * const arch;
 
   // LLVM context that manages all modules.
   const std::shared_ptr<llvm::LLVMContext> context;
@@ -115,24 +118,24 @@ class LifterImpl : public Lifter {
   LifterImpl(void) = delete;
 };
 
-LifterImpl::LifterImpl(const std::shared_ptr<llvm::LLVMContext> &context_)
+LifterImpl::LifterImpl(const remill::Arch *arch_,
+                       const std::shared_ptr<llvm::LLVMContext> &context_)
     : Lifter(),
+      arch(arch_),
       context(context_),
-      semantics(remill::LoadTargetSemantics(context.get())),
-      slots(remill::StateSlots(semantics.get())),
+      semantics(remill::LoadArchSemantics(arch)),
+      slots(remill::StateSlots(arch, semantics.get())),
       intrinsics(semantics.get()),
       bb_func(remill::BasicBlockFunction(semantics.get())),
-      lifter(remill::GetTargetArch(), &intrinsics),
+      lifter(arch, &intrinsics),
       pc_metadata_id(context->getMDKindID("PC")) {
-
-  auto target_arch = remill::GetTargetArch();
 
   LOG(INFO)
       << "Preparing module " << remill::ModuleName(semantics)
-      << " for lifting " << remill::GetArchName(target_arch->arch_name)
+      << " for lifting " << remill::GetArchName(arch->arch_name)
       << " code";
 
-  target_arch->PrepareModule(semantics.get());
+  arch->PrepareModule(semantics.get());
 }
 
 LifterImpl::~LifterImpl(void) {}
@@ -238,7 +241,6 @@ llvm::Function *LifterImpl::LiftTrace(const DecodedTrace &trace) {
 
   // Hard-code the trace address into the bitcode.
   auto func_entry_block = &(func->front());
-  auto arch = remill::GetTargetArch();
   auto pc_ptr = remill::LoadProgramCounterRef(func_entry_block);
   auto pc_type = llvm::Type::getIntNTy(*context_ptr, arch->address_size);
 
@@ -271,8 +273,10 @@ llvm::Function *LifterImpl::LiftTrace(const DecodedTrace &trace) {
   llvm::Constant *callback = nullptr;
   llvm::Value *memory_ptr_ref = nullptr;
   if (!FLAGS_instruction_callback.empty()) {
-    callback = semantics->getOrInsertFunction(
-        FLAGS_instruction_callback, func->getFunctionType());
+    callback = llvm::dyn_cast<llvm::Function>(
+        semantics->getOrInsertFunction(
+        FLAGS_instruction_callback, func->getFunctionType())
+        IF_LLVM_GTE_900(.getCallee()));
     memory_ptr_ref = remill::LoadMemoryPointerRef(entry_block);
   }
 
@@ -468,7 +472,7 @@ void LifterImpl::LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
       llvm::ConstantArray::get(used_type, used_list), "llvm.used");
   used->setSection("llvm.metadata");
 
-  remill::RemoveDeadStores(module, bb_func, slots);
+  remill::RemoveDeadStores(arch, module, bb_func, slots);
 
   // Kill off all the function names.
   for (const auto &entry : lifted_funcs) {
@@ -482,8 +486,9 @@ void LifterImpl::LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
 }  // namespace
 
 std::unique_ptr<Lifter> Lifter::Create(
+    const remill::Arch *arch_,
     const std::shared_ptr<llvm::LLVMContext> &context) {
-  return std::unique_ptr<Lifter>(new LifterImpl(context));
+  return std::unique_ptr<Lifter>(new LifterImpl(arch_, context));
 }
 
 Lifter::Lifter(void) {}

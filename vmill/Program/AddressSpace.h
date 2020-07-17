@@ -28,6 +28,9 @@
 
 struct Memory {};
 
+namespace remill {
+class Arch;
+}  // namespace remill
 namespace vmill {
 
 enum class CodeVersion : uint64_t;
@@ -36,7 +39,7 @@ enum class PC : uint64_t;
 // Basic memory implementation.
 class AddressSpace : public Memory {
  public:
-  AddressSpace(void);
+  explicit AddressSpace(const remill::Arch *arch_);
 
   // Creates a copy/clone of another address space.
   explicit AddressSpace(const AddressSpace &);
@@ -149,6 +152,9 @@ class AddressSpace : public Memory {
   // Find the range associated with a page-aligned value of `addr`.
   __attribute__((hot)) MappedRange &FindRangeAligned(uint64_t addr);
   __attribute__((hot)) MappedRange &FindWNXRangeAligned(uint64_t addr);
+
+  // Architecture of this address space.
+  const remill::Arch * const arch;
 
   // Sorted list of mapped memory page ranges.
   std::vector<MemoryMapPtr> maps;

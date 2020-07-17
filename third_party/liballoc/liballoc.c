@@ -3,7 +3,10 @@
 
 /**  Durand's Ridiculously Amazing Super Duper Memory functions.  */
 
-//#define DEBUG
+#ifdef DEBUG
+# undef DEBUG
+#endif
+
 #define LIBALLOC_MAGIC  0xc001c0de
 #define MAXCOMPLETE   5
 #define MAXEXP  32

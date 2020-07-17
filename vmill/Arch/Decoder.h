@@ -24,6 +24,9 @@
 #include "remill/Arch/Instruction.h"
 #include "vmill/BC/Trace.h"
 
+namespace remill {
+class Arch;
+}  // namespace remill
 namespace vmill {
 
 class AddressSpace;
@@ -42,7 +45,8 @@ class DecodedTraceList : public std::list<DecodedTrace> {};
 // Starting from `start_pc`, read executable bytes out of a memory region
 // using `byte_reader`, and returns a mapping of decoded instruction program
 // counters to the decoded instructions themselves.
-DecodedTraceList DecodeTraces(AddressSpace &addr_space, PC start_pc);
+DecodedTraceList DecodeTraces(const remill::Arch *arch,
+                              AddressSpace &addr_space, PC start_pc);
 
 }  // namespace vmill
 

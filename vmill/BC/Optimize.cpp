@@ -49,12 +49,11 @@ void OptimizeModule(llvm::Module *module,
       std::numeric_limits<int>::max());
   builder.LibraryInfo = TLI;  // Deleted by `llvm::~PassManagerBuilder`.
   builder.DisableUnrollLoops = false;  // Unroll loops!
-  builder.DisableUnitAtATime = false;
   builder.RerollLoops = false;
   builder.SLPVectorize = false;
   builder.LoopVectorize = false;
-  IF_LLVM_GTE_36(builder.VerifyInput = true;)
-  IF_LLVM_GTE_36(builder.VerifyOutput = true;)
+  IF_LLVM_GTE_360(builder.VerifyInput = true;)
+  IF_LLVM_GTE_360(builder.VerifyOutput = true;)
 
   builder.populateFunctionPassManager(func_manager);
   builder.populateModulePassManager(module_manager);

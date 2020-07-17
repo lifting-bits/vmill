@@ -20,6 +20,8 @@
 #include <memory>
 #include <unordered_map>
 
+#include <remill/Arch/Arch.h>
+
 #include "vmill/BC/Trace.h"
 #include "vmill/Runtime/Task.h"
 #include "vmill/Util/FileBackedCache.h"
@@ -34,7 +36,6 @@ class ThreadPool;
 namespace llvm {
 class LLVMContext;
 }  // namespace llvm
-
 namespace vmill {
 
 class AddressSpace;
@@ -62,7 +63,7 @@ using IndexCache = FileBackedCache<CachedIndexEntry>;
 // compile code on request.
 class Executor {
  public:
-  Executor(void);
+  explicit Executor(void);
 
   void Run(void);
 
@@ -78,12 +79,16 @@ class Executor {
   __attribute__((noinline))
   void DecodeTracesFromTask(Task *task);
 
-  std::shared_ptr<llvm::LLVMContext> context;
-  std::unique_ptr<ThreadPool> lifters;
-  std::unique_ptr<CodeCache> code_cache;
+ public:
+  const std::shared_ptr<llvm::LLVMContext> context;
+  const remill::Arch::ArchPtr arch;
+
+ private:
+  const std::unique_ptr<ThreadPool> lifters;
+  const std::unique_ptr<CodeCache> code_cache;
 
   // File-backed index of all translations for all code versions.
-  std::unique_ptr<IndexCache> index;
+  const std::unique_ptr<IndexCache> index;
 
   // List of initial tasks.
   std::vector<InitialTaskInfo> initial_tasks;
@@ -95,22 +100,22 @@ class Executor {
 
   // Pointer to the compiled `__vmill_init` function. This initializes
   // the OS that is emulated by the runtime.
-  void (*init_intrinsic)(void);
+  void (* const init_intrinsic)(void);
 
-  // Pointer to the compiled `__vmill_allocate_state`. This is a runtime
+  // Pointer to the compiled `__vmill_create_task`. This is a runtime
   // function that allocates arch-specific `State` structures.
-  Task *(*create_task_intrinsic)(const void *, PC, AddressSpace *);
+  Task *(* const create_task_intrinsic)(const void *, PC, AddressSpace *);
 
   // Pointer to the compiled `__vmill_resume`. This "resumes" execution from
   // where the snapshot left off.
-  void (*resume_intrinsic)(void);
+  void (* const resume_intrinsic)(void);
 
   // Pointer to the compiled `__vmill_fini`. This is used to tear down the
   // any remaining things in the OS.
-  void (*fini_intrinsic)(void);
+  void (* const fini_intrinsic)(void);
 
   // Pointer to the compiled `__remill_error`.
-  LiftedFunction *error_intrinsic;
+  LiftedFunction * const error_intrinsic;
 };
 
 }  // namespace vmill

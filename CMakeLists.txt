@@ -109,9 +109,7 @@ add_library(${PROJECT_NAME} STATIC
 
     # tools/TaintTracker/TaintTracker.cpp
     # tools/TaintTracker/DataFlowTracker.cpp
-    
-    # tools/KVM/KVM.cpp
-    
+        
     third_party/liballoc/liballoc.c
     third_party/ThreadPool/ThreadPool.cpp
     third_party/xxHash/xxhash.c
@@ -132,9 +130,9 @@ endif()
 target_link_libraries(${PROJECT_NAME} PUBLIC
   remill ${ROARING_LIB_NAME} ${ZLIB_LIBRARIES}
   LLVMCodeGen LLVMAsmPrinter LLVMRuntimeDyld LLVMExecutionEngine LLVMTarget
-  LLVMX86AsmParser LLVMX86AsmPrinter LLVMX86CodeGen
-  LLVMAArch64AsmParser LLVMAArch64AsmPrinter LLVMAArch64CodeGen
-  LLVMSparcAsmParser LLVMSparcAsmPrinter LLVMSparcCodeGen)
+  LLVMX86AsmParser LLVMX86CodeGen
+  LLVMAArch64AsmParser LLVMAArch64CodeGen
+  LLVMSparcAsmParser LLVMSparcCodeGen)
 target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC third_party/CRoaring/include ${PROJECT_INCLUDEDIRECTORIES})
 target_compile_definitions(${PROJECT_NAME} PUBLIC ${PROJECT_DEFINITIONS})
 #set_target_properties(${PROJECT_NAME} PROPERTIES COMPILE_FLAGS ${PROJECT_CXXFLAGS})
@@ -160,21 +158,21 @@ install(
     LIBRARY DESTINATION lib
 )
 
-set(VMILL_LOAD vmill-load-${REMILL_LLVM_VERSION})
-add_executable(${VMILL_LOAD}
-    Load.cpp
-)
+# set(VMILL_LOAD vmill-load-${REMILL_LLVM_VERSION})
+# add_executable(${VMILL_LOAD}
+#    Load.cpp
+# )
+#
+# target_link_libraries(${VMILL_LOAD} PRIVATE vmill ${PROJECT_LIBRARIES})
+# target_include_directories(${VMILL_LOAD} SYSTEM PUBLIC ${PROJECT_INCLUDEDIRECTORIES} third_party/ELFIO)
+# target_compile_definitions(${VMILL_LOAD} PUBLIC ${PROJECT_DEFINITIONS})
+# #set_target_properties(${VMILL_LOAD} PROPERTIES COMPILE_FLAGS ${PROJECT_CXXFLAGS})
 
-target_link_libraries(${VMILL_LOAD} PRIVATE vmill ${PROJECT_LIBRARIES})
-target_include_directories(${VMILL_LOAD} SYSTEM PUBLIC ${PROJECT_INCLUDEDIRECTORIES} third_party/ELFIO)
-target_compile_definitions(${VMILL_LOAD} PUBLIC ${PROJECT_DEFINITIONS})
-#set_target_properties(${VMILL_LOAD} PROPERTIES COMPILE_FLAGS ${PROJECT_CXXFLAGS})
-
-install(
-    TARGETS ${VMILL_LOAD}
-    RUNTIME DESTINATION bin
-    LIBRARY DESTINATION lib
-)
+# install(
+#     TARGETS ${VMILL_LOAD}
+#     RUNTIME DESTINATION bin
+#     LIBRARY DESTINATION lib
+# )
 
 if(NOT APPLE)
     set(VMILL_SNAPSHOT vmill-snapshot-${REMILL_LLVM_VERSION})

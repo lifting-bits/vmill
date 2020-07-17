@@ -49,7 +49,7 @@ class Compiler {
   std::shared_ptr<llvm::LLVMContext> context;
 
   // The host architecture on which we're running.
-  const remill::Arch * const host_arch;
+  const llvm::Triple host_triple;
 
   // Compilation target options. This affects things like optimizations.
   llvm::TargetOptions options;

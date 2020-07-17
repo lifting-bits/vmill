@@ -29,8 +29,9 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 
-#include "remill/OS/FileSystem.h"
-#include "remill/OS/OS.h"
+#include <remill/BC/Version.h>
+#include <remill/OS/FileSystem.h>
+#include <remill/OS/OS.h>
 
 #include "vmill/Program/ShadowMemory.h"
 #include "vmill/Util/Compiler.h"
@@ -120,20 +121,28 @@ class ValueCoverageTool : public Tool, public PersistentLocation {
     loc_type = llvm::Type::getIntNTy(context, sizeof(Location) * 8);
 
     llvm::Type *cmp_1_args[] = {loc_type, int32_type, int8_type, int8_type};
-    cov_cmp_1_func = module->getOrInsertFunction(
-        "__cov_cmp_1", llvm::FunctionType::get(void_type, cmp_1_args, false));
+    cov_cmp_1_func = llvm::dyn_cast<llvm::Function>(
+        module->getOrInsertFunction(
+            "__cov_cmp_1", llvm::FunctionType::get(void_type, cmp_1_args, false))
+        IF_LLVM_GTE_900(.getCallee()));
 
     llvm::Type *cmp_2_args[] = {loc_type, int32_type, int16_type, int16_type};
-    cov_cmp_2_func = module->getOrInsertFunction(
-        "__cov_cmp_2", llvm::FunctionType::get(void_type, cmp_2_args, false));
+    cov_cmp_2_func = llvm::dyn_cast<llvm::Function>(
+        module->getOrInsertFunction(
+            "__cov_cmp_2", llvm::FunctionType::get(void_type, cmp_2_args, false))
+        IF_LLVM_GTE_900(.getCallee()));
 
     llvm::Type *cmp_4_args[] = {loc_type, int32_type, int32_type, int32_type};
-    cov_cmp_4_func = module->getOrInsertFunction(
-        "__cov_cmp_4", llvm::FunctionType::get(void_type, cmp_4_args, false));
+    cov_cmp_4_func = llvm::dyn_cast<llvm::Function>(
+        module->getOrInsertFunction(
+            "__cov_cmp_4", llvm::FunctionType::get(void_type, cmp_4_args, false))
+        IF_LLVM_GTE_900(.getCallee()));
 
     llvm::Type *cmp_8_args[] = {loc_type, int32_type, int64_type, int64_type};
-    cov_cmp_8_func = module->getOrInsertFunction(
-        "__cov_cmp_8", llvm::FunctionType::get(void_type, cmp_8_args, false));
+    cov_cmp_8_func = llvm::dyn_cast<llvm::Function>(
+        module->getOrInsertFunction(
+            "__cov_cmp_8", llvm::FunctionType::get(void_type, cmp_8_args, false))
+        IF_LLVM_GTE_900(.getCallee()));
   }
 
  private:

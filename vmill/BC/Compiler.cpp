@@ -79,7 +79,7 @@ static std::string GetNativeFeatureString(void) {
   if (llvm::sys::getHostCPUFeatures(host_features)) {
     for (auto &feature : host_features) {
       target_features.AddFeature(
-          feature.first() _IF_LLVM_GTE_37(feature.second));
+          feature.first() _IF_LLVM_GTE_370(feature.second));
     }
   }
   return target_features.getString();
@@ -125,34 +125,33 @@ Compiler::~Compiler(void) {}
 
 Compiler::Compiler(const std::shared_ptr<llvm::LLVMContext> &context_)
     : context(context_),
-      host_arch(remill::GetHostArch()) {
+      host_triple(llvm::sys::getProcessTriple()) {
 
   InitializeCodeGenOnce();
   auto cpu = llvm::sys::getHostCPUName();
-  auto host_triple = host_arch->Triple().str();
 
   std::string error;
-  auto target = llvm::TargetRegistry::lookupTarget(host_triple, error);
+  auto target = llvm::TargetRegistry::lookupTarget(host_triple.str(), error);
 
   CHECK(target != nullptr)
       << "Unable to identify the target triple: " << error;
 
   machine = std::unique_ptr<llvm::TargetMachine>(target->createTargetMachine(
-      host_triple, cpu, GetNativeFeatureString(), options,
+      host_triple.str(), cpu, GetNativeFeatureString(), options,
       llvm::Reloc::PIC_,
       llvm::CodeModel::Large,
       CodeGenOptLevel()));
 
   CHECK(machine)
       << "Cannot create target machine for triple "
-      << host_triple << " and CPU " << cpu.str();
+      << host_triple.str() << " and CPU " << cpu.str();
 }
 
 void Compiler::CompileModuleToFile(llvm::Module &module,
                                    const std::string &path) {
   Timer timer;
-  module.setTargetTriple(host_arch->Triple().str());
-  module.setDataLayout(host_arch->DataLayout().getStringRepresentation());
+  module.setTargetTriple(host_triple.str());
+//  module.setDataLayout(host_arch->DataLayout().getStringRepresentation());
 
 #if LLVM_VERSION_NUMBER < LLVM_VERSION(3, 6)
   std::string error_message;

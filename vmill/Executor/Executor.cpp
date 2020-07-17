@@ -58,9 +58,10 @@ static thread_local std::unique_ptr<Lifter> gLifter;
 
 // Returns a thread-specific lifter object.
 static const std::unique_ptr<Lifter> &GetLifter(
+    const remill::Arch *arch,
     const std::shared_ptr<llvm::LLVMContext> &context) {
   if (unlikely(!gLifter)) {
-    Lifter::Create(context).swap(gLifter);
+    Lifter::Create(arch, context).swap(gLifter);
   }
   return gLifter;
 }
@@ -79,6 +80,7 @@ static std::unique_ptr<Tool> LoadTool(void) {
 
 Executor::Executor(void)
     : context(new llvm::LLVMContext),
+      arch(remill::Arch::GetTargetArch(*context)),
       lifters(new ThreadPool(std::max<size_t>(1, FLAGS_num_lift_threads))),
       code_cache(CodeCache::Create(LoadTool(), context)),
       index(IndexCache::Open(Workspace::IndexPath())),
@@ -154,7 +156,7 @@ void Executor::DecodeTracesFromTask(Task *task) {
       << ")" << std::dec;
 
   auto seen_task_pc = false;
-  auto traces = DecodeTraces(*memory, task_pc);
+  auto traces = DecodeTraces(arch.get(), *memory, task_pc);
   auto trace_it = traces.begin();
   while (trace_it != traces.end()) {
     auto it = trace_it;
@@ -191,7 +193,7 @@ void Executor::DecodeTracesFromTask(Task *task) {
 
   std::future<std::unique_ptr<llvm::Module>> future_module = lifters->Submit(
       [this, &traces] (void) {
-        auto &lifter = GetLifter(context);
+        auto &lifter = GetLifter(arch.get(), context);
         return lifter->Lift(traces);
       });
 

@@ -796,7 +796,7 @@ struct MessageHeader final : public msghdr {
       orig_iov = new IOVecT[msg_iovlen];
       CopyFromMemory(memory, orig_iov, compat.msg_iov, total_len);
 
-      auto iov = new IOVec<IOVecT>[msg_iovlen];
+      auto iov = new IOVec<IOVecT>[static_cast<unsigned long>(msg_iovlen)];
       msg_iov = iov;
 
       // Import each io vector and their associated data.

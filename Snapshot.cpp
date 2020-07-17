@@ -688,7 +688,8 @@ static void SnapshotTracee(pid_t pid) {
   ReadTraceePageMaps(pid, memory);
   CopyTraceeMemory(pid, memory);
 
-  const auto arch_name = remill::GetTargetArch()->arch_name;
+  llvm::LLVMContext context;
+  const auto arch_name = remill::GetArchName(REMILL_ARCH);
   for (auto tid : GetTIDs(pid)) {
     switch (arch_name) {
       case remill::kArchX86:

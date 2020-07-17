@@ -114,7 +114,7 @@ Task *__vmill_current(void) {
 }
 
 AddressSpace *__vmill_allocate_address_space(void) {
-  return new AddressSpace;
+  return new AddressSpace(gExecutor->arch.get());
 }
 
 void __vmill_free_address_space(AddressSpace *memory) {

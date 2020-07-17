@@ -59,8 +59,7 @@ static constexpr inline uint64_t RoundUpToPage(uint64_t size) {
   return (size + kPageShift) & kPageMask;
 }
 
-static uint64_t GetAddressMask(void) {
-  const auto arch = remill::GetTargetArch();
+static uint64_t GetAddressMask(const remill::Arch *arch) {
   if (arch->address_size == 32) {
     return 0xFFFFFFFFULL;
   } else {
@@ -70,11 +69,12 @@ static uint64_t GetAddressMask(void) {
 
 }  // namespace
 
-AddressSpace::AddressSpace(void)
-    : page_to_map(256),
+AddressSpace::AddressSpace(const remill::Arch *arch_)
+    : arch(arch_),
+      page_to_map(256),
       wnx_page_to_map(256),
       min_addr(std::numeric_limits<uint64_t>::max()),
-      addr_mask(GetAddressMask()),
+      addr_mask(GetAddressMask(arch)),
       invalid(MappedRange::CreateInvalid(0, addr_mask)),
       is_dead(false) {
   maps.push_back(invalid);
@@ -82,7 +82,8 @@ AddressSpace::AddressSpace(void)
 }
 
 AddressSpace::AddressSpace(const AddressSpace &parent)
-    : maps(parent.maps.size()),
+    : arch(parent.arch),
+      maps(parent.maps.size()),
       page_to_map(parent.page_to_map.size()),
       wnx_page_to_map(parent.wnx_page_to_map.size()),
       min_addr(parent.min_addr),
@@ -673,8 +674,6 @@ MappedRange &AddressSpace::FindWNXRangeAligned(uint64_t page_addr) {
 
 // Log out the current state of the memory maps.
 void AddressSpace::LogMaps(std::ostream &os) const {
-  auto arch = remill::GetTargetArch();
-
   os << "Memory maps:" << std::endl;
   for (const auto &range : maps) {
     if (!range->IsValid()) {
