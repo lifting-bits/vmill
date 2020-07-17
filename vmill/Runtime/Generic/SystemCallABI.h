@@ -29,18 +29,16 @@ struct State;
 // setting the return value from the system call.
 class SystemCallABI {
  public:
-  [[gnu::always_inline]]
-  inline SystemCallABI(void)
+  SystemCallABI(void)
       : completed(false) {}
 
-  virtual ~SystemCallABI(void) = default;
+  virtual ~SystemCallABI(void) {}
 
   virtual addr_t GetPC(const State *state) const = 0;
   virtual void SetPC(State *state, addr_t new_pc) const = 0;
   virtual void SetSP(State *state, addr_t new_sp) const = 0;
 
-  [[gnu::always_inline]]
-  inline bool Completed(void) {
+  bool Completed(void) {
     return completed;
   }
 
@@ -49,8 +47,7 @@ class SystemCallABI {
                                   addr_t ret_addr) const = 0;
 
   template <typename T1>
-  inline bool TryGetArgs(Memory *memory, State *state,
-                         T1 *arg1) const {
+  bool TryGetArgs(Memory *memory, State *state, T1 *arg1) const {
     if (!CanReadArgs(memory, state, 1)) {
       return false;
     }
@@ -59,8 +56,7 @@ class SystemCallABI {
   }
 
   template <typename T1, typename T2>
-  inline bool TryGetArgs(Memory *memory, State *state,
-                         T1 *arg1, T2 *arg2) const {
+  bool TryGetArgs(Memory *memory, State *state, T1 *arg1, T2 *arg2) const {
     if (!CanReadArgs(memory, state, 2)) {
       return false;
     }
@@ -70,9 +66,9 @@ class SystemCallABI {
   }
 
   template <typename T1, typename T2, typename T3>
-  inline bool TryGetArgs(Memory *memory, State *state,
-                         T1 *arg1, T2 *arg2, T3 *arg3) const {
-    if (!CanReadArgs(memory, state, 2)) {
+  bool TryGetArgs(Memory *memory, State *state, T1 *arg1, T2 *arg2,
+                  T3 *arg3) const {
+    if (!CanReadArgs(memory, state, 3)) {
       return false;
     }
     *arg1 = GetArg<T1, 0>(memory, state);
@@ -82,9 +78,9 @@ class SystemCallABI {
   }
 
   template <typename T1, typename T2, typename T3, typename T4>
-  inline bool TryGetArgs(Memory *memory, State *state,
-                         T1 *arg1, T2 *arg2, T3 *arg3, T4 *arg4) const {
-    if (!CanReadArgs(memory, state, 2)) {
+  bool TryGetArgs(Memory *memory, State *state, T1 *arg1, T2 *arg2,
+                  T3 *arg3, T4 *arg4) const {
+    if (!CanReadArgs(memory, state, 4)) {
       return false;
     }
     *arg1 = GetArg<T1, 0>(memory, state);
@@ -95,10 +91,9 @@ class SystemCallABI {
   }
 
   template <typename T1, typename T2, typename T3, typename T4, typename T5>
-  inline bool TryGetArgs(Memory *memory, State *state,
-                         T1 *arg1, T2 *arg2, T3 *arg3, T4 *arg4,
-                         T5 *arg5) const {
-    if (!CanReadArgs(memory, state, 2)) {
+  bool TryGetArgs(Memory *memory, State *state, T1 *arg1, T2 *arg2,
+                  T3 *arg3, T4 *arg4, T5 *arg5) const {
+    if (!CanReadArgs(memory, state, 5)) {
       return false;
     }
     *arg1 = GetArg<T1, 0>(memory, state);
@@ -111,10 +106,9 @@ class SystemCallABI {
 
   template <typename T1, typename T2, typename T3, typename T4,
             typename T5, typename T6>
-  inline bool TryGetArgs(Memory *memory, State *state,
-                         T1 *arg1, T2 *arg2, T3 *arg3, T4 *arg4,
-                         T5 *arg5, T6 *arg6) const {
-    if (!CanReadArgs(memory, state, 2)) {
+  bool TryGetArgs(Memory *memory, State *state, T1 *arg1, T2 *arg2,
+                  T3 *arg3, T4 *arg4, T5 *arg5, T6 *arg6) const {
+    if (!CanReadArgs(memory, state, 6)) {
       return false;
     }
     *arg1 = GetArg<T1, 0>(memory, state);
@@ -127,7 +121,7 @@ class SystemCallABI {
   }
 
   template <typename T>
-  inline Memory *SetReturn(Memory *memory, State *state, T val) const {
+  Memory *SetReturn(Memory *memory, State *state, T val) const {
     completed = true;
     return DoSetReturn(
         memory, state, static_cast<addr_t>(static_cast<long>(val)));
@@ -137,7 +131,7 @@ class SystemCallABI {
 
  protected:
   template <typename T, int i>
-  inline T GetArg(Memory *memory, State *state) const {
+  T GetArg(Memory *memory, State *state) const {
     return static_cast<T>(GetArg(memory, state, i));
   }
 
