@@ -46,6 +46,8 @@
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 
+#include <llvm/IR/LLVMContext.h>
+
 #include "remill/Arch/Arch.h"
 #include "remill/Arch/Name.h"
 

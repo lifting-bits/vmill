@@ -34,6 +34,7 @@
 #define ADDRESS_SIZE_BITS 64  // ptrace process state will be 64 bit.
 #include "remill/Arch/X86/Runtime/State.h"
 
+DECLARE_string(arch);
 DECLARE_uint64(breakpoint);
 
 namespace vmill {
@@ -112,7 +113,7 @@ void CopyX86TraceeState(pid_t pid, pid_t tid, int64_t memory_id,
   //
   // [1] http://lxr.free-electrons.com/source/arch/x86/um/os-Linux/tls.c#L18
   // [2] https://code.woboq.org/linux/linux/arch/x86/include/asm/segment.h.html#_M/GDT_ENTRY_TLS_MIN
-  if (remill::GetTargetArch()->IsX86()) {
+  if (FLAGS_arch.find("x86") != std::string::npos) {
     if (!addr.gs_base.qword) {
       TryGetDescriptorBase(tid, seg.gs, &(addr.gs_base.dword));
     }
