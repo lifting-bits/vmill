@@ -126,6 +126,25 @@ if(NOT TARGET remill)
   find_package(remill REQUIRED ${REMILL_FINDPACKAGE_HINTS})
 endif()
 
+# llvm
+find_package(LLVM REQUIRED CONFIG HINTS ${FINDPACKAGE_LLVM_HINTS})
+
+if (LLVM_Z3_INSTALL_DIR)
+  set(need_z3 TRUE)
+elseif(DEFINED ENV{TRAILOFBITS_LIBRARIES})
+  set(LLVM_Z3_INSTALL_DIR "$ENV{TRAILOFBITS_LIBRARIES}/z3")
+  set(need_z3 TRUE)
+else()
+  set(need_z3 FALSE)
+endif()
+
+if(need_z3)
+  find_package(Z3 4.7.1)
+  if (NOT Z3_FOUND)
+    message(WARNING "Z3 >= 4.7.1 has not been found in LLVM_Z3_INSTALL_DIR: ${LLVM_Z3_INSTALL_DIR}.")
+  endif()
+endif()
+
 # add everything as public.
 target_link_libraries(${PROJECT_NAME} PUBLIC
   remill ${ROARING_LIB_NAME} ${ZLIB_LIBRARIES}
