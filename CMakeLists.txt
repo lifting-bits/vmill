@@ -129,7 +129,10 @@ endif()
 # add everything as public.
 target_link_libraries(${PROJECT_NAME} PUBLIC
   remill ${ROARING_LIB_NAME} ${ZLIB_LIBRARIES}
-  LLVMCodeGen LLVMAsmPrinter LLVMRuntimeDyld LLVMExecutionEngine LLVMTarget)
+  LLVMCodeGen LLVMAsmPrinter LLVMRuntimeDyld LLVMExecutionEngine LLVMTarget
+  LLVMX86AsmParser LLVMX86CodeGen
+  LLVMAArch64AsmParser LLVMAArch64CodeGen
+  LLVMSparcAsmParser LLVMSparcCodeGen)
 target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC third_party/CRoaring/include ${PROJECT_INCLUDEDIRECTORIES})
 target_compile_definitions(${PROJECT_NAME} PUBLIC ${PROJECT_DEFINITIONS})
 #set_target_properties(${PROJECT_NAME} PROPERTIES COMPILE_FLAGS ${PROJECT_CXXFLAGS})
