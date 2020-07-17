@@ -462,7 +462,7 @@ CodeCacheImpl::getResponsibilitySet(
   llvm::JITSymbolResolver::LookupSet result;
   for (auto sym_name : symbols) {
     llvm::JITSymbol found_sym = findSymbol(sym_name);
-    if (found_sym && !found_sym.getFlags().isStrong()) {
+    if (found_sym) {
       result.insert(sym_name);
     } else {
       auto err = found_sym.takeError();
