@@ -458,8 +458,7 @@ void CodeCacheImpl::lookup(
 // definitions are implicitly always part of the caller's responsibility.
 llvm::Expected<llvm::JITSymbolResolver::LookupSet>
 CodeCacheImpl::getResponsibilitySet(
-    const llvm::JITSymbolResolver::LookupSet &) {
-  llvm::JITSymbolResolver::LookupSet result;
+    const llvm::JITSymbolResolver::LookupSet &result) {
   return result;
 //  for (auto sym_name : symbols) {
 //    llvm::JITSymbol found_sym = findSymbol(sym_name);
