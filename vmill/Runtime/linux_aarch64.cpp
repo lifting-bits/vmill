@@ -36,8 +36,8 @@
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wgnu-alignof-expression"
 
-#include "remill/Arch/Runtime/Intrinsics.h"
-#include "remill/Arch/AArch64/Runtime/State.h"
+#include <remill/Arch/Runtime/Intrinsics.h>
+#include <remill/Arch/AArch64/Runtime/State.h>
 
 #include "vmill/Runtime/Generic/Intrinsics.h"
 #include "vmill/Runtime/Generic/Memory.cpp"

@@ -15,9 +15,20 @@
 project(vmill)
 cmake_minimum_required (VERSION 3.2)
 
+# remill
+if("${PLATFORM_NAME}" STREQUAL "windows")
+  set(REMILL_FINDPACKAGE_HINTS HINTS "${CMAKE_INSTALL_PREFIX}/remill/lib")
+endif()
+
+find_package(remill REQUIRED ${REMILL_FINDPACKAGE_HINTS})
+
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/settings.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/utils.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/BCCompiler.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/ccache.cmake")
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules")
 
+configureCcache()
 FindAndSelectClangCompiler()
 
 enable_language(ASM)
@@ -117,38 +128,10 @@ add_library(${PROJECT_NAME} STATIC
 
 set_property(TARGET ${PROJECT_NAME} PROPERTY POSITION_INDEPENDENT_CODE ON)
 
-# remill
-if(NOT TARGET remill)
-  if("${PLATFORM_NAME}" STREQUAL "windows")
-    set(REMILL_FINDPACKAGE_HINTS HINTS "${CMAKE_INSTALL_PREFIX}/remill/lib")
-  endif()
-
-  find_package(remill REQUIRED ${REMILL_FINDPACKAGE_HINTS})
-endif()
-
-# llvm
-find_package(LLVM REQUIRED CONFIG HINTS ${FINDPACKAGE_LLVM_HINTS})
-
-if (LLVM_Z3_INSTALL_DIR)
-  set(need_z3 TRUE)
-elseif(DEFINED ENV{TRAILOFBITS_LIBRARIES})
-  set(LLVM_Z3_INSTALL_DIR "$ENV{TRAILOFBITS_LIBRARIES}/z3")
-  set(need_z3 TRUE)
-else()
-  set(need_z3 FALSE)
-endif()
-
-if(need_z3)
-  find_package(Z3 4.7.1)
-  if (NOT Z3_FOUND)
-    message(WARNING "Z3 >= 4.7.1 has not been found in LLVM_Z3_INSTALL_DIR: ${LLVM_Z3_INSTALL_DIR}.")
-  endif()
-endif()
 
 # add everything as public.
 target_link_libraries(${PROJECT_NAME} PUBLIC
-  remill ${ROARING_LIB_NAME} ${ZLIB_LIBRARIES}
-  ${LLVM_AVAILABLE_LIBS})
+  remill ${ROARING_LIB_NAME} ${ZLIB_LIBRARIES})
   
 target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC third_party/CRoaring/include ${PROJECT_INCLUDEDIRECTORIES})
 target_compile_definitions(${PROJECT_NAME} PUBLIC ${PROJECT_DEFINITIONS})
@@ -174,22 +157,6 @@ install(
     RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib
 )
-
-# set(VMILL_LOAD vmill-load-${REMILL_LLVM_VERSION})
-# add_executable(${VMILL_LOAD}
-#    Load.cpp
-# )
-#
-# target_link_libraries(${VMILL_LOAD} PRIVATE vmill ${PROJECT_LIBRARIES})
-# target_include_directories(${VMILL_LOAD} SYSTEM PUBLIC ${PROJECT_INCLUDEDIRECTORIES} third_party/ELFIO)
-# target_compile_definitions(${VMILL_LOAD} PUBLIC ${PROJECT_DEFINITIONS})
-# #set_target_properties(${VMILL_LOAD} PROPERTIES COMPILE_FLAGS ${PROJECT_CXXFLAGS})
-
-# install(
-#     TARGETS ${VMILL_LOAD}
-#     RUNTIME DESTINATION bin
-#     LIBRARY DESTINATION lib
-# )
 
 if(NOT APPLE)
     set(VMILL_SNAPSHOT vmill-snapshot-${REMILL_LLVM_VERSION})

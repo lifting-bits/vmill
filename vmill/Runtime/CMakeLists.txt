@@ -23,10 +23,11 @@ function(add_runtime_helper os arch address_bit_size)
     set(target_name ${os}_${arch})
     
     add_runtime(${target_name}
-        SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/${target_name}.cpp
+        SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/${target_name}.cpp"
         ADDRESS_SIZE ${address_bit_size}
-        INCLUDEDIRECTORIES ${REMILL_SOURCE_DIR} ${PROJECT_SOURCE_DIR}
-        INSTALLDESTINATION "share/vmill/${REMILL_LLVM_VERSION}/runtime")
+        INCLUDEDIRECTORIES "${REMILL_INCLUDE_LOCATION}" "${PROJECT_SOURCE_DIR}"
+        INSTALLDESTINATION "share/vmill/${REMILL_LLVM_VERSION}/runtime"
+        BCFLAGS -Wno-format)
 endfunction()
 
 add_runtime_helper(linux x86 32)
