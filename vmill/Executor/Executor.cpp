@@ -23,8 +23,10 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 
+#include "remill/Arch/Name.h"
 #include "remill/BC/Util.h"
 #include "remill/OS/FileSystem.h"
+#include "remill/OS/OS.h"
 
 #include "vmill/Arch/Arch.h"
 #include "vmill/Arch/Decoder.h"
@@ -42,6 +44,8 @@
 
 DECLARE_uint64(num_io_threads);
 DECLARE_string(tool);
+DECLARE_string(os);
+DECLARE_string(arch);
 
 DEFINE_uint64(num_lift_threads, 1,
               "Number of threads that can be used for lifting.");
@@ -80,7 +84,8 @@ static std::unique_ptr<Tool> LoadTool(void) {
 
 Executor::Executor(void)
     : context(new llvm::LLVMContext),
-      arch(remill::Arch::GetTargetArch(*context)),
+      arch(remill::Arch::Build(context.get(), remill::GetOSName(FLAGS_os),
+                               remill::GetArchName(FLAGS_arch))),
       lifters(new ThreadPool(std::max<size_t>(1, FLAGS_num_lift_threads))),
       code_cache(CodeCache::Create(LoadTool(), context)),
       index(IndexCache::Open(Workspace::IndexPath())),
