@@ -31,10 +31,13 @@
 
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
 
+#include <llvm/Transforms/Scalar.h>
+#include <llvm/Transforms/Utils.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 #include <llvm/Transforms/Utils/Local.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
@@ -59,6 +62,8 @@
 DEFINE_string(instruction_callback, "",
               "Name of a function to call before each lifted instruction.");
 
+DEFINE_bool(check_pcs, false, "Check program counters on block entry.");
+
 namespace vmill {
 namespace {
 
@@ -74,18 +79,112 @@ static std::string LiftedFunctionName(const PC pc) {
   return ns.str();
 }
 
-class LifterImpl : public Lifter {
- public:
-  virtual ~LifterImpl(void);
+// Modify the lifting of function calls so that execution returns to the code
+// following the call to the lifted function, or to `__remill_function_call`,
+// but then we compare the current PC to what it should be had we returned
+// from the function. If the PCs match, the go on as usual, otherwise return
+// the memory pointer.
+static void LiftPostFunctionCall(llvm::BasicBlock *call_block,
+                                 llvm::BasicBlock *fall_through_block,
+                                 llvm::Value *expected_ret_pc,
+                                 llvm::Value *ret_mem_ptr) {
 
+  auto func = call_block->getParent();
+  auto mod = func->getParent();
+  auto unexpected_pc_block = llvm::BasicBlock::Create(
+      mod->getContext(), "", func);
+  auto pc_after_call = remill::LoadProgramCounter(call_block);
+  remill::StoreNextProgramCounter(call_block, pc_after_call);
+
+  llvm::IRBuilder<> ir(call_block);
+  ir.CreateCondBr(ir.CreateICmpEQ(expected_ret_pc, pc_after_call),
+                  fall_through_block, unexpected_pc_block);
+
+  // If the return address doesn't match, then we'll unwind the return addresses
+  // until we get to a matching one or until we get to main dispatcher and
+  // need to re-lift.
+  auto fallback_func = mod->getOrInsertFunction("__vmill_unwind_return",
+                                                func->getFunctionType());
+  remill::AddTerminatingTailCall(
+      unexpected_pc_block, fallback_func IF_LLVM_GTE_900(.getCallee()));
+}
+
+// Create the metadata node from a constant integer representing the trace
+// entry PC.
+static llvm::MDNode *CreatePCAnnotation(llvm::Constant *pc) {
+#if LLVM_VERSION_NUMBER >= LLVM_VERSION(3, 6)
+  auto addr_md = llvm::ValueAsMetadata::get(pc);
+  return llvm::MDNode::get(pc->getContext(), addr_md);
+#else
+  return llvm::MDNode::get(pc->getContext(), pc);
+#endif
+}
+
+// Clear out LLVM variable names. They're usually not helpful.
+static void ClearVariableNames(llvm::Function *func) {
+  for (auto &block : *func) {
+    block.setName("");
+    for (auto &inst : block) {
+      if (inst.hasName()) {
+        inst.setName("");
+      }
+    }
+  }
+}
+
+// Optimize a function.
+static void OptimizeFunction(llvm::Function *func) {
+  std::vector<llvm::CallInst *> calls_to_inline;
+  for (auto changed = true; changed; changed = !calls_to_inline.empty()) {
+    calls_to_inline.clear();
+
+    for (auto &block : *func) {
+      for (auto &inst : block) {
+        if (auto call_inst = llvm::dyn_cast<llvm::CallInst>(&inst); call_inst) {
+          if (auto called_func = call_inst->getCalledFunction();
+              called_func && !called_func->isDeclaration() &&
+              !called_func->hasFnAttribute(llvm::Attribute::NoInline)) {
+            calls_to_inline.push_back(call_inst);
+          }
+        }
+      }
+    }
+
+    for (auto call_inst : calls_to_inline) {
+      llvm::InlineFunctionInfo info;
+#if LLVM_VERSION_NUMBER < LLVM_VERSION(11, 0)
+      llvm::InlineFunction(call_inst, info);
+#else
+      llvm::InlineFunction(*call_inst, info);
+#endif
+    }
+  }
+
+  // Initialize cleanup optimizations
+  llvm::legacy::FunctionPassManager fpm(func->getParent());
+  fpm.add(llvm::createCFGSimplificationPass());
+  fpm.add(llvm::createPromoteMemoryToRegisterPass());
+  fpm.add(llvm::createReassociatePass());
+  fpm.add(llvm::createDeadStoreEliminationPass());
+  fpm.add(llvm::createDeadCodeEliminationPass());
+  fpm.add(llvm::createSROAPass());
+  fpm.doInitialization();
+  fpm.run(*func);
+  fpm.doFinalization();
+
+  ClearVariableNames(func);
+}
+
+}  // namespace
+
+class LifterImpl{
+ public:
   explicit LifterImpl(const remill::Arch *arch_,
                       const std::shared_ptr<llvm::LLVMContext> &);
 
-  std::unique_ptr<llvm::Module> Lift(
-        const DecodedTraceList &traces) final;
+  std::unique_ptr<llvm::Module> Lift(const DecodedTraceList &traces);
 
   llvm::Function *LiftTrace(const DecodedTrace &trace);
-
 
   void LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
                             llvm::Module *module);
@@ -99,7 +198,7 @@ class LifterImpl : public Lifter {
   const std::unique_ptr<llvm::Module> semantics;
 
   // For dead store elimination.
-  std::vector<remill::StateSlot> slots;
+  const std::vector<remill::StateSlot> slots;
 
   // Tracks the Remill intrinsics present in `semantics`.
   const remill::IntrinsicTable intrinsics;
@@ -112,7 +211,9 @@ class LifterImpl : public Lifter {
   remill::InstructionLifter lifter;
 
   // Metadata ID for program counters.
-  unsigned pc_metadata_id;
+  const unsigned pc_metadata_id;
+
+  llvm::Function *instruction_callback{nullptr};
 
  private:
   LifterImpl(void) = delete;
@@ -120,8 +221,7 @@ class LifterImpl : public Lifter {
 
 LifterImpl::LifterImpl(const remill::Arch *arch_,
                        const std::shared_ptr<llvm::LLVMContext> &context_)
-    : Lifter(),
-      arch(arch_),
+    : arch(arch_),
       context(context_),
       semantics(remill::LoadArchSemantics(arch)),
       slots(remill::StateSlots(arch, semantics.get())),
@@ -136,31 +236,13 @@ LifterImpl::LifterImpl(const remill::Arch *arch_,
       << " code";
 
   arch->PrepareModule(semantics.get());
-}
 
-LifterImpl::~LifterImpl(void) {}
-
-// Optimize the lifted function. This ends up being pretty slow because it
-// goes and optimizes everything else in the module (a.k.a. semantics module).
-static void RunO3(const FuncToTraceMap &funcs) {
-  if (funcs.empty()) {
-    return;
+  if (!FLAGS_instruction_callback.empty()) {
+    instruction_callback = llvm::dyn_cast<llvm::Function>(
+        semantics->getOrInsertFunction(
+        FLAGS_instruction_callback, arch->LiftedFunctionType())
+        IF_LLVM_GTE_900(.getCallee()));
   }
-  auto module = funcs.begin()->first->getParent();
-
-  auto func_it = funcs.begin();
-  auto func_it_end = funcs.end();
-
-  auto generator = [&func_it, func_it_end] (void) -> llvm::Function * {
-    if (func_it == func_it_end) {
-      return nullptr;
-    } else {
-      auto entry = *func_it++;
-      return entry.first;
-    }
-  };
-
-  OptimizeModule(module, generator);
 }
 
 std::unique_ptr<llvm::Module> LifterImpl::Lift(
@@ -169,7 +251,7 @@ std::unique_ptr<llvm::Module> LifterImpl::Lift(
   std::unique_ptr<llvm::Module> module;
 
   // First off, declare the traces to be lifted.
-  for (const auto &trace : traces) {
+  for (const DecodedTrace &trace : traces) {
     if (!module) {
       std::stringstream ss;
       ss << std::hex << static_cast<uint64_t>(trace.pc) << "_at_"
@@ -195,34 +277,6 @@ std::unique_ptr<llvm::Module> LifterImpl::Lift(
   return module;
 }
 
-// Modify the lifting of function calls so that execution returns to the code
-// following the call to the lifted function, or to `__remill_function_call`,
-// but then we compare the current PC to what it should be had we returned
-// from the function. If the PCs match, the go on as usual, otherwise return
-// the memory pointer.
-static void LiftPostFunctionCall(llvm::BasicBlock *call_block,
-                                 llvm::BasicBlock *fall_through_block,
-                                 llvm::Value *expected_ret_pc) {
-  auto ret_inst = llvm::dyn_cast<llvm::ReturnInst>(call_block->getTerminator());
-  CHECK_NOTNULL(ret_inst);
-
-  ret_inst->removeFromParent();
-  auto func = call_block->getParent();
-  auto mod = func->getParent();
-  auto unexpected_pc_block = llvm::BasicBlock::Create(
-      mod->getContext(), "", func);
-  auto pc_after_call = remill::LoadProgramCounter(call_block);
-
-  llvm::IRBuilder<> ir(call_block);
-  ir.CreateCondBr(ir.CreateICmpEQ(expected_ret_pc, pc_after_call),
-                  fall_through_block, unexpected_pc_block);
-
-  llvm::IRBuilder<> ir2(unexpected_pc_block);
-  ir2.CreateRet(ret_inst->getReturnValue());
-
-  delete ret_inst;
-}
-
 llvm::Function *LifterImpl::LiftTrace(const DecodedTrace &trace) {
 
   const auto &insts = trace.instructions;
@@ -241,21 +295,56 @@ llvm::Function *LifterImpl::LiftTrace(const DecodedTrace &trace) {
 
   // Hard-code the trace address into the bitcode.
   auto func_entry_block = &(func->front());
+  auto state_ptr = remill::NthArgument(func, remill::kStatePointerArgNum);
+  auto next_pc_ptr = remill::LoadNextProgramCounterRef(func_entry_block);
   auto pc_ptr = remill::LoadProgramCounterRef(func_entry_block);
   auto pc_type = llvm::Type::getIntNTy(*context_ptr, arch->address_size);
 
+  // Store the program counter in.
+  do {
+    const auto pc = remill::NthArgument(func, remill::kPCArgNum);
+    llvm::IRBuilder<> ir(func_entry_block);
+    ir.CreateStore(pc, next_pc_ptr);
+    ir.CreateStore(pc, pc_ptr);
+  } while (false);
+
+  llvm::BasicBlock *out_of_sync_block = nullptr;
+  if (FLAGS_check_pcs) {
+    auto sync_func = semantics->getOrInsertFunction(
+        "__vmill_out_of_sync", func->getFunctionType());
+
+    out_of_sync_block = llvm::BasicBlock::Create(*context_ptr, "", func);
+    remill::AddCall(
+        out_of_sync_block, sync_func IF_LLVM_GTE_900(.getCallee()));
+    remill::AddTerminatingTailCall(
+        out_of_sync_block, intrinsics.error);
+  }
+
   // Function that will create basic blocks as needed.
-  std::unordered_map<uint64_t, llvm::BasicBlock *> blocks;
+  std::unordered_map<uint64_t, std::pair<llvm::BasicBlock *, llvm::BasicBlock *>> blocks;
   auto GetOrCreateBlock = \
-      [func, context_ptr, pc_type, pc_ptr, &blocks] (PC block_pc) {
-        auto &block = blocks[static_cast<uint64_t>(block_pc)];
-        if (!block) {
-          block = llvm::BasicBlock::Create(*context_ptr, "", func);
-          (void) new llvm::StoreInst(
-              llvm::ConstantInt::get(pc_type, static_cast<uint64_t>(block_pc)),
-              pc_ptr, block);
+      [=, &blocks] (PC block_pc_) {
+        const auto block_pc = static_cast<uint64_t>(block_pc_);
+        auto &block_pair = blocks[block_pc];
+
+        if (!block_pair.first) {
+          std::stringstream ss;
+          ss << std::hex << block_pc;
+          block_pair.first = llvm::BasicBlock::Create(*context_ptr, ss.str(), func);
+          if (!out_of_sync_block) {
+            block_pair.second = block_pair.first;
+            return block_pair.first;
+          }
+
+          llvm::IRBuilder<> ir(block_pair.first);
+          auto exp_pc_val = llvm::ConstantInt::get(pc_type, block_pc, false);
+          auto dyn_pc_val = ir.CreateLoad(pc_type, next_pc_ptr);
+          auto pcs_in_sync = ir.CreateICmpEQ(exp_pc_val, dyn_pc_val);
+          auto in_sync_block = llvm::BasicBlock::Create(*context_ptr, "", func);
+          ir.CreateCondBr(pcs_in_sync, in_sync_block, out_of_sync_block);
+          block_pair.second = in_sync_block;
         }
-        return block;
+        return block_pair.first;
       };
 
   // Create a branch from the entrypoint of the lifted function to the basic
@@ -267,41 +356,53 @@ llvm::Function *LifterImpl::LiftTrace(const DecodedTrace &trace) {
   // failed to decode.
   if (!insts.count(trace.pc)) {
     remill::AddTerminatingTailCall(entry_block, intrinsics.error);
+    OptimizeFunction(func);
     return func;
   }
 
   llvm::Constant *callback = nullptr;
   llvm::Value *memory_ptr_ref = nullptr;
-  if (!FLAGS_instruction_callback.empty()) {
-    callback = llvm::dyn_cast<llvm::Function>(
-        semantics->getOrInsertFunction(
-        FLAGS_instruction_callback, func->getFunctionType())
-        IF_LLVM_GTE_900(.getCallee()));
+  if (instruction_callback) {
+    callback = instruction_callback;
     memory_ptr_ref = remill::LoadMemoryPointerRef(entry_block);
   }
 
   // Lift each instruction into its own basic block.
   for (const auto &entry : insts) {
-    auto block = GetOrCreateBlock(entry.first);
+    (void) GetOrCreateBlock(entry.first);
+    auto block = blocks[static_cast<uint64_t>(entry.first)].second;
+    if (!block->empty()) {
+      continue;
+    }
+
     auto &inst = const_cast<remill::Instruction &>(entry.second);
 
-    inst.FinalizeDecode();
-
     if (callback) {
+      llvm::Value *args[remill::kNumBlockArgs];
+      args[remill::kStatePointerArgNum] = state_ptr;
+      args[remill::kPCArgNum] = lifter.LoadRegValue(
+          block, state_ptr, remill::kNextPCVariableName);
       llvm::IRBuilder<> ir(block);
-      ir.CreateStore(ir.CreateCall(callback, remill::LiftedFunctionArgs(block)),
-                     memory_ptr_ref);
+      args[remill::kMemoryPointerArgNum] = ir.CreateLoad(memory_ptr_ref);
+      ir.CreateStore(ir.CreateCall(callback, args), memory_ptr_ref);
     }
 
     llvm::ConstantInt *ret_pc = nullptr;
     if (inst.IsFunctionCall()) {
-      ret_pc = llvm::ConstantInt::get(pc_type, inst.next_pc);
+      ret_pc = llvm::ConstantInt::get(pc_type, inst.branch_not_taken_pc, false);
     }
 
-    if (remill::kLiftedInstruction != lifter.LiftIntoBlock(inst, block)) {
+    const auto lift_status = lifter.LiftIntoBlock(inst, block, state_ptr);
+    if (remill::kLiftedInstruction != lift_status) {
       remill::AddTerminatingTailCall(block, intrinsics.error);
       continue;
     }
+
+//    if (inst.pc == 0xf7f41c72u) {
+//      LOG(ERROR) << remill::LLVMThingToString(func);
+//    }
+    CHECK(!arch->MayHaveDelaySlot(inst))
+        << "TODO: Delay slots are not yet handled in VMill";
 
     // Connect together the basic blocks.
     switch (inst.category) {
@@ -328,40 +429,65 @@ llvm::Function *LifterImpl::LiftTrace(const DecodedTrace &trace) {
         break;
 
       case remill::Instruction::kCategoryDirectFunctionCall:
-        if (inst.branch_taken_pc != inst.next_pc) {
+        if (inst.branch_taken_pc != inst.branch_not_taken_pc) {
 
           const auto target_func_name = LiftedFunctionName(
               static_cast<PC>(inst.branch_taken_pc));
 
           auto target_func = semantics->getFunction(target_func_name);
+          llvm::Value *mem_ptr = nullptr;
           if (!target_func) {
-            remill::AddTerminatingTailCall(block, intrinsics.function_call);
+            mem_ptr = remill::AddCall(block, intrinsics.function_call);
+
           } else {
-            remill::AddTerminatingTailCall(block, target_func);
+            mem_ptr = remill::AddCall(block, target_func);
           }
 
           LiftPostFunctionCall(
-              block, GetOrCreateBlock(static_cast<PC>(inst.next_pc)), ret_pc);
+              block, GetOrCreateBlock(static_cast<PC>(inst.branch_not_taken_pc)),
+              ret_pc, mem_ptr);
+
+        // `call $+5` pattern.
+        } else {
+          llvm::BranchInst::Create(
+              GetOrCreateBlock(static_cast<PC>(inst.branch_not_taken_pc)),
+              block);
         }
         break;
 
-      case remill::Instruction::kCategoryIndirectFunctionCall:
-        remill::AddTerminatingTailCall(block, intrinsics.function_call);
+      case remill::Instruction::kCategoryIndirectFunctionCall: {
+        auto mem_ptr = remill::AddCall(block, intrinsics.function_call);
         LiftPostFunctionCall(
-            block, GetOrCreateBlock(static_cast<PC>(inst.next_pc)), ret_pc);
+            block, GetOrCreateBlock(static_cast<PC>(inst.branch_not_taken_pc)),
+            ret_pc, mem_ptr);
         break;
+      }
 
       case remill::Instruction::kCategoryFunctionReturn:
         remill::AddTerminatingTailCall(block, intrinsics.function_return);
         break;
 
       case remill::Instruction::kCategoryConditionalBranch:
-      case remill::Instruction::kCategoryConditionalAsyncHyperCall:
         llvm::BranchInst::Create(
             GetOrCreateBlock(static_cast<PC>(inst.branch_taken_pc)),
             GetOrCreateBlock(static_cast<PC>(inst.branch_not_taken_pc)),
             remill::LoadBranchTaken(block), block);
         break;
+
+      case remill::Instruction::kCategoryConditionalAsyncHyperCall: {
+        const auto cond = remill::LoadBranchTaken(block);
+        const auto taken_block = llvm::BasicBlock::Create(*context_ptr, "", func);
+        const auto not_taken_block = llvm::BasicBlock::Create(*context_ptr, "", func);
+        llvm::BranchInst::Create(taken_block, not_taken_block, cond, block);
+
+        remill::AddCall(taken_block, intrinsics.async_hyper_call);
+        remill::AddTerminatingTailCall(taken_block, intrinsics.jump);
+
+        llvm::BranchInst::Create(
+            GetOrCreateBlock(static_cast<PC>(inst.branch_not_taken_pc)),
+            not_taken_block);
+        break;
+      }
 
       // Lift async hyper calls in such a way that the call graph structure
       // is maintained. Specifically, if we imagine these hyper calls as being
@@ -369,8 +495,7 @@ llvm::Function *LifterImpl::LiftTrace(const DecodedTrace &trace) {
       // another function, and we eventually want to reach the function return
       // instruction, so that the lifted caller can continue on.
       case remill::Instruction::kCategoryAsyncHyperCall:
-        remill::AddTerminatingTailCall(block, intrinsics.async_hyper_call);
-        block->getTerminator()->eraseFromParent();
+        remill::AddCall(block, intrinsics.async_hyper_call);
         remill::AddTerminatingTailCall(block, intrinsics.jump);
         break;
     }
@@ -378,30 +503,18 @@ llvm::Function *LifterImpl::LiftTrace(const DecodedTrace &trace) {
 
   // Terminate any stragglers.
   for (auto pc_to_block : blocks) {
-    auto block = pc_to_block.second;
+    auto block = pc_to_block.second.second;
     if (!block->getTerminator()) {
       remill::AddTerminatingTailCall(block, intrinsics.missing_block);
     }
   }
 
+  OptimizeFunction(func);
   return func;
-}
-
-// Create the metadata node from a constant integer representing the trace
-// entry PC.
-static llvm::MDNode *CreatePCAnnotation(llvm::Constant *pc) {
-#if LLVM_VERSION_NUMBER >= LLVM_VERSION(3, 6)
-  auto addr_md = llvm::ValueAsMetadata::get(pc);
-  return llvm::MDNode::get(pc->getContext(), addr_md);
-#else
-  return llvm::MDNode::get(pc->getContext(), pc);
-#endif
 }
 
 void LifterImpl::LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
                                       llvm::Module *module) {
-  RunO3(lifted_funcs);  // Optimize the lifted functions.
-
   auto context_ptr = context.get();
   auto int8_ptr_type  = llvm::Type::getInt8PtrTy(module->getContext());
 
@@ -460,7 +573,7 @@ void LifterImpl::LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
 #else
     var->setSection(".vindex");
 #endif
-    var->setAlignment(8);
+    var->setAlignment(llvm::MaybeAlign(8));
 
     used_list.push_back(llvm::ConstantExpr::getBitCast(var, int8_ptr_type));
   }
@@ -477,21 +590,27 @@ void LifterImpl::LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
   // Kill off all the function names.
   for (const auto &entry : lifted_funcs) {
     auto func = entry.first;
+//
+//    if (static_cast<uint64_t>(entry.second->pc) == 0xf7f41c70u) {
+//      LOG(ERROR) << remill::LLVMThingToString(func);
+//    }
     func->setName("");  // Kill its name.
     func->setLinkage(llvm::GlobalValue::PrivateLinkage);
     func->setVisibility(llvm::GlobalValue::DefaultVisibility);
   }
 }
 
-}  // namespace
+Lifter::Lifter(const remill::Arch *arch_,
+               const std::shared_ptr<llvm::LLVMContext> &context_)
+    : impl(new LifterImpl(arch_, context_)) {}
 
-std::unique_ptr<Lifter> Lifter::Create(
-    const remill::Arch *arch_,
-    const std::shared_ptr<llvm::LLVMContext> &context) {
-  return std::unique_ptr<Lifter>(new LifterImpl(arch_, context));
-}
-
-Lifter::Lifter(void) {}
 Lifter::~Lifter(void) {}
+
+// Lift a list of decoded traces into a new LLVM bitcode module, and
+// return the resulting module.
+std::unique_ptr<llvm::Module> Lifter::Lift(
+    const DecodedTraceList &traces) const {
+  return impl->Lift(traces);
+}
 
 }  // namespace vmill

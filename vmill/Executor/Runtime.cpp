@@ -75,6 +75,7 @@ static FILE *GetOpenStraceOutputFile(void) {
         }
       }
     };
+    static CloseStrace gStraceFileCloser;
     gStraceFile = fopen(FLAGS_strace_output_file.c_str(), "w");
   }
   return gStraceFile;
@@ -479,7 +480,6 @@ void __vmill_strace(const char *format, ...) {
 // Return the current FPU exceptions, masked with `read_mask`, then clear any
 // exceptions present in `clear_mask`.
 int __remill_fpu_exception_test_and_clear(int read_mask, int clear_mask) {
-
   auto except = std::fetestexcept(read_mask);
   std::feclearexcept(clear_mask);
   return except;
@@ -546,6 +546,30 @@ void __vmill_run(Task *task) {
     __vmill_execute_async(task, lifted_func);
   }
   gTask = nullptr;
+}
+
+Memory *__vmill_out_of_sync(ArchState *state, uint64_t pc,
+                            AddressSpace *memory) {
+  LOG(ERROR)
+      << "Program counter out of sync " << std::hex << pc << std::dec;
+  gTask->status = TaskStatus::kTaskStatusError;
+  gTask->location = TaskStopLocation::kTaskPCOutOfSync;
+  return memory;
+}
+
+Memory *__vmill_unwind_return(ArchState *state, uint64_t pc,
+                              AddressSpace *memory) {
+  LOG(ERROR)
+      << "Unwinding return to " << std::hex << pc << std::dec;
+  return memory;
+}
+
+Memory *__trace_pc(ArchState *state, uint64_t pc, AddressSpace *memory) {
+  char buff[64];
+  auto len = sprintf(buff, "0x%08llx at %p\n", pc,
+                     memory->ToReadOnlyVirtualAddress(pc));
+  write(STDERR_FILENO, buff, static_cast<unsigned>(len));
+  return memory;
 }
 
 }  // extern "C"

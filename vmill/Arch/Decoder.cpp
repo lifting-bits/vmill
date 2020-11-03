@@ -73,13 +73,16 @@ static void AddSuccessorsToWorkList(const remill::Instruction &inst,
 
     case remill::Instruction::kCategoryIndirectFunctionCall:
     case remill::Instruction::kCategoryDirectFunctionCall:
-      work_list.insert(inst.next_pc);
+      work_list.insert(inst.branch_not_taken_pc);
       break;
 
     case remill::Instruction::kCategoryNormal:
     case remill::Instruction::kCategoryNoOp:
-    case remill::Instruction::kCategoryConditionalAsyncHyperCall:
       work_list.insert(inst.next_pc);
+      break;
+
+    case remill::Instruction::kCategoryConditionalAsyncHyperCall:
+      work_list.insert(inst.branch_not_taken_pc);
       break;
 
     case remill::Instruction::kCategoryDirectJump:
@@ -98,7 +101,7 @@ static void AddSuccessorsToTraceList(const remill::Instruction &inst,
                                      DecoderWorkList &work_list) {
   switch (inst.category) {
     case remill::Instruction::kCategoryDirectFunctionCall:
-      if (inst.branch_taken_pc != inst.next_pc) {
+      if (inst.branch_taken_pc != inst.branch_not_taken_pc) {
         work_list.insert(inst.branch_taken_pc);
       }
       break;
@@ -176,7 +179,7 @@ DecodedTraceList DecodeTraces(const remill::Arch *arch,
 
       remill::Instruction inst;
       auto inst_bytes = ReadInstructionBytes(arch, addr_space, pc);
-      auto decode_successful = arch->LazyDecodeInstruction(
+      auto decode_successful = arch->DecodeInstruction(
           pc, inst_bytes, inst);
 
       trace.instructions[static_cast<PC>(pc)] = inst;

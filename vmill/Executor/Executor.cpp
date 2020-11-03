@@ -58,16 +58,16 @@ extern thread_local Task *gTask;
 namespace {
 
 // Thread-specific lifters for supporting asynchronous lifting.
-static thread_local std::unique_ptr<Lifter> gLifter;
+static thread_local std::optional<Lifter> tLifter;
 
 // Returns a thread-specific lifter object.
-static const std::unique_ptr<Lifter> &GetLifter(
+static const Lifter &GetLifter(
     const remill::Arch *arch,
     const std::shared_ptr<llvm::LLVMContext> &context) {
-  if (unlikely(!gLifter)) {
-    Lifter::Create(arch, context).swap(gLifter);
+  if (unlikely(!tLifter)) {
+    tLifter.emplace(arch, context);
   }
-  return gLifter;
+  return *tLifter;
 }
 
 // Load the instrumentation tool that we'll be running.
@@ -198,8 +198,7 @@ void Executor::DecodeTracesFromTask(Task *task) {
 
   std::future<std::unique_ptr<llvm::Module>> future_module = lifters->Submit(
       [this, &traces] (void) {
-        auto &lifter = GetLifter(arch.get(), context);
-        return lifter->Lift(traces);
+        return GetLifter(arch.get(), context).Lift(traces);
       });
 
   auto coro = task->async_routine;
@@ -286,7 +285,12 @@ void Executor::Run(void) {
       memory = new AddressSpace(*(info.memory.get()));
     }
 
-    create_task_intrinsic(info.state.data(), info.pc, memory);
+    auto task = create_task_intrinsic(info.state.data(), info.pc, memory);
+
+    std::stringstream ss;
+    LogRegisterState(ss, task->state);
+    LOG(INFO)
+        << ss.str();
   }
 
   LOG(INFO)

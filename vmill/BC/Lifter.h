@@ -39,22 +39,24 @@ struct LiftedTrace {
   llvm::Function * const func;
 };
 
+class LifterImpl;
+
 // Lifts machine code instructions into LLVM functions.
 class Lifter {
  public:
-  virtual ~Lifter(void);
+  ~Lifter(void);
 
-  static std::unique_ptr<Lifter> Create(
-      const remill::Arch *arch_,
-      const std::shared_ptr<llvm::LLVMContext> &context);
+  explicit Lifter(const remill::Arch *arch_,
+                  const std::shared_ptr<llvm::LLVMContext> &context);
 
   // Lift a list of decoded traces into a new LLVM bitcode module, and
   // return the resulting module.
-  virtual std::unique_ptr<llvm::Module> Lift(
-      const DecodedTraceList &traces) = 0;
+  std::unique_ptr<llvm::Module> Lift(const DecodedTraceList &traces) const;
 
  protected:
-  Lifter(void);
+  Lifter(void) = delete;
+
+  std::unique_ptr<LifterImpl> impl;
 };
 
 }  // namespace vmill

@@ -53,7 +53,8 @@ enum TaskStopLocation : uint64_t {
   kTaskStoppedAfterHyperCall,
   kTaskStoppedBeforeUnhandledHyperCall,
   kTaskStoppedAtUnsupportedInstruction,
-  kTaskStoppedAtExit
+  kTaskStoppedAtExit,
+  kTaskPCOutOfSync
 };
 
 enum MemoryAccessFaultKind : uint16_t {
