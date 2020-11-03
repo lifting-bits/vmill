@@ -277,6 +277,8 @@ std::unique_ptr<llvm::Module> LifterImpl::Lift(
 
 llvm::Function *LifterImpl::LiftTrace(const DecodedTrace &trace) {
 
+  lifter.ClearCache();
+
   const auto &insts = trace.instructions;
   const auto func_name = LiftedFunctionName(trace.pc);
 
@@ -585,7 +587,7 @@ void LifterImpl::LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
       llvm::ConstantArray::get(used_type, used_list), "llvm.used");
   used->setSection("llvm.metadata");
 
-  remill::RemoveDeadStores(arch, module, bb_func, slots);
+//  remill::RemoveDeadStores(arch, module, bb_func, slots);
 
   // Kill off all the function names.
   for (const auto &entry : lifted_funcs) {
