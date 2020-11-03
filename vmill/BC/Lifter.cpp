@@ -92,7 +92,7 @@ static void LiftPostFunctionCall(llvm::BasicBlock *call_block,
   auto func = call_block->getParent();
   auto mod = func->getParent();
   auto unexpected_pc_block = llvm::BasicBlock::Create(
-      mod->getContext(), "", func);
+      mod->getContext(), llvm::Twine::createNull(), func);
   auto pc_after_call = remill::LoadProgramCounter(call_block);
   remill::StoreNextProgramCounter(call_block, pc_after_call);
 
@@ -123,10 +123,10 @@ static llvm::MDNode *CreatePCAnnotation(llvm::Constant *pc) {
 // Clear out LLVM variable names. They're usually not helpful.
 static void ClearVariableNames(llvm::Function *func) {
   for (auto &block : *func) {
-    block.setName("");
+    block.setName(llvm::Twine::createNull());
     for (auto &inst : block) {
       if (inst.hasName()) {
-        inst.setName("");
+        inst.setName(llvm::Twine::createNull());
       }
     }
   }
@@ -171,8 +171,6 @@ static void OptimizeFunction(llvm::Function *func) {
   fpm.doInitialization();
   fpm.run(*func);
   fpm.doFinalization();
-
-  ClearVariableNames(func);
 }
 
 }  // namespace
@@ -313,11 +311,10 @@ llvm::Function *LifterImpl::LiftTrace(const DecodedTrace &trace) {
     auto sync_func = semantics->getOrInsertFunction(
         "__vmill_out_of_sync", func->getFunctionType());
 
-    out_of_sync_block = llvm::BasicBlock::Create(*context_ptr, "", func);
-    remill::AddCall(
-        out_of_sync_block, sync_func IF_LLVM_GTE_900(.getCallee()));
+    out_of_sync_block = llvm::BasicBlock::Create(
+        *context_ptr, llvm::Twine::createNull(), func);
     remill::AddTerminatingTailCall(
-        out_of_sync_block, intrinsics.error);
+        out_of_sync_block, sync_func IF_LLVM_GTE_900(.getCallee()));
   }
 
   // Function that will create basic blocks as needed.
@@ -328,9 +325,8 @@ llvm::Function *LifterImpl::LiftTrace(const DecodedTrace &trace) {
         auto &block_pair = blocks[block_pc];
 
         if (!block_pair.first) {
-          std::stringstream ss;
-          ss << std::hex << block_pc;
-          block_pair.first = llvm::BasicBlock::Create(*context_ptr, ss.str(), func);
+          block_pair.first = llvm::BasicBlock::Create(
+              *context_ptr, llvm::Twine::createNull(), func);
           if (!out_of_sync_block) {
             block_pair.second = block_pair.first;
             return block_pair.first;
@@ -340,7 +336,8 @@ llvm::Function *LifterImpl::LiftTrace(const DecodedTrace &trace) {
           auto exp_pc_val = llvm::ConstantInt::get(pc_type, block_pc, false);
           auto dyn_pc_val = ir.CreateLoad(pc_type, next_pc_ptr);
           auto pcs_in_sync = ir.CreateICmpEQ(exp_pc_val, dyn_pc_val);
-          auto in_sync_block = llvm::BasicBlock::Create(*context_ptr, "", func);
+          auto in_sync_block = llvm::BasicBlock::Create(
+              *context_ptr, llvm::Twine::createNull(), func);
           ir.CreateCondBr(pcs_in_sync, in_sync_block, out_of_sync_block);
           block_pair.second = in_sync_block;
         }
@@ -398,9 +395,6 @@ llvm::Function *LifterImpl::LiftTrace(const DecodedTrace &trace) {
       continue;
     }
 
-//    if (inst.pc == 0xf7f41c72u) {
-//      LOG(ERROR) << remill::LLVMThingToString(func);
-//    }
     CHECK(!arch->MayHaveDelaySlot(inst))
         << "TODO: Delay slots are not yet handled in VMill";
 
@@ -476,8 +470,10 @@ llvm::Function *LifterImpl::LiftTrace(const DecodedTrace &trace) {
 
       case remill::Instruction::kCategoryConditionalAsyncHyperCall: {
         const auto cond = remill::LoadBranchTaken(block);
-        const auto taken_block = llvm::BasicBlock::Create(*context_ptr, "", func);
-        const auto not_taken_block = llvm::BasicBlock::Create(*context_ptr, "", func);
+        const auto taken_block = llvm::BasicBlock::Create(
+            *context_ptr, llvm::Twine::createNull(), func);
+        const auto not_taken_block = llvm::BasicBlock::Create(
+            *context_ptr, llvm::Twine::createNull(), func);
         llvm::BranchInst::Create(taken_block, not_taken_block, cond, block);
 
         remill::AddCall(taken_block, intrinsics.async_hyper_call);
@@ -594,13 +590,10 @@ void LifterImpl::LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
   // Kill off all the function names.
   for (const auto &entry : lifted_funcs) {
     auto func = entry.first;
-//
-//    if (static_cast<uint64_t>(entry.second->pc) == 0xf7f41c70u) {
-//      LOG(ERROR) << remill::LLVMThingToString(func);
-//    }
-    func->setName("");  // Kill its name.
+    ClearVariableNames(func);
     func->setLinkage(llvm::GlobalValue::PrivateLinkage);
     func->setVisibility(llvm::GlobalValue::DefaultVisibility);
+    func->setName(llvm::Twine::createNull());  // Kill its name.
   }
 }
 
