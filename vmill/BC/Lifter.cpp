@@ -573,7 +573,11 @@ void LifterImpl::LiftTracesIntoModule(const FuncToTraceMap &lifted_funcs,
 #else
     var->setSection(".vindex");
 #endif
+#if LLVM_VERSION_NUMBER < LLVM_VERSION(10, 0)
+    var->setAlignment(8);
+#else
     var->setAlignment(llvm::MaybeAlign(8));
+#endif
 
     used_list.push_back(llvm::ConstantExpr::getBitCast(var, int8_ptr_type));
   }
