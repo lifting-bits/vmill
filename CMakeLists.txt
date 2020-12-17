@@ -16,6 +16,8 @@
 # needs to be found before the CMake `project` declaration
 find_package(remill COMPONENTS VCPKG_DEPS QUIET)
 
+include(cmake/vcpkg_helper.cmake)
+
 project(vmill)
 cmake_minimum_required (VERSION 3.2)
 
