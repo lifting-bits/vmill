@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Find remill first because its config has useful dependency-finding info that
+# needs to be found before the CMake `project` declaration
+find_package(remill COMPONENTS VCPKG_DEPS QUIET)
+
 project(vmill)
 cmake_minimum_required (VERSION 3.2)
 
@@ -20,7 +24,8 @@ if("${PLATFORM_NAME}" STREQUAL "windows")
   set(REMILL_FINDPACKAGE_HINTS HINTS "${CMAKE_INSTALL_PREFIX}/remill/lib")
 endif()
 
-find_package(remill REQUIRED ${REMILL_FINDPACKAGE_HINTS})
+find_package(remill CONFIG REQUIRED ${REMILL_FINDPACKAGE_HINTS})
+get_target_property(REMILL_INCLUDE_LOCATION remill_settings INTERFACE_INCLUDE_DIRECTORIES)
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/settings.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/utils.cmake")
@@ -57,7 +62,9 @@ list(APPEND PROJECT_DEFINITIONS "VMILL_INSTALL_RUNTIME_DIR=\"${CMAKE_INSTALL_PRE
 list(APPEND PROJECT_DEFINITIONS "VMILL_BUILD_RUNTIME_DIR=\"${CMAKE_CURRENT_BINARY_DIR}/vmill/Runtime/\"")
 
 # protobuf
-find_package(Protobuf REQUIRED)
+# Compatibility since we use older protobuf CMake functions
+set(protobuf_MODULE_COMPATIBLE ON CACHE BOOL "" FORCE)
+find_package(Protobuf CONFIG REQUIRED)
 list(APPEND PROJECT_LIBRARIES ${Protobuf_LIBRARIES})
 list(APPEND PROJECT_INCLUDEDIRECTORIES ${Protobuf_INCLUDE_DIR})
 list(APPEND PROJECT_DEFINITIONS "GOOGLE_PROTOBUF_NO_RTTI")
@@ -131,7 +138,7 @@ set_property(TARGET ${PROJECT_NAME} PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 # add everything as public.
 target_link_libraries(${PROJECT_NAME} PUBLIC
-  remill ${ROARING_LIB_NAME} ${ZLIB_LIBRARIES})
+  remill remill_settings ${ROARING_LIB_NAME} ${ZLIB_LIBRARIES})
   
 target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC third_party/CRoaring/include ${PROJECT_INCLUDEDIRECTORIES})
 target_compile_definitions(${PROJECT_NAME} PUBLIC ${PROJECT_DEFINITIONS})
