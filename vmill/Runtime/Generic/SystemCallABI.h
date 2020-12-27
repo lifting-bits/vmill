@@ -46,77 +46,33 @@ class SystemCallABI {
   virtual addr_t GetReturnAddress(Memory *memory, State *state,
                                   addr_t ret_addr) const = 0;
 
+  template<typename ... Args>
+  bool TryGetArgs(Memory *memory, State *state, Args... args) const {
+    if (!CanReadArgs(memory, state, sizeof...(Args))) {
+      return false;
+    }
+    GetArgs(memory, state, args...);
+    return true;
+  }
+
+
+  template<const uint32_t seq=0, typename Arg, typename ... Args>
+  void GetArgs(Memory *memory, State *state, Arg *arg, Args... args) const {
+    *arg = GetArg<Arg, seq>(memory, state);
+    if constexpr (sizeof...(Args) == 0) {
+      return;
+    } else {
+      return GetArgs<seq + 1>(memory, state, args...);
+    }
+  }
+
+
   template <typename T1>
-  bool TryGetArgs(Memory *memory, State *state, T1 *arg1) const {
+  bool GetArgs(Memory *memory, State *state, T1 *arg1) const {
     if (!CanReadArgs(memory, state, 1)) {
       return false;
     }
     *arg1 = GetArg<T1, 0>(memory, state);
-    return true;
-  }
-
-  template <typename T1, typename T2>
-  bool TryGetArgs(Memory *memory, State *state, T1 *arg1, T2 *arg2) const {
-    if (!CanReadArgs(memory, state, 2)) {
-      return false;
-    }
-    *arg1 = GetArg<T1, 0>(memory, state);
-    *arg2 = GetArg<T2, 1>(memory, state);
-    return true;
-  }
-
-  template <typename T1, typename T2, typename T3>
-  bool TryGetArgs(Memory *memory, State *state, T1 *arg1, T2 *arg2,
-                  T3 *arg3) const {
-    if (!CanReadArgs(memory, state, 3)) {
-      return false;
-    }
-    *arg1 = GetArg<T1, 0>(memory, state);
-    *arg2 = GetArg<T2, 1>(memory, state);
-    *arg3 = GetArg<T3, 2>(memory, state);
-    return true;
-  }
-
-  template <typename T1, typename T2, typename T3, typename T4>
-  bool TryGetArgs(Memory *memory, State *state, T1 *arg1, T2 *arg2,
-                  T3 *arg3, T4 *arg4) const {
-    if (!CanReadArgs(memory, state, 4)) {
-      return false;
-    }
-    *arg1 = GetArg<T1, 0>(memory, state);
-    *arg2 = GetArg<T2, 1>(memory, state);
-    *arg3 = GetArg<T3, 2>(memory, state);
-    *arg4 = GetArg<T4, 3>(memory, state);
-    return true;
-  }
-
-  template <typename T1, typename T2, typename T3, typename T4, typename T5>
-  bool TryGetArgs(Memory *memory, State *state, T1 *arg1, T2 *arg2,
-                  T3 *arg3, T4 *arg4, T5 *arg5) const {
-    if (!CanReadArgs(memory, state, 5)) {
-      return false;
-    }
-    *arg1 = GetArg<T1, 0>(memory, state);
-    *arg2 = GetArg<T2, 1>(memory, state);
-    *arg3 = GetArg<T3, 2>(memory, state);
-    *arg4 = GetArg<T4, 3>(memory, state);
-    *arg5 = GetArg<T5, 4>(memory, state);
-    return true;
-  }
-
-  template <typename T1, typename T2, typename T3, typename T4,
-            typename T5, typename T6>
-  bool TryGetArgs(Memory *memory, State *state, T1 *arg1, T2 *arg2,
-                  T3 *arg3, T4 *arg4, T5 *arg5, T6 *arg6) const {
-    if (!CanReadArgs(memory, state, 6)) {
-      return false;
-    }
-    *arg1 = GetArg<T1, 0>(memory, state);
-    *arg2 = GetArg<T2, 1>(memory, state);
-    *arg3 = GetArg<T3, 2>(memory, state);
-    *arg4 = GetArg<T4, 3>(memory, state);
-    *arg5 = GetArg<T5, 4>(memory, state);
-    *arg6 = GetArg<T6, 5>(memory, state);
     return true;
   }
 
