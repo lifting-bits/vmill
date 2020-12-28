@@ -133,6 +133,19 @@ static TraceId HashTraceInstructions(const DecodedTrace &trace) {
   return {trace.pc, static_cast<TraceHash>(hash2.Digest())};
 }
 
+bool VerifyTraces(const DecodedTraceList &traces) {
+  bool out = true;
+  for (auto &trace : traces) {
+    if (!trace.instructions.count(trace.pc)) {
+      DLOG(WARNING) << "Trace at "
+                    << std::hex << static_cast<uint64_t>(trace.pc) << std::dec
+                    << " does not contain instruction at its begin addr!";
+      out &= false;
+    }
+  }
+  return out;
+}
+
 }  // namespace
 
 // Starting from `start_pc`, read executable bytes out of a memory region
@@ -208,6 +221,7 @@ DecodedTraceList DecodeTraces(const remill::Arch *arch,
     traces.push_back(std::move(trace));
   }
 
+  DCHECK(VerifyTraces(traces));
   return traces;
 }
 
