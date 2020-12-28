@@ -109,6 +109,11 @@ struct Task {
 
   int32_t fpu_rounding_mode;
   int32_t _padding;
+
+  // TODO(lukas): Make sure this works in multithreaded environment, as this is property
+  // of a process not a thread.
+  // We need this to implement brk system call. For more info see its implementation.
+  uint64_t program_break = 0;
 };
 
 }  // namespace vmill
