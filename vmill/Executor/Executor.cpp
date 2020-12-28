@@ -326,7 +326,7 @@ LiftedFunction *Executor::FindLiftedFunctionForTask(Task *task) {
     return live_id_it->second;
   }
 
-  // We do a preliminary check here to make sure the code is executable. We
+  // We do a preliminary check here to make sure the code is executable.
   if (!memory->CanExecute(task_pc_uint)) {
     task->status = kTaskStatusError;
     task->mem_access_fault.kind = kMemoryAccessFaultOnExecute;
