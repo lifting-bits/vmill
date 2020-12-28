@@ -431,7 +431,7 @@ void AddressSpace::AddMap(uint64_t base_, size_t size, const char *name,
         << " existing maps";
   }
   maps.swap(old_ranges);
-  maps.push_back(new_map);
+  maps.push_back(std::move(new_map));
   SetPermissions(base, limit - base, true, true, false);
 }
 
