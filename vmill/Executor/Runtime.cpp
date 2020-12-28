@@ -572,6 +572,13 @@ Memory *__trace_pc(ArchState *state, uint64_t pc, AddressSpace *memory) {
   return memory;
 }
 
+// Returns address of the end of heap. We need this as runtime call,
+// because we cannot call Memory methods inside `Runtime` and we need
+// to pass this address to `Task`.
+uint64_t __vmill_initial_heap_end(const ArchState *, vmill::PC, AddressSpace *memory) {
+  return memory->InitialProgramBreak();
+}
+
 }  // extern "C"
 }  // namespace
 }  // namespace vmill
