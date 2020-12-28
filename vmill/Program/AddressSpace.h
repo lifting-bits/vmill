@@ -131,6 +131,8 @@ class AddressSpace : public Memory {
   // Check to see if a given program counter is a trace head.
   bool IsMarkedTraceHead(PC pc) const;
 
+  // Usefull for brk syscall, for more details see its implementation in `Runtime`.
+  uint64_t InitialProgramBreak() const;
  private:
   AddressSpace(AddressSpace &&) = delete;
   AddressSpace &operator=(const AddressSpace &) = delete;
@@ -192,6 +194,9 @@ class AddressSpace : public Memory {
   // Is the address space dead? This means that all operations on it
   // will be muted.
   bool is_dead;
+
+  // End of heap
+  uint64_t initial_program_break;
 };
 
 }  // namespace vmill

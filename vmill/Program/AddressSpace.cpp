@@ -433,6 +433,11 @@ void AddressSpace::AddMap(uint64_t base_, size_t size, const char *name,
   maps.swap(old_ranges);
   maps.push_back(std::move(new_map));
   SetPermissions(base, limit - base, true, true, false);
+
+  // FIXME(lukas): This is hacky, feel free to implement in more general way.
+  if (name && std::string(name) == "[heap]") {
+    initial_program_break = maps.back()->LimitAddress();
+  }
 }
 
 void AddressSpace::RemoveMap(uint64_t base_, size_t size) {
@@ -705,6 +710,10 @@ void AddressSpace::LogMaps(std::ostream &os) const {
 
     os << ss.str() << std::endl;
   }
+}
+
+uint64_t AddressSpace::InitialProgramBreak() const {
+  return initial_program_break;
 }
 
 }  // namespace vmill
