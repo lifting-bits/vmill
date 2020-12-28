@@ -24,7 +24,7 @@ enum PageRangeKind {
   kLinuxVVarPageRange = 2;
   kLinuxVDSOPageRange = 3;
   kLinuxVSysCallPageRange = 4;
-  
+
   kFileBackedPageRange = 5;
   kAnonymousPageRange = 6;
   kAnonymousZeroRange = 7;
@@ -33,15 +33,15 @@ enum PageRangeKind {
 message PageRange {
   required int64 base = 1;
   required int64 limit = 2;
-  
+
   required bool can_read = 3;
   required bool can_write = 4;
   required bool can_exec = 5;
-  
+
   required PageRangeKind kind = 6;
-  
+
   required string name = 7;
-  
+
   optional string file_path = 8;
   optional int64 file_offset = 9;
 }
@@ -55,27 +55,27 @@ message AddressSpace {
 message Task {
   // Program counter at which execution should resume.
   required int64 pc = 1;
-  
+
   // Verbatim copy of the arch-specific `State` structure when the snapshot
   // was taken.
   required bytes state = 2;
-  
+
   // Which address space to use to begin execution.
   required int64 address_space_id = 3;
 }
 
 message Program {
-  
+
   // Name of the architecture of the snapshotted program.
   required string arch = 1;
-   
+
   // Name of the OS of the snapshotted program.
   required string os = 2;
-  
+
   // Command-line of original program.
   repeated string argv = 3;
-  
+
   repeated AddressSpace address_spaces = 4;
-  
+
   repeated Task tasks = 5;
 }
