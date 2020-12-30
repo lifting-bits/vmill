@@ -202,6 +202,7 @@ static Memory *AMD64SystemCall(Memory *memory, State *state,
     case 158: return SysArchPrctl(memory, state, syscall);
     case 202: return SysFutex<linux64_timespec>(memory, state, syscall);
     case 218: return SysSetThreadIdAddress(memory, state, syscall);
+    case 257: return SysOpenAt(memory, state, syscall);
 /*
     case 13: return SysTime(memory, state, syscall);
     case 24: return SysGetUserId(memory, state, syscall);
