@@ -200,8 +200,9 @@ struct stat x;
 struct linux64_stat {
   uint64_t st_dev;
   uint64_t st_ino;
-  uint64_t st_mode;
-  uint32_t st_nlink;
+  // Note(lukas): For some ABI reasons this needs to be in this order.
+  uint64_t st_nlink;
+  uint32_t st_mode;
   uint32_t st_uid;
   uint32_t st_gid;
   uint32_t __pad0;
@@ -217,7 +218,6 @@ struct linux64_stat {
 
 static_assert(sizeof(linux64_stat) == 144,
               "Invalid packing of `struct linux64_stat`.");
-
 
 struct linux32_stat64 {
   uint64_t st_dev;
