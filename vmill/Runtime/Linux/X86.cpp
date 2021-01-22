@@ -318,6 +318,10 @@ Memory *__remill_sync_hyper_call(
     case SyncHyperCall::kX86CPUID: {
       auto eax = state.gpr.rax.dword;
       auto ecx = state.gpr.rcx.dword;
+      state.gpr.rax.aword = 0;
+      state.gpr.rbx.aword = 0;
+      state.gpr.rcx.aword = 0;
+      state.gpr.rdx.aword = 0;
       asm volatile(
           "cpuid"
           : "=a"(state.gpr.rax.dword),
