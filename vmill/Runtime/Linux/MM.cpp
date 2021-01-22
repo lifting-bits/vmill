@@ -32,7 +32,6 @@ static constexpr addr_t kAllocMin = IF_64BIT_ELSE(k4GiB, k1GiB);
 // Maximum allowed address for an `mmap`.
 static constexpr addr_t kAllocMax = IF_64BIT_ELSE((1ULL << 47ULL),
                                                   0xf7000000);
-
 // Emulate an `brk` system call.
 static Memory *SysBrk(Memory *memory, State *state,
                       const SystemCallABI &syscall) {
@@ -42,8 +41,28 @@ static Memory *SysBrk(Memory *memory, State *state,
     return syscall.SetReturn(memory, state, -EFAULT);
   }
 
-  STRACE_ERROR(brk, "addr=%" PRIxADDR ", suppressed", addr);
-  return syscall.SetReturn(memory, state, -ENOMEM);
+  // Special case -- if address is `0` just return current pointer
+  auto current = __vmill_current()->program_break;
+  if (addr == 0) {
+    STRACE_SUCCESS(brk, "addr=%" PRIxADDR " -> %x" PRIxADDR, 0, current);
+    return syscall.SetReturn(memory, state, current);
+  }
+
+  // TODO(lukas): This means the `program_break` was this task was not set
+  //              and we do not yet resolve this (we would like though)
+  if (current == 0) {
+    STRACE_ERROR(brk, " program break is 0");
+    return syscall.SetReturn(memory, state, current);
+  }
+
+  auto size = addr - current;
+  memory = __vmill_allocate_memory(memory, current, size, "[heap] after brk", 0);
+  memory = __vmill_protect_memory(memory, current, size, true, true, false);
+  auto ret = current + size;
+  __vmill_current()->program_break = ret;
+
+  STRACE_SUCCESS(brk, "addr=%" PRIxADDR " -> %x" PRIxADDR, current, ret);
+  return syscall.SetReturn(memory, state, ret);
 }
 
 #ifndef MAP_GROWSDOWN

@@ -295,52 +295,10 @@ static void LoadAddressSpaceFromSnapshot(
         << " in address space " << std::dec
         << orig_addr_space.id();
 
-    const char *path = nullptr;
-    switch (page.kind()) {
-      case snapshot::kLinuxStackPageRange:
-        path = "[stack]";
-        break;
-      case snapshot::kLinuxHeapPageRange:
-        path = "[heap]";
-        break;
-      case snapshot::kLinuxVVarPageRange:
-        path = "[vvar]";
-        break;
-      case snapshot::kLinuxVDSOPageRange:
-        path = "[vdso]";
-        break;
-      case snapshot::kLinuxVSysCallPageRange:
-        path = "[vsyscall]";
-        break;
-      case snapshot::kFileBackedPageRange:
-        if (page.has_file_path()) {
-          path = page.file_path().c_str();
-        } else {
-          LOG(ERROR)
-            << "Page map with base " << std::hex << page.base() << " and limit "
-            << page.limit() << " in address space " << std::dec
-            << orig_addr_space.id() << " is file-backed, but does not have "
-            << "a file path.";
-        }
-        break;
-      case snapshot::kAnonymousPageRange:
-      case snapshot::kAnonymousZeroRange:
-        break;
-    }
-
-    auto base = static_cast<uint64_t>(page.base());
-    auto limit = static_cast<uint64_t>(page.limit());
-    auto size = limit - base;
-    auto offset = static_cast<uint64_t>(
-        page.has_file_offset() ? page.file_offset() : 0L);
-    emu_addr_space->AddMap(base, size, path, offset);
-    if (snapshot::kAnonymousZeroRange == page.kind()) {
-
-    } else {
+    emu_addr_space->AddMap(page, orig_addr_space.id());
+    if (snapshot::kAnonymousZeroRange != page.kind()) {
       LoadPageRangeFromFile(emu_addr_space.get(), page);
     }
-    emu_addr_space->SetPermissions(base, size, page.can_read(),
-                                   page.can_write(), page.can_exec());
   }
 }
 

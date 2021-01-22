@@ -322,9 +322,20 @@ Memory *__remill_sync_hyper_call(
       state.gpr.rbx.aword = 0;
       state.gpr.rcx.aword = 0;
       state.gpr.rdx.aword = 0;
-      STRACE_ERROR(
-          sync_hyper_call, "kX86CPUID eax=%x ecx=%x -> eax=0 ebx=0 ecx=0 edx=0",
-          eax, ecx);
+      asm volatile(
+          "cpuid"
+          : "=a"(state.gpr.rax.dword),
+            "=b"(state.gpr.rbx.dword),
+            "=c"(state.gpr.rcx.dword),
+            "=d"(state.gpr.rdx.dword)
+          : "a"(eax),
+            "c"(ecx)
+      );
+      STRACE_SUCCESS(
+          sync_hyper_call, "kX86CPUID eax=%x ecx=%x -> eax=%x ebx=%x ecx=%x edx=%x",
+          eax, ecx,
+          state.gpr.rax.dword, state.gpr.rbx.dword,
+          state.gpr.rcx.dword, state.gpr.rdx.dword);
       break;
     }
 

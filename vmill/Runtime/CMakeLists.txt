@@ -19,15 +19,15 @@ endif ()
 
 function(add_runtime_helper os arch address_bit_size)
     message(" > Generating runtime target: ${target_name}")
-    
+
     set(target_name ${os}_${arch})
-    
+
     add_runtime(${target_name}
         SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/${target_name}.cpp"
         ADDRESS_SIZE ${address_bit_size}
         INCLUDEDIRECTORIES "${REMILL_INCLUDE_LOCATION}" "${PROJECT_SOURCE_DIR}"
         INSTALLDESTINATION "share/vmill/${REMILL_LLVM_VERSION}/runtime"
-        BCFLAGS -Wno-format)
+        BCFLAGS -Wno-format -std=c++17)
 endfunction()
 
 add_runtime_helper(linux x86 32)

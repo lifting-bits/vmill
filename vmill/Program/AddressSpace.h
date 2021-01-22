@@ -28,9 +28,14 @@
 
 struct Memory {};
 
+namespace vmill::snapshot {
+  class PageRange;
+} // namespace vmill::snapshot
+
 namespace remill {
-class Arch;
-}  // namespace remill
+  class Arch;
+} // namespace remill
+
 namespace vmill {
 
 enum class CodeVersion : uint64_t;
@@ -109,6 +114,7 @@ class AddressSpace : public Memory {
   // Adds a new memory mapping with default read/write permissions.
   void AddMap(uint64_t base, size_t size, const char *name=nullptr,
               uint64_t offset=0);
+  void AddMap(const snapshot::PageRange &page, uint64_t orig_addr_space);
 
   // Removes a memory mapping.
   void RemoveMap(uint64_t base, size_t size);
@@ -131,6 +137,8 @@ class AddressSpace : public Memory {
   // Check to see if a given program counter is a trace head.
   bool IsMarkedTraceHead(PC pc) const;
 
+  // Usefull for brk syscall, for more details see its implementation in `Runtime`.
+  uint64_t InitialProgramBreak() const;
  private:
   AddressSpace(AddressSpace &&) = delete;
   AddressSpace &operator=(const AddressSpace &) = delete;
@@ -138,6 +146,10 @@ class AddressSpace : public Memory {
 
   // Recreate the `range_base_to_index` and `range_limit_to_index` indices.
   void CreatePageToRangeMap(void);
+
+  // We do not want to expose the internal `MemoryMapPtr`.
+  MemoryMapPtr CreateMap(uint64_t base, size_t size,
+                         const char *name, uint64_t offset);
 
   // Permission checking on page-aligned `addr` values.
   bool CanReadAligned(uint64_t addr) const;
@@ -192,6 +204,9 @@ class AddressSpace : public Memory {
   // Is the address space dead? This means that all operations on it
   // will be muted.
   bool is_dead;
+
+  // End of heap
+  uint64_t initial_program_break;
 };
 
 }  // namespace vmill

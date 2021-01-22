@@ -46,8 +46,8 @@ set(VMILL_TOOLS_DIR "${PROJECT_SOURCE_DIR}/tools")
 # warnings and compiler settings
 if(NOT DEFINED WIN32)
   set(PROJECT_CXXFLAGS
-    ${GLOBAL_CXXFLAGS} -Werror -Wconversion -pedantic 
-    -Wno-unreachable-code-return 
+    ${GLOBAL_CXXFLAGS} -Werror -Wconversion -pedantic
+    -Wno-unreachable-code-return
   )
 endif()
 
@@ -72,7 +72,7 @@ list(APPEND PROJECT_INCLUDEDIRECTORIES ${Protobuf_INCLUDE_DIR})
 list(APPEND PROJECT_DEFINITIONS "GOOGLE_PROTOBUF_NO_RTTI")
 
 #
-# protobuf file generation 
+# protobuf file generation
 #
 
 # this function can't be told where to store the output files! we have to add the whole binary directory
@@ -95,33 +95,33 @@ add_library(${PROJECT_NAME} STATIC
     vmill/Arch/X86/Runtime.S
     vmill/Arch/X86/Signal.S
     vmill/Arch/AArch64/Log.cpp
-    
+
     vmill/BC/Compiler.cpp
     vmill/BC/Lifter.cpp
     vmill/BC/Optimize.cpp
     vmill/BC/Util.cpp
-    
+
     vmill/Executor/AsyncIO.cpp
     vmill/Executor/CodeCache.cpp
     vmill/Executor/Coroutine.cpp
     vmill/Executor/Executor.cpp
     vmill/Executor/Memory.cpp
     vmill/Executor/Runtime.cpp
-    
+
     vmill/Program/AddressSpace.cpp
     vmill/Program/MappedRange.cpp
     vmill/Program/ShadowMemory.cpp
     vmill/Program/Snapshot.cpp
-    
+
     vmill/Util/AreaAllocator.cpp
     vmill/Util/Hash.cpp
     vmill/Util/Timer.cpp
     vmill/Util/Util.cpp
     vmill/Util/ZoneAllocator.cpp
-    
+
     vmill/Workspace/Tool.cpp
     vmill/Workspace/Workspace.cpp
-    
+
     tools/Fuzzer/Location.cpp
     tools/Fuzzer/BranchCoverage.cpp
     tools/Fuzzer/ValueCoverage.cpp
@@ -129,7 +129,7 @@ add_library(${PROJECT_NAME} STATIC
 
     # tools/TaintTracker/TaintTracker.cpp
     # tools/TaintTracker/DataFlowTracker.cpp
-        
+
     third_party/liballoc/liballoc.c
     third_party/ThreadPool/ThreadPool.cpp
     third_party/xxHash/xxhash.c
@@ -141,7 +141,7 @@ set_property(TARGET ${PROJECT_NAME} PROPERTY POSITION_INDEPENDENT_CODE ON)
 # add everything as public.
 target_link_libraries(${PROJECT_NAME} PUBLIC
   remill remill_settings ${ROARING_LIB_NAME} ${ZLIB_LIBRARIES})
-  
+
 target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC third_party/CRoaring/include ${PROJECT_INCLUDEDIRECTORIES})
 target_compile_definitions(${PROJECT_NAME} PUBLIC ${PROJECT_DEFINITIONS})
 #set_target_properties(${PROJECT_NAME} PROPERTIES COMPILE_FLAGS ${PROJECT_CXXFLAGS})
@@ -169,18 +169,18 @@ install(
 
 if(NOT APPLE)
     set(VMILL_SNAPSHOT vmill-snapshot-${REMILL_LLVM_VERSION})
-    
+
     add_executable(${VMILL_SNAPSHOT}
         Snapshot.cpp
         vmill/Arch/X86/Snapshot.cpp
         vmill/Arch/AArch64/Snapshot.cpp
     )
-    
+
     target_link_libraries(${VMILL_SNAPSHOT} PRIVATE vmill ${PROJECT_LIBRARIES})
     target_include_directories(${VMILL_SNAPSHOT} SYSTEM PUBLIC ${PROJECT_INCLUDEDIRECTORIES})
     target_compile_definitions(${VMILL_SNAPSHOT} PUBLIC ${PROJECT_DEFINITIONS})
     #set_target_properties(${VMILL_SNAPSHOT} PROPERTIES COMPILE_FLAGS ${PROJECT_CXXFLAGS})
-    
+
     install(
         TARGETS ${VMILL_SNAPSHOT}
         RUNTIME DESTINATION bin

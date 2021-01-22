@@ -20,6 +20,8 @@
 
 #include <iomanip>
 #include <ostream>
+#include <string>
+#include <vector>
 
 #include "remill/Arch/X86/Runtime/State.h"
 
@@ -54,6 +56,40 @@ void LogX86RegisterState(std::ostream &os, const ArchState *state_) {
   LogGPR32(os, state.gpr.rdi, "EDI");
 }
 
+template<typename Fn, typename ... Args>
+void for_each_aflag(const State *state, Fn &&fn, const Args &...args) {
+  fn(state->aflag.cf, "cf", args ...);
+  fn(state->aflag.pf, "pf", args ...);
+  fn(state->aflag.af, "af", args ...);
+  fn(state->aflag.zf, "zf", args ...);
+  fn(state->aflag.sf, "sf", args ...);
+  fn(state->aflag.df, "df", args ...);
+  fn(state->aflag.of, "of", args ...);
+}
+
+// Log Arithemic Flags same way as gdb does -- print only present ones.
+template<typename OS>
+void LogAFlags(OS &os, const State *state) {
+    std::vector<std::string> present;
+    auto gather = [&](auto set, auto name) {
+        if (set) {
+            present.push_back(std::move(name));
+        }
+    };
+    for_each_aflag(state, gather);
+    os << "  aflags: [ ";
+    for (auto &aflag : present )
+        os << aflag << " ";
+    os << " ]" << std::endl;
+}
+
+
+template<typename OS>
+void SegmentFlags(OS &os, const ArchState *state_) {
+  auto &state = *reinterpret_cast<const State *>(state_);
+  LogAFlags(os, &state);
+}
+
 void LogAMD64RegisterState(std::ostream &os, const ArchState *state_) {
   auto &state = *reinterpret_cast<const State *>(state_);
   os << "Register state:" << std::endl;
@@ -74,6 +110,7 @@ void LogAMD64RegisterState(std::ostream &os, const ArchState *state_) {
   LogGPR64(os, state.gpr.r13, "R13");
   LogGPR64(os, state.gpr.r14, "R14");
   LogGPR64(os, state.gpr.r15, "R15");
+  SegmentFlags(os, state_);
 }
 
 }  // namespace vmill

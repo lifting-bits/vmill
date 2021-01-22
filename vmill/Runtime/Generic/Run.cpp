@@ -46,6 +46,8 @@
 # define STRACE_SUCCESS(...)
 #endif
 
+extern "C" uint64_t __vmill_initial_heap_end(const void *, vmill::PC, vmill::AddressSpace *);
+
 // Initialize a task.
 static void __vmill_init_task(
     vmill::Task *task, const void *state, vmill::PC pc,
@@ -61,6 +63,7 @@ static void __vmill_init_task(
   memcpy(task->state, state, sizeof(State));
 
   task->fpu_rounding_mode = __vmill_get_rounding_mode(task->state);
+  task->program_break = __vmill_initial_heap_end(nullptr, pc, memory);
 }
 
 static void __vmill_fini_task(vmill::Task *task) {

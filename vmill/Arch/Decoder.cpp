@@ -133,6 +133,19 @@ static TraceId HashTraceInstructions(const DecodedTrace &trace) {
   return {trace.pc, static_cast<TraceHash>(hash2.Digest())};
 }
 
+bool VerifyTraces(const DecodedTraceList &traces) {
+  bool out = true;
+  for (auto &trace : traces) {
+    if (!trace.instructions.count(trace.pc)) {
+      DLOG(WARNING) << "Trace at "
+                    << std::hex << static_cast<uint64_t>(trace.pc) << std::dec
+                    << " does not contain instruction at its begin addr!";
+      out &= false;
+    }
+  }
+  return out;
+}
+
 }  // namespace
 
 // Starting from `start_pc`, read executable bytes out of a memory region
@@ -162,6 +175,7 @@ DecodedTraceList DecodeTraces(const remill::Arch *arch,
     }
 
     addr_space.MarkAsTraceHead(trace_pc);
+    CHECK(work_list.empty());
     work_list.insert(trace_pc_uint);
 
     DecodedTrace trace;
@@ -179,16 +193,18 @@ DecodedTraceList DecodeTraces(const remill::Arch *arch,
 
       remill::Instruction inst;
       auto inst_bytes = ReadInstructionBytes(arch, addr_space, pc);
+      //LOG_IF(INFO, inst_bytes.size() == 0) << "0 bytes at: " << std::hex << static_cast<uint64_t>(pc) << std::dec;
       auto decode_successful = arch->DecodeInstruction(
           pc, inst_bytes, inst);
 
+      //LOG(INFO) << "Adding inst at " << std::hex << static_cast<uint64_t>(pc) << std::dec << std::endl;
       trace.instructions[static_cast<PC>(pc)] = inst;
 
       if (!decode_successful) {
         LOG(WARNING)
             << "Cannot decode instruction at " << std::hex << pc << std::dec
             << ": " << inst.Serialize();
-        break;
+        continue;
       } else {
         AddSuccessorsToWorkList(inst, work_list);
         AddSuccessorsToTraceList(inst, trace_list);
@@ -205,6 +221,7 @@ DecodedTraceList DecodeTraces(const remill::Arch *arch,
     traces.push_back(std::move(trace));
   }
 
+  DCHECK(VerifyTraces(traces));
   return traces;
 }
 

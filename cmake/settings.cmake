@@ -38,7 +38,7 @@ macro(vmill_settings_main)
     else()
       set(PLATFORM_NAME "linux")
     endif()
-  
+
   elseif(WIN32)
     set(PLATFORM_NAME "windows")
 

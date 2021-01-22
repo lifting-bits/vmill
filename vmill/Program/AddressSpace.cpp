@@ -26,6 +26,8 @@
 #include "remill/OS/OS.h"
 
 #include "vmill/Program/AddressSpace.h"
+#include "vmill/Program/Snapshot.h"
+
 #include "vmill/Util/Compiler.h"
 #include "vmill/Util/Hash.h"
 
@@ -398,8 +400,52 @@ void AddressSpace::SetPermissions(uint64_t base_, size_t size, bool can_read,
   CreatePageToRangeMap();
 }
 
+void AddressSpace::AddMap(const snapshot::PageRange &page, uint64_t orig_addr_space) {
+  auto name = [&]() -> std::string_view {
+    switch(page.kind()) {
+      case snapshot::kLinuxStackPageRange:
+        return "[stack]";
+      case snapshot::kLinuxHeapPageRange:
+        return "[heap]";
+      case snapshot::kLinuxVVarPageRange:
+        return "[vvar]";
+      case snapshot::kLinuxVDSOPageRange:
+        return "[vdso]";
+      case snapshot::kLinuxVSysCallPageRange:
+        return "[vsyscall]";
+      case snapshot::kFileBackedPageRange:
+        CHECK(page.has_file_path())
+            << "Page map with base " << std::hex << page.base() << " and limit "
+            << page.limit() << " in address space " << std::dec
+            << orig_addr_space << " is file-backed, but does not have "
+            << "a file path.";
+        return page.file_path().c_str();
+      case snapshot::kAnonymousPageRange:
+      case snapshot::kAnonymousZeroRange:
+        return "";
+    }
+  }();
+
+  auto base = static_cast<uint64_t>(page.base());
+  auto limit = static_cast<uint64_t>(page.limit());
+  auto size = limit - base;
+  auto offset = static_cast<uint64_t>(
+      page.has_file_offset() ? page.file_offset() : 0L);
+  auto map = CreateMap(base, size, name.data(), offset);
+  if (page.kind() == snapshot::kLinuxHeapPageRange) {
+    initial_program_break = map->LimitAddress();
+  }
+  SetPermissions(base, size, page.can_read(),
+                 page.can_write(), page.can_exec());
+}
+
 void AddressSpace::AddMap(uint64_t base_, size_t size, const char *name,
                           uint64_t offset) {
+  CreateMap(base_, size, name, offset);
+}
+
+MemoryMapPtr AddressSpace::CreateMap(uint64_t base_, size_t size,
+                                     const char *name, uint64_t offset) {
   auto base = AlignDownToPage(base_);
   auto limit = std::min(base + RoundUpToPage(size), addr_mask);
 
@@ -407,7 +453,7 @@ void AddressSpace::AddMap(uint64_t base_, size_t size, const char *name,
     LOG(ERROR)
         << "Trying to map range [" << std::hex << base << ", " << limit
         << ") in destroyed address space." << std::dec;
-    return;
+    return {};
   }
 
   CHECK((base & addr_mask) == base)
@@ -431,8 +477,9 @@ void AddressSpace::AddMap(uint64_t base_, size_t size, const char *name,
         << " existing maps";
   }
   maps.swap(old_ranges);
-  maps.push_back(new_map);
+  maps.push_back(std::move(new_map));
   SetPermissions(base, limit - base, true, true, false);
+  return maps.back();
 }
 
 void AddressSpace::RemoveMap(uint64_t base_, size_t size) {
@@ -705,6 +752,10 @@ void AddressSpace::LogMaps(std::ostream &os) const {
 
     os << ss.str() << std::endl;
   }
+}
+
+uint64_t AddressSpace::InitialProgramBreak() const {
+  return initial_program_break;
 }
 
 }  // namespace vmill
