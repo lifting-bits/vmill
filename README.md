@@ -1,6 +1,6 @@
-# Remill
+# VMill
 
-TODO
+VMill is a snapshot-based process emulator. It just-in-time lifts machine code to LLVM bitcode, and enables that bitcodet to be instrumented. That bitcode is then compiled to machine code and executed.
 
 ## Getting Help
 
